@@ -157,7 +157,7 @@ def copy_to_card(card: pathlib.Path) -> None:
     if not (dest / "config.txt").exists():
         shutil.copy2(SD_DIR / "config.txt", dest / "config.txt")
         print(f"Copied config.txt — open {dest / 'config.txt'} and fill in your Wi-Fi.")
-    subprocess.run(["dot_clean", "-m", str(card)], check=False)
+    subprocess.run(["dot_clean", "-m", str(dest)], check=False)  # only our folder
     print(f"Copied to {dest}")
 
 
