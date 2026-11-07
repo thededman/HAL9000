@@ -19,6 +19,9 @@ struct Config {
   int shakeCooldownSeconds = 20;
   int proximityThreshold = 120;  // LTR-553 behind the glass: a hand within a few cm
   int holdSeconds = 3;
+  bool camera = true;
+  bool cameraPreview = true;
+  int cameraMotionThreshold = 20;
 };
 
 // key=value lines, '#' comments. Bad values keep their default and add a

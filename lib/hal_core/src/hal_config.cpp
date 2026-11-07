@@ -31,6 +31,15 @@ bool parseInt(const std::string& s, int* out) {
   return true;
 }
 
+// on/off, yes/no, true/false, 1/0 in any case.
+bool parseBool(const std::string& s, bool* out) {
+  std::string v;
+  for (char ch : s) v.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+  if (v == "on" || v == "yes" || v == "true" || v == "1") { *out = true; return true; }
+  if (v == "off" || v == "no" || v == "false" || v == "0") { *out = false; return true; }
+  return false;
+}
+
 struct IntKey {
   const char* name;
   int Config::*field;
@@ -47,6 +56,7 @@ const IntKey kIntKeys[] = {
     {"shake_cooldown_seconds", &Config::shakeCooldownSeconds, 0, 3600},
     {"proximity_threshold", &Config::proximityThreshold, 1, 2047},
     {"hold_seconds", &Config::holdSeconds, 1, 10},
+    {"camera_motion_threshold", &Config::cameraMotionThreshold, 1, 255},
 };
 
 }  // namespace
@@ -89,6 +99,12 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
       } else {
         c.timezone = value;
       }
+      continue;
+    }
+    if (key == "camera" || key == "camera_preview") {
+      bool b;
+      if (!parseBool(value, &b)) warn(key + ": '" + value + "' should be on or off, using default");
+      else (key == "camera" ? c.camera : c.cameraPreview) = b;
       continue;
     }
     if (key == "quiet_start" || key == "quiet_end") {

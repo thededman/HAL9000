@@ -120,6 +120,37 @@ void test_bad_timezone_warns_and_defaults() {
   TEST_ASSERT_EQUAL(0, w.size());
 }
 
+void test_camera_defaults() {
+  auto c = hal::parseConfig("", &w);
+  TEST_ASSERT_TRUE(c.camera);
+  TEST_ASSERT_TRUE(c.cameraPreview);
+  TEST_ASSERT_EQUAL(20, c.cameraMotionThreshold);
+  TEST_ASSERT_EQUAL(0, w.size());
+}
+
+// Review Focus 3: booleans in any case
+void test_camera_booleans() {
+  auto c = hal::parseConfig("camera=Off\ncamera_preview=NO\n", &w);
+  TEST_ASSERT_FALSE(c.camera);
+  TEST_ASSERT_FALSE(c.cameraPreview);
+  c = hal::parseConfig("camera=YES\ncamera_preview=1\ncamera_motion_threshold=35\n", &w);
+  TEST_ASSERT_TRUE(c.camera);
+  TEST_ASSERT_TRUE(c.cameraPreview);
+  TEST_ASSERT_EQUAL(35, c.cameraMotionThreshold);
+  TEST_ASSERT_EQUAL(0, w.size());
+}
+
+void test_camera_bad_values() {
+  auto c = hal::parseConfig("camera=maybe\ncamera_motion_threshold=0\n", &w);
+  TEST_ASSERT_TRUE(c.camera);
+  TEST_ASSERT_EQUAL(20, c.cameraMotionThreshold);
+  TEST_ASSERT_EQUAL(2, w.size());
+  w.clear();
+  c = hal::parseConfig("camera_motion_threshold=300\n", &w);
+  TEST_ASSERT_EQUAL(20, c.cameraMotionThreshold);
+  TEST_ASSERT_EQUAL(1, w.size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_on_empty);
@@ -131,5 +162,8 @@ int main() {
   RUN_TEST(test_unknown_key_warns);
   RUN_TEST(test_idle_min_over_max_resets);
   RUN_TEST(test_bad_timezone_warns_and_defaults);
+  RUN_TEST(test_camera_defaults);
+  RUN_TEST(test_camera_booleans);
+  RUN_TEST(test_camera_bad_values);
   return UNITY_END();
 }
