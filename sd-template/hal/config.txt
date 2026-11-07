@@ -1,0 +1,18 @@
+# HAL 9000 settings
+# Fill in your Wi-Fi name and password below. HAL only uses Wi-Fi to set his
+# clock (at startup and at 03:00 each night), then switches it off.
+# Lines starting with # are comments. Save the file as plain text.
+
+wifi_ssid=
+wifi_password=
+timezone=EST5EDT,M3.2.0,M11.1.0    # POSIX TZ; default matches the Mac (America/New_York)
+quiet_start=22:00
+quiet_end=07:30
+volume=180                         # 0–255
+quiet_volume=90
+idle_min_minutes=20
+idle_max_minutes=60
+greet_cooldown_minutes=10
+shake_cooldown_seconds=20
+proximity_threshold=300            # tuned on the device from serial readings
+hold_seconds=3
