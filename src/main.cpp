@@ -1,27 +1,62 @@
-// HAL 9000 for the M5Stack CoreS3 — voice from the SD card and the breathing eye.
+// HAL 9000 for the M5Stack CoreS3.
+//
+// Every loop: read the inputs (touch, proximity, motion, clock, speaker), hand
+// them to hal::Brain, carry out what it decides, and draw the eye or a console
+// screen at ~30 fps. All the decision-making lives in lib/hal_core.
 #include <M5Unified.h>
 #include <SD.h>
 #include <SPI.h>
+#include <esp_system.h>
+
+#include <memory>
 
 #include "audio.h"
 #include "consoles.h"
 #include "debug_shot.h"
 #include "eye.h"
+#include "hal_brain.h"
+#include "hal_motion.h"
 #include "hal_voice_index.h"
+#include "net_time.h"
+#include "proximity.h"
 #include "sd_voice.h"
 
 namespace {
 
+constexpr uint32_t kShutdownMagic = 0x48414C21;  // "HAL!"
+RTC_NOINIT_ATTR uint32_t shutdownFlag;           // survives ESP.restart()
+
 Audio audio;
 hal::VoiceIndex voices(esp_random());
 hal::Config config;
-bool haveMemory = false;
+std::unique_ptr<hal::Brain> brain;
+hal::MotionDetector motion;
+std::unique_ptr<hal::ProximityEdge> proxEdge;
+Consoles consoles;
 M5Canvas lens(&M5.Display);
 M5Canvas screen(&M5.Display);
-Consoles consoles;
-bool inConsole = false;
+
+bool haveMemory = false;
+bool haveProximity = false;
+hal::Mode lastMode = hal::Mode::Booting;
+bool lastQuiet = false;
+int lastBacklight = -1;
 uint32_t consoleStartMs = 0;
-uint32_t lastFrameMs = 0, fpsFrames = 0, fpsStartMs = 0;
+uint32_t lastFrameMs = 0, lastProxMs = 0, lastImuMs = 0, lastLogMs = 0;
+int proxReading = 0;
+int proxPeak = 0;  // highest reading since the last log line
+float ax = 0, ay = 0, az = 1;
+bool bootSyncPending = true;
+int lastSyncYday = -1;
+
+// Debug injections over serial (see serviceDebugCommands): T tap, H hold, P walk-up, K shake, W bad Wi-Fi.
+uint32_t fakeTouchUntil = 0;
+bool fakeHold = false, fakeProx = false, fakeShake = false;
+
+const char* modeName(hal::Mode m) {
+  static const char* const names[] = {"booting", "idle", "speaking", "console", "pleading", "daisy", "dark"};
+  return names[static_cast<int>(m)];
+}
 
 bool mountSd() {
   int cs = M5.getPin(m5::pin_name_t::sd_spi_cs);
@@ -31,46 +66,96 @@ bool mountSd() {
   return SD.begin(cs, SPI, 25000000);
 }
 
-void say(hal::Folder f) {
+void play(const hal::Actions& a) {
   std::string path;
-  if (voices.pick(f, &path)) audio.playFile(path.c_str());
+  bool found = a.index < 0 ? voices.pick(a.folder, &path) : voices.at(a.folder, a.index, &path);
+  if (found) audio.playFile(path.c_str());
 }
 
-void startConsole(bool speak) {
-  consoles.next();
-  inConsole = true;
-  consoleStartMs = millis();
-  if (speak) say(hal::Folder::Tap);
+void setBacklight(int level) {
+  if (level == lastBacklight) return;
+  lastBacklight = level;
+  M5.Display.setBrightness(level);
 }
 
 void drawFrame() {
   uint32_t now = millis();
-  if (inConsole && now - consoleStartMs >= 8000 && !audio.isPlaying()) {
-    inConsole = false;
-    drawEyeBackground(M5.Display, !haveMemory);
-  }
-  if (inConsole) {
+  hal::Mode m = brain ? brain->mode() : hal::Mode::Booting;
+  if (m == hal::Mode::Console) {
     if (consoles.draw(screen, now - consoleStartMs, audio.level())) screen.pushSprite(0, 0);
-  } else {
-    hal::Mode m = audio.isPlaying() ? hal::Mode::Speaking : hal::Mode::Idle;
-    drawEye(lens, eyeParamsFor(m, false, 0, audio.level(), now));
-    lens.pushSprite(kEyeCx - kLensSprite / 2, kEyeCy - kLensSprite / 2, eyeTransparentKey());
+    return;
   }
-  if (++fpsFrames, now - fpsStartMs >= 5000) {
-    Serial.printf("fps %.1f\n", fpsFrames * 1000.0f / (now - fpsStartMs));
-    fpsFrames = 0;
-    fpsStartMs = now;
+  float daisy = brain ? brain->daisyProgress() : 0;
+  drawEye(lens, eyeParamsFor(m, lastQuiet, daisy, audio.level(), now));
+  lens.pushSprite(kEyeCx - kLensSprite / 2, kEyeCy - kLensSprite / 2, eyeTransparentKey());
+}
+
+// Keeps the eye moving while something slow (Wi-Fi) blocks the loop.
+void frameIfDue() {
+  if (millis() - lastFrameMs >= 33) {
+    lastFrameMs = millis();
+    drawFrame();
   }
+}
+
+hal::Inputs readInputs(uint32_t now) {
+  hal::Inputs in;
+  in.nowMs = now;
+  in.touchDown = M5.Touch.getCount() > 0 || now < fakeTouchUntil || fakeHold;
+  if (haveProximity && now - lastProxMs >= 50) {
+    lastProxMs = now;
+    int r = proximityRead();
+    if (r >= 0) {
+      proxReading = r;
+      if (r > proxPeak) proxPeak = r;
+      in.proximityEdge = proxEdge->update(r);
+    }
+  }
+  if (now - lastImuMs >= 20) {
+    lastImuMs = now;
+    if (M5.Imu.getAccel(&ax, &ay, &az)) in.motion = motion.update(ax, ay, az, now);
+  }
+  if (fakeProx) in.proximityEdge = true;
+  if (fakeShake) in.motion = hal::MotionEvent::Shake;
+  fakeProx = fakeShake = false;
+  in.audioPlaying = audio.isPlaying();
+  if (clockIsSet()) {
+    time_t t = time(nullptr);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    in.timeValid = true;
+    in.hour = lt.tm_hour;
+    in.minuteOfDay = lt.tm_hour * 60 + lt.tm_min;
+  }
+  return in;
+}
+
+void maybeSyncClock(const hal::Inputs& in) {
+  if (bootSyncPending && in.nowMs > 1500) {  // after the boot line has started
+    bootSyncPending = false;
+    syncTime(config, 15000, frameIfDue);
+    return;
+  }
+  if (!in.timeValid || in.hour != 3 || audio.isPlaying()) return;
+  time_t t = time(nullptr);
+  struct tm lt;
+  localtime_r(&t, &lt);
+  if (lt.tm_yday == lastSyncYday) return;
+  lastSyncYday = lt.tm_yday;
+  syncTime(config, 15000, frameIfDue);
 }
 
 }  // namespace
 
 void setup() {
+  bool afterShutdown = esp_reset_reason() == ESP_RST_SW && shutdownFlag == kShutdownMagic;
+  shutdownFlag = 0;
+
   auto cfg = M5.config();
   M5.begin(cfg);
   Serial.begin(115200);
   for (uint32_t t0 = millis(); !Serial && millis() - t0 < 2000;) delay(10);  // let a USB monitor attach
-  Serial.println("\nHAL 9000 booting");
+  Serial.printf("\nHAL 9000 booting%s\n", afterShutdown ? " (after shutdown)" : "");
 
   if (mountSd()) {
     config = loadConfig();
@@ -78,28 +163,74 @@ void setup() {
   } else {
     Serial.println("no SD card");
   }
-  M5.Display.setBrightness(160);
-  audio.setVolume(config.volume);
-  lens.setPsram(false);  // 46 KB in internal RAM: faster to draw and push
+  restoreTimeFromRtc(config);
+  haveProximity = proximityBegin();
+  proxEdge.reset(new hal::ProximityEdge(config.proximityThreshold));
+
+  lens.setPsram(false);
   lens.setColorDepth(16);
   lens.createSprite(kLensSprite, kLensSprite);
-  screen.setPsram(false);  // 75 KB in internal RAM
+  screen.setPsram(false);   // 75 KB in internal RAM
   screen.setColorDepth(8);  // RGB332 is plenty for the console readouts
   screen.createSprite(320, 240);
   consoles.begin(esp_random());
+
+  brain.reset(new hal::Brain(config, esp_random(), afterShutdown));
+  brain->setSequenceLengths(voices.count(hal::Folder::Plea), voices.count(hal::Folder::Daisy));
+  setBacklight(160);
   drawEyeBackground(M5.Display, !haveMemory);
-  if (haveMemory) say(hal::Folder::Boot);
 }
 
 void loop() {
   M5.update();
-  int cmd = serviceDebugCommands();
-  if (cmd == 'C') startConsole(false);  // debug: next console screen, silent
-  if (cmd == 'T') startConsole(haveMemory);  // debug: same as a tap
-  if (M5.Touch.getDetail().wasClicked()) startConsole(haveMemory);
-  if (millis() - lastFrameMs >= 33) {
-    lastFrameMs = millis();
-    drawFrame();
+  uint32_t now = millis();
+  switch (serviceDebugCommands()) {
+    case 'T': fakeTouchUntil = now + 100; break;
+    case 'H': fakeHold = !fakeHold; break;
+    case 'P': fakeProx = true; break;
+    case 'K': fakeShake = true; break;
+    case 'W': {  // debug: a Wi-Fi network that doesn't exist must time out without freezing HAL
+      hal::Config bogus = config;
+      bogus.wifiSsid = "hal-no-such-network";
+      uint32_t t0 = millis();
+      syncTime(bogus, 15000, frameIfDue);
+      Serial.printf("bogus wifi gave up after %lu ms\n", (unsigned long)(millis() - t0));
+      break;
+    }
   }
+
+  hal::Inputs in = readInputs(now);
+  hal::Actions a = brain->tick(in);
+
+  audio.setVolume(static_cast<uint8_t>(a.volume));
+  lastQuiet = a.quiet;
+  if (a.stopAudio) audio.stop();
+  if (a.newConsole) {
+    consoles.next();
+    consoleStartMs = now;
+  }
+  if (a.play) play(a);
+  if (a.restart) {
+    shutdownFlag = kShutdownMagic;
+    Serial.println("restarting");
+    Serial.flush();
+    ESP.restart();
+  }
+
+  hal::Mode m = brain->mode();
+  if (m != lastMode) {
+    Serial.printf("mode %s -> %s\n", modeName(lastMode), modeName(m));
+    if (lastMode == hal::Mode::Console) drawEyeBackground(M5.Display, !haveMemory);
+    lastMode = m;
+  }
+  setBacklight(m == hal::Mode::Dark ? 0 : (a.quiet ? 60 : 160));
+
+  if (now - lastLogMs >= 500) {
+    lastLogMs = now;
+    Serial.printf("prox=%d acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak, ax, ay, az, modeName(m), a.quiet);
+    proxPeak = 0;
+  }
+  frameIfDue();
+  maybeSyncClock(in);
   delay(1);
 }

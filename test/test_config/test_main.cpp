@@ -19,7 +19,7 @@ void test_defaults_on_empty() {
   TEST_ASSERT_EQUAL(60, c.idleMaxMinutes);
   TEST_ASSERT_EQUAL(10, c.greetCooldownMinutes);
   TEST_ASSERT_EQUAL(20, c.shakeCooldownSeconds);
-  TEST_ASSERT_EQUAL(300, c.proximityThreshold);
+  TEST_ASSERT_EQUAL(120, c.proximityThreshold);
   TEST_ASSERT_EQUAL(3, c.holdSeconds);
   TEST_ASSERT_EQUAL(0, w.size());
 }

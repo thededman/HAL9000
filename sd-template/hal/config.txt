@@ -14,5 +14,5 @@ idle_min_minutes=20
 idle_max_minutes=60
 greet_cooldown_minutes=10
 shake_cooldown_seconds=20
-proximity_threshold=300            # tuned on the device from serial readings
+proximity_threshold=120            # a hand waved close over the top edge; raise if HAL greets nobody
 hold_seconds=3

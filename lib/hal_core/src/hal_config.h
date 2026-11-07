@@ -17,7 +17,7 @@ struct Config {
   int idleMaxMinutes = 60;
   int greetCooldownMinutes = 10;
   int shakeCooldownSeconds = 20;
-  int proximityThreshold = 300;
+  int proximityThreshold = 120;  // LTR-553 behind the glass: a hand within a few cm
   int holdSeconds = 3;
 };
 
