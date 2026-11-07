@@ -1,13 +1,13 @@
 # HAL 9000 desk companion
 
 Firmware for an **M5Stack CoreS3** that turns it into a HAL 9000 companion for the
-house: a glowing red eye that breathes, console screens when you tap it, greetings
-when you walk up, complaints when you shake it, a press-and-hold shutdown that ends
+house: a glowing red eye that breathes, console screens when you tap it, a greeting
+when you wave at him, complaints when you shake or move him, a press-and-hold shutdown that ends
 in "Daisy Bell", and the occasional unprompted remark. Quiet hours keep him silent
 at night.
 
 HAL's voice is generated on the Mac with [Piper](https://github.com/OHF-Voice/piper1-gpl)
-(the `en_GB-alan-medium` voice, slowed and softened) and stored on the microSD card.
+(the `en_GB-alan-medium` voice, slowed, dry and close) and stored on the microSD card.
 Every line is original, apart from the 1892 "Daisy Bell" chorus.
 
 ## What's in here
@@ -48,10 +48,36 @@ tools/.venv/bin/python tools/make_voice.py --copy-to /Volumes/HAL   # copies ont
 To add a joke: add a line to `content/lines/tap.txt` and run it again. To add your
 own clips (mp3, m4a, wav): put them in a folder and pass `--mine-from <folder>`.
 
+## Using HAL
+
+| Do this | HAL does |
+|---|---|
+| Tap the screen | A console screen and a joke; tap again for another |
+| Wave a hand just above the top edge (by the camera) | Greets you for the time of day, at most every 10 minutes |
+| Shake, pick up or tip him over | Complains, at most every 20 seconds |
+| Hold the screen for 3 seconds | Pleads with you; let go and he's relieved, keep holding and he sings "Daisy Bell", goes dark and restarts |
+| Leave him alone | An unprompted remark every 20–60 minutes |
+
+From 22:00 to 07:30 he dims, stops greeting and talking on his own, and answers
+taps and shakes at half volume. The proximity sensor sits behind the glass and only
+sees a hand a few centimetres away, which is why greetings need a wave.
+
 ## Building and flashing
 
+The ESP32 toolchain needs PlatformIO on Python 3.10–3.14 (Homebrew's `platformio`
+runs on 3.15 and fails), so install it in PlatformIO's usual place:
+
 ```bash
-pio run -e cores3 -t upload     # build and flash over USB-C
-pio device monitor              # sensor readings and log
-pio test -e native              # logic tests on the Mac
+python3.11 -m venv ~/.platformio/penv && ~/.platformio/penv/bin/pip install platformio
 ```
+
+```bash
+~/.platformio/penv/bin/pio run -e cores3 -t upload     # build and flash over USB-C
+~/.platformio/penv/bin/pio device monitor              # sensor readings and log
+~/.platformio/penv/bin/pio test -e native              # logic tests on the Mac
+```
+
+While the monitor is open you can type single letters to test without touching
+HAL: `T` tap, `H` hold on/off, `P` wave, `K` shake, `W` a Wi-Fi network that
+doesn't exist (he should give up after 15 s), `C` next console screen, and `S`
+dumps a raw screenshot.
