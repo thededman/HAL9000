@@ -1,9 +1,11 @@
-// HAL 9000 for the M5Stack CoreS3 — first boot: voice from the SD card, plain eye.
+// HAL 9000 for the M5Stack CoreS3 — voice from the SD card and the breathing eye.
 #include <M5Unified.h>
 #include <SD.h>
 #include <SPI.h>
 
 #include "audio.h"
+#include "debug_shot.h"
+#include "eye.h"
 #include "hal_voice_index.h"
 #include "sd_voice.h"
 
@@ -13,6 +15,8 @@ Audio audio;
 hal::VoiceIndex voices(esp_random());
 hal::Config config;
 bool haveMemory = false;
+M5Canvas lens(&M5.Display);
+uint32_t lastFrameMs = 0, fpsFrames = 0, fpsStartMs = 0;
 
 bool mountSd() {
   int cs = M5.getPin(m5::pin_name_t::sd_spi_cs);
@@ -27,18 +31,15 @@ void say(hal::Folder f) {
   if (voices.pick(f, &path)) audio.playFile(path.c_str());
 }
 
-void drawPlainEye() {
-  auto& d = M5.Display;
-  d.fillScreen(TFT_BLACK);
-  d.fillCircle(160, 132, 92, d.color888(60, 60, 64));
-  d.fillCircle(160, 132, 78, d.color888(150, 0, 0));
-  d.fillCircle(160, 132, 12, d.color888(255, 220, 120));
-  d.setTextColor(TFT_WHITE);
-  d.setTextDatum(top_center);
-  d.drawString("HAL 9000", 160, 14, &fonts::FreeSansBold12pt7b);
-  if (!haveMemory) {
-    d.setTextDatum(bottom_center);
-    d.drawString("I can't find my memory, Dave.", 160, 236, &fonts::FreeSans9pt7b);
+void drawFrame() {
+  uint32_t now = millis();
+  hal::Mode m = audio.isPlaying() ? hal::Mode::Speaking : hal::Mode::Idle;
+  drawEye(lens, eyeParamsFor(m, false, 0, audio.level(), now));
+  lens.pushSprite(kEyeCx - kLensSprite / 2, kEyeCy - kLensSprite / 2, eyeTransparentKey());
+  if (++fpsFrames, now - fpsStartMs >= 5000) {
+    Serial.printf("fps %.1f\n", fpsFrames * 1000.0f / (now - fpsStartMs));
+    fpsFrames = 0;
+    fpsStartMs = now;
   }
 }
 
@@ -57,13 +58,22 @@ void setup() {
   } else {
     Serial.println("no SD card");
   }
+  M5.Display.setBrightness(160);
   audio.setVolume(config.volume);
-  drawPlainEye();
+  lens.setPsram(false);  // 46 KB in internal RAM: faster to draw and push
+  lens.setColorDepth(16);
+  lens.createSprite(kLensSprite, kLensSprite);
+  drawEyeBackground(M5.Display, !haveMemory);
   if (haveMemory) say(hal::Folder::Boot);
 }
 
 void loop() {
   M5.update();
+  serviceDebugCommands();
   if (haveMemory && M5.Touch.getDetail().wasClicked()) say(hal::Folder::Tap);
-  delay(10);
+  if (millis() - lastFrameMs >= 33) {
+    lastFrameMs = millis();
+    drawFrame();
+  }
+  delay(1);
 }
