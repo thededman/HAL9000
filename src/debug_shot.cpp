@@ -9,12 +9,14 @@ int serviceDebugCommands() {
     auto& d = M5.Display;
     const int w = d.width(), h = d.height();
     static uint16_t row[320];
+    Serial.setTxTimeoutMs(1000);  // the dump must not be dropped; normal logging stays non-blocking
     Serial.printf("SHOT %d %d\n", w, h);
     for (int y = 0; y < h; ++y) {
       d.readRect(0, y, w, 1, row);  // RGB565, byte-swapped (big-endian) like the panel
       Serial.write(reinterpret_cast<const uint8_t*>(row), w * 2);
     }
     Serial.flush();
+    Serial.setTxTimeoutMs(0);
   }
   return 0;
 }

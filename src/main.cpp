@@ -11,6 +11,7 @@
 #include <memory>
 
 #include "audio.h"
+#include "camera.h"
 #include "consoles.h"
 #include "debug_shot.h"
 #include "eye.h"
@@ -39,6 +40,8 @@ M5Canvas screen(&M5.Display);
 
 bool haveMemory = false;
 bool haveProximity = false;
+bool haveCamera = false;
+int camFrames = 0;
 hal::Mode lastMode = hal::Mode::Booting;
 bool lastQuiet = false;
 int lastBacklight = -1;
@@ -86,6 +89,9 @@ void drawFrame() {
   if (m == hal::Mode::Console) {
     if (consoles.draw(screen, now - consoleStartMs, audio.level())) screen.pushSprite(0, 0);
     return;
+  }
+  if (haveCamera && config.cameraPreview && m != hal::Mode::Daisy && m != hal::Mode::Dark) {
+    cameraPreview().pushSprite(240, 180);  // bottom-right, clear of the ring
   }
   float daisy = brain ? brain->daisyProgress() : 0;
   drawEye(lens, eyeParamsFor(m, lastQuiet, daisy, audio.level(), now));
@@ -178,6 +184,8 @@ void setup() {
   screen.setPsram(false);   // 75 KB in internal RAM
   screen.setColorDepth(8);  // RGB332 is plenty for the console readouts
   screen.createSprite(320, 240);
+  if (config.camera) haveCamera = cameraBegin();
+  else Serial.println("  camera off in config.txt");
   consoles.begin(esp_random());
 
   brain.reset(new hal::Brain(config, esp_random(), afterShutdown));
@@ -204,6 +212,7 @@ void loop() {
     }
   }
 
+  if (haveCamera && cameraPoll(now)) ++camFrames;
   hal::Inputs in = readInputs(now);
   hal::Actions a = brain->tick(in);
 
@@ -232,6 +241,8 @@ void loop() {
 
   if (now - lastLogMs >= 500) {
     lastLogMs = now;
+    if (haveCamera) Serial.printf("cam=%d score=%d heap=%u ", camFrames * 2, cameraScore(), unsigned(ESP.getFreeHeap()));
+    camFrames = 0;
     Serial.printf("prox=%d acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak, ax, ay, az, modeName(m), a.quiet);
     proxPeak = 0;
   }
