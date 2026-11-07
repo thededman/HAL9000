@@ -45,6 +45,15 @@ void test_idle_delay_range() {
   TEST_ASSERT_EQUAL_UINT32(20 * 60000u, hal::nextIdleDelayMs(12345, 20, 20));
 }
 
+// Unknown time (e.g. router down at boot): retry every 30 min. Known time: once a night at 03:00.
+void test_clock_sync_due() {
+  TEST_ASSERT_TRUE(hal::clockSyncDue(false, 0, 0, -1, 30 * 60000u));
+  TEST_ASSERT_FALSE(hal::clockSyncDue(false, 0, 0, -1, 10 * 60000u));
+  TEST_ASSERT_TRUE(hal::clockSyncDue(true, 3, 200, 199, 0));
+  TEST_ASSERT_FALSE(hal::clockSyncDue(true, 3, 200, 200, 99 * 60000u));
+  TEST_ASSERT_FALSE(hal::clockSyncDue(true, 14, 200, 199, 99 * 60000u));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_parseHHMM);
@@ -52,5 +61,6 @@ int main() {
   RUN_TEST(test_quiet_same_day_and_empty);
   RUN_TEST(test_greet_bucket);
   RUN_TEST(test_idle_delay_range);
+  RUN_TEST(test_clock_sync_due);
   return UNITY_END();
 }

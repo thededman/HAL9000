@@ -15,6 +15,7 @@
 #include "debug_shot.h"
 #include "eye.h"
 #include "hal_brain.h"
+#include "hal_clock.h"
 #include "hal_motion.h"
 #include "hal_voice_index.h"
 #include "net_time.h"
@@ -48,6 +49,7 @@ int proxPeak = 0;  // highest reading since the last log line
 float ax = 0, ay = 0, az = 1;
 bool bootSyncPending = true;
 int lastSyncYday = -1;
+uint32_t lastSyncAttemptMs = 0;
 
 // Debug injections over serial (see serviceDebugCommands): T tap, H hold, P walk-up, K shake, W bad Wi-Fi.
 uint32_t fakeTouchUntil = 0;
@@ -133,15 +135,17 @@ hal::Inputs readInputs(uint32_t now) {
 void maybeSyncClock(const hal::Inputs& in) {
   if (bootSyncPending && in.nowMs > 1500) {  // after the boot line has started
     bootSyncPending = false;
+    lastSyncAttemptMs = in.nowMs;
     syncTime(config, 15000, frameIfDue);
     return;
   }
-  if (!in.timeValid || in.hour != 3 || audio.isPlaying()) return;
+  if (bootSyncPending || audio.isPlaying()) return;
   time_t t = time(nullptr);
   struct tm lt;
   localtime_r(&t, &lt);
-  if (lt.tm_yday == lastSyncYday) return;
-  lastSyncYday = lt.tm_yday;
+  if (!hal::clockSyncDue(in.timeValid, in.hour, lt.tm_yday, lastSyncYday, in.nowMs - lastSyncAttemptMs)) return;
+  if (in.timeValid) lastSyncYday = lt.tm_yday;
+  lastSyncAttemptMs = in.nowMs;
   syncTime(config, 15000, frameIfDue);
 }
 
@@ -154,6 +158,7 @@ void setup() {
   auto cfg = M5.config();
   M5.begin(cfg);
   Serial.begin(115200);
+  Serial.setTxTimeoutMs(0);  // never stall the loop when no monitor is reading the USB port
   for (uint32_t t0 = millis(); !Serial && millis() - t0 < 2000;) delay(10);  // let a USB monitor attach
   Serial.printf("\nHAL 9000 booting%s\n", afterShutdown ? " (after shutdown)" : "");
 

@@ -19,4 +19,8 @@ GreetBucket greetBucket(int hour);
 // Delay until the next unprompted remark, uniformly in [min, max] minutes.
 uint32_t nextIdleDelayMs(uint32_t random, int minMinutes, int maxMinutes);
 
+// Whether to sync the clock over Wi-Fi now. Unknown time: retry every 30 minutes.
+// Known time: once a night, in the 03:00 hour, on a day not yet synced.
+bool clockSyncDue(bool timeValid, int hour, int yday, int lastSyncYday, uint32_t msSinceLastAttempt);
+
 }  // namespace hal

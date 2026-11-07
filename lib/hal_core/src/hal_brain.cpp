@@ -145,7 +145,8 @@ Actions Brain::tick(const Inputs& in) {
         return a;
       }
       bool gapOk = !havePlayed_ || now_ - lastPlayMs_ >= kIdleQuietGapMs;
-      if (!a.quiet && now_ >= nextIdleAtMs_ && gapOk) {
+      bool idleDue = static_cast<int32_t>(now_ - nextIdleAtMs_) >= 0;  // wrap-safe after ~49.7 days
+      if (!a.quiet && idleDue && gapOk) {
         play(a, Folder::Idle);
         mode_ = Mode::Speaking;
         nextIdleAtMs_ = now_ + nextIdleDelayMs(rng_.random(), cfg_.idleMinMinutes, cfg_.idleMaxMinutes);

@@ -79,5 +79,4 @@ python3.11 -m venv ~/.platformio/penv && ~/.platformio/penv/bin/pip install plat
 
 While the monitor is open you can type single letters to test without touching
 HAL: `T` tap, `H` hold on/off, `P` wave, `K` shake, `W` a Wi-Fi network that
-doesn't exist (he should give up after 15 s), `C` next console screen, and `S`
-dumps a raw screenshot.
+doesn't exist (he should give up after 15 s), and `S` dumps a raw screenshot.

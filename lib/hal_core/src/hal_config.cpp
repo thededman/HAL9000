@@ -82,8 +82,13 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
 
     std::string value = trim(stripInlineComment(raw));
     if (key == "timezone") {
-      if (value.empty()) warn("timezone: empty, using default");
-      else c.timezone = value;
+      // POSIX TZ strings always carry an hour offset and never a '/' (city names do).
+      bool hasDigit = value.find_first_of("0123456789") != std::string::npos;
+      if (value.empty() || !hasDigit || value.find('/') != std::string::npos) {
+        warn("timezone: '" + value + "' isn't a POSIX TZ string like EST5EDT,M3.2.0,M11.1.0, using default");
+      } else {
+        c.timezone = value;
+      }
       continue;
     }
     if (key == "quiet_start" || key == "quiet_end") {

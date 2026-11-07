@@ -5,7 +5,7 @@
 
 wifi_ssid=
 wifi_password=
-timezone=EST5EDT,M3.2.0,M11.1.0    # POSIX TZ; default matches the Mac (America/New_York)
+timezone=EST5EDT,M3.2.0,M11.1.0    # POSIX TZ string (US Eastern); city names like America/... don't work here
 quiet_start=22:00
 quiet_end=07:30
 volume=180                         # 0–255
@@ -14,5 +14,5 @@ idle_min_minutes=20
 idle_max_minutes=60
 greet_cooldown_minutes=10
 shake_cooldown_seconds=20
-proximity_threshold=120            # a hand waved close over the top edge; raise if HAL greets nobody
+proximity_threshold=120            # wave sensitivity: lower if waves don't get a greeting, raise if he greets an empty room
 hold_seconds=3

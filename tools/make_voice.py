@@ -56,8 +56,9 @@ def out_name(n: int, text: str) -> str:
     return f"{n:03d}-{slug(text)}.wav"
 
 
-def mine_name(n: int, filename: str) -> str:
-    return f"{n:03d}-{slug(pathlib.Path(filename).stem, words=8)}.wav"
+def mine_name(filename: str) -> str:
+    """Named after the clip, so converting the same clip again overwrites it."""
+    return f"{slug(pathlib.Path(filename).stem, words=8)}.wav"
 
 
 def folder_for(filename: str) -> str:
@@ -130,10 +131,9 @@ def convert_mine(src_dir: pathlib.Path) -> int:
     out_dir = SD_DIR / "voice" / "mine"
     out_dir.mkdir(parents=True, exist_ok=True)
     files = sorted(p for p in src_dir.iterdir() if p.suffix.lower() in AUDIO_EXTS and not p.name.startswith("."))
-    start = len(list(out_dir.glob("*.wav")))
-    for n, f in enumerate(files, start=start + 1):
-        ffmpeg(f, out_dir / mine_name(n, f.name), "loudnorm=I=-16:TP=-1.5")
-        print(f"  mine/{mine_name(n, f.name)}  <- {f.name}")
+    for f in files:
+        ffmpeg(f, out_dir / mine_name(f.name), "loudnorm=I=-16:TP=-1.5")
+        print(f"  mine/{mine_name(f.name)}  <- {f.name}")
     return len(files)
 
 
@@ -154,8 +154,8 @@ def copy_to_card(card: pathlib.Path) -> None:
                 old.unlink()
         for wav in folder.glob("*.wav"):
             shutil.copy2(wav, target / wav.name)
-    if not (dest / "config.txt").exists():
-        shutil.copy2(SD_DIR / "config.txt", dest / "config.txt")
+    if not (dest / "config.txt").exists():  # never overwrite: it holds the Wi-Fi password
+        shutil.copy2(TEMPLATE_CONFIG, dest / "config.txt")
         print(f"Copied config.txt — open {dest / 'config.txt'} and fill in your Wi-Fi.")
     subprocess.run(["dot_clean", "-m", str(dest)], check=False)  # only our folder
     print(f"Copied to {dest}")
@@ -170,8 +170,6 @@ def main() -> None:
     args = ap.parse_args()
 
     SD_DIR.mkdir(parents=True, exist_ok=True)
-    if not (SD_DIR / "config.txt").exists():
-        shutil.copy2(TEMPLATE_CONFIG, SD_DIR / "config.txt")
 
     if not args.skip_render:
         txts = sorted(LINES_DIR.glob("*.txt"))

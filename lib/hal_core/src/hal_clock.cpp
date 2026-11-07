@@ -37,4 +37,9 @@ uint32_t nextIdleDelayMs(uint32_t random, int minMinutes, int maxMinutes) {
   return lo + random % (span + 1);
 }
 
+bool clockSyncDue(bool timeValid, int hour, int yday, int lastSyncYday, uint32_t msSinceLastAttempt) {
+  if (!timeValid) return msSinceLastAttempt >= 30u * 60000u;
+  return hour == 3 && yday != lastSyncYday;
+}
+
 }  // namespace hal

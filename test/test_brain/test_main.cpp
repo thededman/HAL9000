@@ -37,7 +37,7 @@ struct Sim {
     in.minuteOfDay = hour * 60 + minute;
   }
   void run(uint32_t ms, uint32_t step = 20) {
-    for (uint32_t end = in.nowMs + ms; in.nowMs < end; in.nowMs += step) {
+    for (uint32_t i = 0; i < ms / step; ++i, in.nowMs += step) {  // counts steps: survives millis() wrap
       in.audioPlaying = audioLeft > 0;
       last = brain.tick(in);
       if (last.stopAudio) audioLeft = 0;
@@ -284,6 +284,18 @@ void test_idle_remark_fires_and_reschedules() {
   TEST_ASSERT_EQUAL(2, s.playsOf(Folder::Idle));
 }
 
+// millis() wraps after ~49.7 days; a remark scheduled across the wrap must still wait its full delay.
+void test_idle_remark_survives_millis_rollover() {
+  hal::Config c;
+  c.idleMinMinutes = c.idleMaxMinutes = 20;
+  Sim s(c);
+  s.in.nowMs = 0xFFFFFFFFu - 10 * 60000u;  // 10 minutes before the wrap
+  s.run(19 * 60000, 1000);
+  TEST_ASSERT_EQUAL(0, s.playsOf(Folder::Idle));
+  s.run(2 * 60000, 1000);
+  TEST_ASSERT_EQUAL(1, s.playsOf(Folder::Idle));
+}
+
 void test_quiet_volume() {
   Sim s;
   s.at(23, 0);
@@ -313,6 +325,7 @@ int main() {
   RUN_TEST(test_unknown_time_greets_afternoon_and_never_quiet);
   RUN_TEST(test_shake_interrupts_speaking_with_cooldown);
   RUN_TEST(test_idle_remark_fires_and_reschedules);
+  RUN_TEST(test_idle_remark_survives_millis_rollover);
   RUN_TEST(test_quiet_volume);
   return UNITY_END();
 }

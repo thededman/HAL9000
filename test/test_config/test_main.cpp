@@ -104,6 +104,22 @@ void test_idle_min_over_max_resets() {
   TEST_ASSERT_EQUAL(1, w.size());
 }
 
+// The ESP32 clock wants a POSIX TZ string; a city name silently means UTC.
+void test_bad_timezone_warns_and_defaults() {
+  auto c = hal::parseConfig("timezone=America/New_York\n", &w);
+  TEST_ASSERT_EQUAL_STRING("EST5EDT,M3.2.0,M11.1.0", c.timezone.c_str());
+  TEST_ASSERT_EQUAL(1, w.size());
+  TEST_ASSERT_NOT_EQUAL(std::string::npos, w[0].find("timezone"));
+  w.clear();
+  c = hal::parseConfig("timezone=UTC\n", &w);
+  TEST_ASSERT_EQUAL_STRING("EST5EDT,M3.2.0,M11.1.0", c.timezone.c_str());
+  TEST_ASSERT_EQUAL(1, w.size());
+  w.clear();
+  c = hal::parseConfig("timezone=UTC0\n", &w);
+  TEST_ASSERT_EQUAL_STRING("UTC0", c.timezone.c_str());
+  TEST_ASSERT_EQUAL(0, w.size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_on_empty);
@@ -114,5 +130,6 @@ int main() {
   RUN_TEST(test_bad_values_warn_and_default);
   RUN_TEST(test_unknown_key_warns);
   RUN_TEST(test_idle_min_over_max_resets);
+  RUN_TEST(test_bad_timezone_warns_and_defaults);
   return UNITY_END();
 }
