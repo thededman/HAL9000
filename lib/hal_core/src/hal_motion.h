@@ -44,4 +44,20 @@ class ProximityEdge {
   bool armed_ = false;
 };
 
+// Camera motion scores (0..255, one per frame) -> "someone just walked in".
+// The room must be settled (score < threshold/2 for 20 s); then 2 frames in a row
+// at or above the threshold fire once, and the room must settle again.
+class ArrivalDetector {
+ public:
+  explicit ArrivalDetector(int threshold) : threshold_(threshold) {}
+  bool update(int score, uint32_t nowMs);
+
+ private:
+  int threshold_;
+  bool settled_ = false;
+  bool settling_ = false;
+  uint32_t settleStartMs_ = 0;
+  int hits_ = 0;
+};
+
 }  // namespace hal

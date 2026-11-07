@@ -94,4 +94,26 @@ bool ProximityEdge::update(int reading) {
   return false;
 }
 
+bool ArrivalDetector::update(int score, uint32_t nowMs) {
+  if (settled_) {
+    hits_ = score >= threshold_ ? hits_ + 1 : 0;
+    if (hits_ < 2) return false;
+    settled_ = false;
+    settling_ = false;
+    hits_ = 0;
+    return true;
+  }
+  if (score * 2 >= threshold_) {  // still busy: start the settle over
+    settling_ = false;
+    return false;
+  }
+  if (!settling_) {
+    settling_ = true;
+    settleStartMs_ = nowMs;
+  } else if (static_cast<int32_t>(nowMs - settleStartMs_) >= 20000) {  // wrap-safe
+    settled_ = true;
+  }
+  return false;
+}
+
 }  // namespace hal

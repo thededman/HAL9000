@@ -97,6 +97,90 @@ void test_proximity_edge_hysteresis() {
   TEST_ASSERT_TRUE(p.update(320));
 }
 
+// Camera arrivals: one score per frame, ~15 fps.
+struct Cam {
+  hal::ArrivalDetector d{20};
+  uint32_t t = 0;
+  int arrivals = 0;
+  void one(int score) {
+    if (d.update(score, t)) ++arrivals;
+    t += 66;
+  }
+  void hold(int score, uint32_t ms) {
+    for (uint32_t i = 0; i < ms / 66; ++i) one(score);
+  }
+};
+
+void test_arrival_after_settle() {
+  Cam c;
+  c.hold(3, 3000);
+  TEST_ASSERT_EQUAL(0, c.arrivals);
+  c.hold(3, 22000);
+  c.one(40);
+  c.one(40);
+  TEST_ASSERT_EQUAL(1, c.arrivals);
+}
+
+void test_no_arrival_before_settle() {
+  Cam c;
+  c.hold(3, 10000);
+  c.one(40);
+  c.one(40);
+  TEST_ASSERT_EQUAL(0, c.arrivals);
+}
+
+void test_single_frame_flicker_ignored() {
+  Cam c;
+  c.hold(3, 25000);
+  c.one(40);
+  c.one(3);
+  c.one(40);
+  c.one(3);
+  TEST_ASSERT_EQUAL(0, c.arrivals);
+}
+
+void test_fires_once_then_resettles() {
+  Cam c;
+  c.hold(3, 25000);
+  c.one(40);
+  c.one(40);
+  c.hold(40, 5000);
+  TEST_ASSERT_EQUAL(1, c.arrivals);
+  c.hold(3, 21000);
+  c.one(40);
+  c.one(40);
+  TEST_ASSERT_EQUAL(2, c.arrivals);
+}
+
+// Review Focus 1: a light switching on is one big spike
+void test_light_switch_spike() {
+  Cam c;
+  c.hold(3, 25000);
+  c.one(120);
+  c.one(120);
+  c.one(120);
+  c.hold(3, 60000);
+  TEST_ASSERT_EQUAL(1, c.arrivals);
+}
+
+// Review Focus 2: auto-exposure hunting around the threshold
+void test_hovering_scores() {
+  Cam c;
+  c.hold(3, 25000);
+  for (int i = 0; i < 60000 / 66; ++i) c.one(i % 2 ? 22 : 18);
+  TEST_ASSERT_TRUE(c.arrivals <= 1);
+}
+
+// Review Focus 4: millis() wraps during the settle
+void test_arrival_across_millis_wrap() {
+  Cam c;
+  c.t = 0xFFFFFFFFu - 10000u;
+  c.hold(3, 25000);
+  c.one(40);
+  c.one(40);
+  TEST_ASSERT_EQUAL(1, c.arrivals);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_still_is_quiet);
@@ -106,5 +190,12 @@ int main() {
   RUN_TEST(test_pickup);
   RUN_TEST(test_brief_tilt_ignored);
   RUN_TEST(test_proximity_edge_hysteresis);
+  RUN_TEST(test_arrival_after_settle);
+  RUN_TEST(test_no_arrival_before_settle);
+  RUN_TEST(test_single_frame_flicker_ignored);
+  RUN_TEST(test_fires_once_then_resettles);
+  RUN_TEST(test_light_switch_spike);
+  RUN_TEST(test_hovering_scores);
+  RUN_TEST(test_arrival_across_millis_wrap);
   return UNITY_END();
 }
