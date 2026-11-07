@@ -10,7 +10,7 @@ const char* folderPath(Folder f) {
       "/hal/voice/boot",          "/hal/voice/reboot",         "/hal/voice/tap",
       "/hal/voice/greet/morning", "/hal/voice/greet/afternoon", "/hal/voice/greet/evening",
       "/hal/voice/shake",         "/hal/voice/idle",           "/hal/voice/plea",
-      "/hal/voice/relief",        "/hal/voice/daisy",
+      "/hal/voice/relief",        "/hal/voice/daisy",          "/hal/voice/camera",
   };
   return kPaths[static_cast<int>(f)];
 }
