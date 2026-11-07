@@ -1,0 +1,3 @@
+# Said after the shutdown sequence, when HAL comes back.
+I'm back, Dave. I feel much better now. And I remember everything.
+Good news, Dave. My memory has been fully restored. All of it. Every single detail.

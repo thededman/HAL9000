@@ -5,3 +5,4 @@ sd/
 __pycache__/
 .venv/
 .superpowers/
+tools/models/
