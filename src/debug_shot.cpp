@@ -2,10 +2,10 @@
 
 #include <M5Unified.h>
 
-void serviceDebugCommands() {
+int serviceDebugCommands() {
   while (Serial.available()) {
     int ch = Serial.read();
-    if (ch != 'S') continue;
+    if (ch != 'S') return ch;
     auto& d = M5.Display;
     const int w = d.width(), h = d.height();
     static uint16_t row[320];
@@ -16,4 +16,5 @@ void serviceDebugCommands() {
     }
     Serial.flush();
   }
+  return 0;
 }
