@@ -186,7 +186,7 @@ void setup() {
   screen.createSprite(320, 240);
   if (config.camera) haveCamera = cameraBegin();
   else Serial.println("  camera off in config.txt");
-  consoles.begin(esp_random());
+  consoles.begin(esp_random(), haveCamera);
 
   brain.reset(new hal::Brain(config, esp_random(), afterShutdown));
   brain->setSequenceLengths(voices.count(hal::Folder::Plea), voices.count(hal::Folder::Daisy));
@@ -220,8 +220,10 @@ void loop() {
   lastQuiet = a.quiet;
   if (a.stopAudio) audio.stop();
   if (a.newConsole) {
-    consoles.next();
+    bool visual = consoles.next();
     consoleStartMs = now;
+    // Visual Analysis gets a camera line, if there are any on the card.
+    if (visual && a.play && voices.count(hal::Folder::Camera) > 0) a.folder = hal::Folder::Camera;
   }
   if (a.play) play(a);
   if (a.restart) {

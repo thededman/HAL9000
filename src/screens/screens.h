@@ -19,5 +19,6 @@ void readout(M5Canvas& c, uint32_t tMs, uint8_t level);
 void trajectory(M5Canvas& c, uint32_t tMs, uint8_t level);
 void analyser(M5Canvas& c, uint32_t tMs, uint8_t level);
 void globe(M5Canvas& c, uint32_t tMs, uint8_t level);
+void visual(M5Canvas& c, uint32_t tMs, uint8_t level);  // needs the camera
 
 }  // namespace screens

@@ -23,7 +23,8 @@ bool isJpg(const std::string& n) {
 
 }  // namespace
 
-void Consoles::begin(uint32_t seed) {
+void Consoles::begin(uint32_t seed, bool withCamera) {
+  withCamera_ = withCamera;
   bag_ = hal::ShuffleBag(seed);
   jpgs_.clear();
   File d = SD.open("/hal/screens");
@@ -35,14 +36,16 @@ void Consoles::begin(uint32_t seed) {
     }
   }
   std::sort(jpgs_.begin(), jpgs_.end());
-  bag_.reset(kBuiltInCount + jpgs_.size());
-  Serial.printf("  console screens: %d built-in + %u images\n", kBuiltInCount, unsigned(jpgs_.size()));
+  bag_.reset(kBuiltInCount + (withCamera_ ? 1 : 0) + jpgs_.size());
+  Serial.printf("  console screens: %d built-in%s + %u images\n", kBuiltInCount, withCamera_ ? " + visual analysis" : "",
+                unsigned(jpgs_.size()));
   next();
 }
 
-void Consoles::next() {
+bool Consoles::next() {
   current_ = bag_.next();
   jpgDrawn_ = false;
+  return withCamera_ && current_ == kBuiltInCount;
 }
 
 bool Consoles::draw(M5Canvas& c, uint32_t tMs, uint8_t voiceLevel) {
@@ -50,10 +53,14 @@ bool Consoles::draw(M5Canvas& c, uint32_t tMs, uint8_t voiceLevel) {
     kBuiltIn[current_](c, tMs, voiceLevel);
     return true;
   }
+  if (withCamera_ && current_ == kBuiltInCount) {
+    screens::visual(c, tMs, voiceLevel);
+    return true;
+  }
   if (jpgDrawn_) return false;  // a still image: decode once, then hold it
   auto& d = M5.Display;
   d.fillScreen(TFT_BLACK);
-  const std::string& path = jpgs_[current_ - kBuiltInCount];
+  const std::string& path = jpgs_[current_ - kBuiltInCount - (withCamera_ ? 1 : 0)];
   if (!d.drawJpgFile(SD, path.c_str(), 0, 0, 320, 240)) Serial.printf("skip %s: can't decode\n", path.c_str());
   jpgDrawn_ = true;
   return false;
