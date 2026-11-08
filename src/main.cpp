@@ -34,6 +34,7 @@ hal::Config config;
 std::unique_ptr<hal::Brain> brain;
 hal::MotionDetector motion;
 std::unique_ptr<hal::ProximityEdge> proxEdge;
+std::unique_ptr<hal::ArrivalDetector> arrival;  // someone walked into the camera's view
 Consoles consoles;
 M5Canvas lens(&M5.Display);
 M5Canvas screen(&M5.Display);
@@ -42,6 +43,7 @@ bool haveMemory = false;
 bool haveProximity = false;
 bool haveCamera = false;
 int camFrames = 0;
+int camPeak = 0;  // highest motion score since the last log line
 hal::Mode lastMode = hal::Mode::Booting;
 bool lastQuiet = false;
 int lastBacklight = -1;
@@ -121,7 +123,14 @@ hal::Inputs readInputs(uint32_t now) {
   }
   if (now - lastImuMs >= 20) {
     lastImuMs = now;
-    if (M5.Imu.getAccel(&ax, &ay, &az)) in.motion = motion.update(ax, ay, az, now);
+    float px = ax, py = ay, pz = az;
+    if (M5.Imu.getAccel(&ax, &ay, &az)) {
+      in.motion = motion.update(ax, ay, az, now);
+      // Any jolt or tilt means the camera view is swinging: not someone walking in.
+      float jolt = fabsf(sqrtf(ax * ax + ay * ay + az * az) - 1.0f);
+      float turn = fabsf(ax - px) + fabsf(ay - py) + fabsf(az - pz);
+      if (arrival && (jolt > 0.08f || turn > 0.08f)) arrival->disturb();
+    }
   }
   if (fakeProx) in.proximityEdge = true;
   if (fakeShake) in.motion = hal::MotionEvent::Shake;
@@ -177,6 +186,7 @@ void setup() {
   restoreTimeFromRtc(config);
   haveProximity = proximityBegin();
   proxEdge.reset(new hal::ProximityEdge(config.proximityThreshold));
+  arrival.reset(new hal::ArrivalDetector(config.cameraMotionThreshold));
 
   lens.setPsram(false);
   lens.setColorDepth(16);
@@ -212,8 +222,15 @@ void loop() {
     }
   }
 
-  if (haveCamera && cameraPoll(now)) ++camFrames;
+  bool camArrival = false;
+  if (haveCamera && cameraPoll(now)) {
+    ++camFrames;
+    if (cameraScore() > camPeak) camPeak = cameraScore();
+    camArrival = arrival->update(cameraScore(), now);
+    if (camArrival) Serial.printf("arrival (score %d)\n", cameraScore());
+  }
   hal::Inputs in = readInputs(now);
+  if (camArrival) in.proximityEdge = true;  // a walk-in greets like a wave
   hal::Actions a = brain->tick(in);
 
   audio.setVolume(static_cast<uint8_t>(a.volume));
@@ -243,8 +260,9 @@ void loop() {
 
   if (now - lastLogMs >= 500) {
     lastLogMs = now;
-    if (haveCamera) Serial.printf("cam=%d score=%d heap=%u ", camFrames * 2, cameraScore(), unsigned(ESP.getFreeHeap()));
+    if (haveCamera) Serial.printf("cam=%d score=%d heap=%u ", camFrames * 2, camPeak, unsigned(ESP.getFreeHeap()));
     camFrames = 0;
+    camPeak = 0;
     Serial.printf("prox=%d acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak, ax, ay, az, modeName(m), a.quiet);
     proxPeak = 0;
   }

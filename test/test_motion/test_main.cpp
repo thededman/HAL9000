@@ -181,6 +181,20 @@ void test_arrival_across_millis_wrap() {
   TEST_ASSERT_EQUAL(1, c.arrivals);
 }
 
+// HAL being moved swings the whole camera view: that must not count as someone arriving.
+void test_disturb_requires_resettle() {
+  Cam c;
+  c.hold(3, 25000);  // settled
+  c.d.disturb();     // the IMU says HAL is moving
+  c.one(40);
+  c.one(40);
+  TEST_ASSERT_EQUAL(0, c.arrivals);
+  c.hold(3, 21000);
+  c.one(40);
+  c.one(40);
+  TEST_ASSERT_EQUAL(1, c.arrivals);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_still_is_quiet);
@@ -197,5 +211,6 @@ int main() {
   RUN_TEST(test_light_switch_spike);
   RUN_TEST(test_hovering_scores);
   RUN_TEST(test_arrival_across_millis_wrap);
+  RUN_TEST(test_disturb_requires_resettle);
   return UNITY_END();
 }

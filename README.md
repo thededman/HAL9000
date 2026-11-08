@@ -57,10 +57,18 @@ own clips (mp3, m4a, wav): put them in a folder and pass `--mine-from <folder>`.
 | Shake, pick up or tip him over | Complains, at most every 20 seconds |
 | Hold the screen for 3 seconds | Pleads with you; let go and he's relieved, keep holding and he sings "Daisy Bell", goes dark and restarts |
 | Leave him alone | An unprompted remark every 20–60 minutes |
+| Walk into his camera's view | Greets you like a wave (the room has to be still for 20 s first) |
+| Tap until Visual Analysis comes up | A live camera view with a targeting overlay, and a line about what he "sees" |
 
 From 22:00 to 07:30 he dims, stops greeting and talking on his own, and answers
 taps and shakes at half volume. The proximity sensor sits behind the glass and only
-sees a hand a few centimetres away, which is why greetings need a wave.
+sees a hand a few centimetres away, which is why greetings need a wave or the camera.
+
+**The camera.** A tiny live view sits beside the eye. Frames stay in HAL's memory:
+nothing is saved or sent anywhere. Point him at the room, upright or leaning back a
+little; lying flat he only sees the ceiling. Moving HAL never counts as someone
+arriving. Settings in `config.txt`: `camera=on|off`, `camera_preview=on|off`, and
+`camera_motion_threshold` (default 20; lower notices smaller movements).
 
 ## Building and flashing
 

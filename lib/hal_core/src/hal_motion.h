@@ -51,6 +51,12 @@ class ArrivalDetector {
  public:
   explicit ArrivalDetector(int threshold) : threshold_(threshold) {}
   bool update(int score, uint32_t nowMs);
+  // HAL himself is moving (the whole view swings): forget the settle.
+  void disturb() {
+    settled_ = false;
+    settling_ = false;
+    hits_ = 0;
+  }
 
  private:
   int threshold_;
