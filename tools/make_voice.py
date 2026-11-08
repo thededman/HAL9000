@@ -6,7 +6,8 @@
     tools/.venv/bin/python tools/make_voice.py --mine-from ~/Clips   # your own clips -> mine/
     tools/.venv/bin/python tools/make_voice.py --copy-to /Volumes/HAL
 
-Voice: Piper en_GB-alan-medium, slowed, dry and close. Output: 22 050 Hz mono 16-bit.
+Voice: the HAL 9000 Piper voice (campwill/HAL-9000-Piper-TTS on Hugging Face), used as
+trained, levelled only. Output: 22 050 Hz mono 16-bit.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.request
 import wave
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
@@ -25,12 +27,16 @@ SD_DIR = ROOT / "sd" / "hal"
 MODELS_DIR = ROOT / "tools" / "models"
 TEMPLATE_CONFIG = ROOT / "sd-template" / "hal" / "config.txt"
 
-VOICE = "en_GB-alan-medium"
-LENGTH_SCALE = 1.3  # dry close-mic tuning, picked by David 2026-11-06
-NOISE_SCALE = 0.5
-NOISE_W_SCALE = 0.6
-FX = ("asetrate=22050*0.96,aresample=22050,atempo=1.0417,highpass=f=80,lowpass=f=7500,"
-      "bass=g=3:f=150,acompressor=threshold=-20dB:ratio=3,loudnorm=I=-16:TP=-1.5")
+VOICE = "hal"
+# Pinned to the revision David listened to, so a re-download can't change the voice.
+VOICE_URL = ("https://huggingface.co/campwill/HAL-9000-Piper-TTS/resolve/"
+             "5ad905a1f42cb33364df9d3856491bca8738b9fa/")
+# The model's own settings (hal.onnx.json): they made the Hugging Face sample David
+# picked on 2026-11-08 ("spot on"). No tone effects, so the voice stays as trained.
+LENGTH_SCALE = 1.0
+NOISE_SCALE = 0.667
+NOISE_W_SCALE = 0.8
+FX = "loudnorm=I=-16:TP=-1.5"  # same loudness for every clip, never clipping
 OUT_FLAGS = ["-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", "-map_metadata", "-1", "-fflags", "+bitexact"]
 AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".aif", ".aiff", ".flac", ".ogg"}
 
@@ -67,9 +73,9 @@ def folder_for(filename: str) -> str:
 
 
 def daisy_filter(i: int) -> str:
-    rate = round(0.96 - 0.07 * i, 2)
-    return (f"asetrate=22050*{rate:.2f},aresample=22050,highpass=f=80,lowpass=f=7500,"
-            "bass=g=3:f=150,acompressor=threshold=-20dB:ratio=3,loudnorm=I=-16:TP=-1.5")
+    """Verse 1 in HAL's own voice, then each verse slower and deeper as he winds down."""
+    rate = round(1.0 - 0.07 * i, 2)
+    return f"asetrate=22050*{rate:.2f},aresample=22050,{FX}"
 
 
 # ---------- rendering ----------
@@ -93,10 +99,14 @@ def load_voice():
         sys.exit(f"Piper's speech data path is too long for espeak (max ~160 chars):\n  {ESPEAK_DATA_DIR}\n"
                  "Move the venv somewhere with a shorter path.")
     model = MODELS_DIR / f"{VOICE}.onnx"
-    if not model.exists():
-        MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        subprocess.run([sys.executable, "-m", "piper.download_voices", "--download-dir", str(MODELS_DIR), VOICE],
-                       check=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    for name in (f"{VOICE}.onnx.json", f"{VOICE}.onnx"):
+        dst = MODELS_DIR / name
+        if not dst.exists():
+            print(f"Downloading {name} from Hugging Face...")
+            part = dst.with_name(dst.name + ".part")
+            urllib.request.urlretrieve(VOICE_URL + name, part)
+            part.rename(dst)
     return PiperVoice.load(str(model))
 
 

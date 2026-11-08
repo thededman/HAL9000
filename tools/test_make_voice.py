@@ -26,9 +26,9 @@ class HelperTests(unittest.TestCase):
 
     def test_daisy_filters(self):
         f3 = mv.daisy_filter(3)
-        self.assertIn("asetrate=22050*0.75", f3)
+        self.assertIn("asetrate=22050*0.79", f3)
         self.assertNotIn("atempo", f3)
-        self.assertIn("asetrate=22050*0.96", mv.daisy_filter(0))
+        self.assertIn("asetrate=22050*1.00", mv.daisy_filter(0))
 
     def test_mine_names(self):
         self.assertEqual(mv.mine_name("My Clip (final).mp3"), "my-clip-final.wav")

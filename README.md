@@ -7,7 +7,10 @@ in "Daisy Bell", and the occasional unprompted remark. Quiet hours keep him sile
 at night.
 
 HAL's voice is generated on the Mac with [Piper](https://github.com/OHF-Voice/piper1-gpl)
-(the `en_GB-alan-medium` voice, slowed, dry and close) and stored on the microSD card.
+and stored on the microSD card. The voice is
+[HAL-9000-Piper-TTS](https://huggingface.co/campwill/HAL-9000-Piper-TTS), trained on
+HAL's dialogue from the film and used as trained. It runs on the Mac's CPU: no Ollama
+or other AI server needed.
 Every line is original, apart from the 1892 "Daisy Bell" chorus.
 
 ## What's in here
@@ -44,6 +47,9 @@ tools/.venv/bin/pip install -r tools/requirements.txt
 tools/.venv/bin/python tools/make_voice.py                          # writes sd/hal/...
 tools/.venv/bin/python tools/make_voice.py --copy-to /Volumes/HAL   # copies onto the card
 ```
+
+The first run downloads the HAL voice (64 MB) into `tools/models/`. All 105 lines take
+about 20 seconds to render.
 
 To add a joke: add a line to `content/lines/tap.txt` and run it again. To add your
 own clips (mp3, m4a, wav): put them in a folder and pass `--mine-from <folder>`.

@@ -6,6 +6,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- HAL sounds like HAL. All 105 lines are re-recorded in a voice trained on HAL 9000's
+  dialogue from the film, replacing the "Alan" voice. Copy them onto the card with
+  `tools/make_voice.py --copy-to /Volumes/HAL`.
+- "Daisy Bell" now starts in HAL's normal voice, then each verse is slower and deeper.
+
 ## [0.2.0] - 2026-11-08
 
 HAL can see.
