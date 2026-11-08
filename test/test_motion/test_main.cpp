@@ -195,6 +195,45 @@ void test_disturb_requires_resettle() {
   TEST_ASSERT_EQUAL(1, c.arrivals);
 }
 
+// I2: someone already sitting in front of HAL fidgets: that's not a new arrival.
+void test_fidget_unsettles() {
+  Cam c;
+  c.hold(3, 25000);   // settled
+  c.hold(12, 1500);   // fidgeting below the threshold for 1.5 s
+  c.one(40);
+  c.one(40);
+  TEST_ASSERT_EQUAL(0, c.arrivals);
+}
+
+// ...but a real walk-in ramps up quickly and still counts.
+void test_walkin_ramp_still_fires() {
+  Cam c;
+  c.hold(3, 25000);
+  c.one(12);
+  c.one(25);
+  c.one(30);
+  TEST_ASSERT_EQUAL(1, c.arrivals);
+}
+
+// I3: the score is how much of the picture changed: 1% of cells = 5 points.
+void test_motion_score_scale() {
+  TEST_ASSERT_EQUAL(0, hal::motionScore(0, 4800));
+  TEST_ASSERT_EQUAL(20, hal::motionScore(192, 4800));   // 4% of the picture
+  TEST_ASSERT_EQUAL(255, hal::motionScore(2900, 4800)); // most of it: capped
+  TEST_ASSERT_EQUAL(0, hal::motionScore(10, 0));
+}
+
+// I1: turning HAL slowly (gyro) counts as HAL moving, not just jolts.
+void test_imu_says_moving() {
+  const float still[3] = {0, 0.71f, 0.70f};
+  const float calm[3] = {0.4f, -0.6f, 0.3f};
+  const float turning[3] = {0.5f, 0.2f, 12.0f};
+  const float jolted[3] = {0.0f, 0.71f, 0.95f};
+  TEST_ASSERT_FALSE(hal::imuSaysMoving(still, still, calm));
+  TEST_ASSERT_TRUE(hal::imuSaysMoving(still, still, turning));
+  TEST_ASSERT_TRUE(hal::imuSaysMoving(jolted, still, calm));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_still_is_quiet);
@@ -212,5 +251,9 @@ int main() {
   RUN_TEST(test_hovering_scores);
   RUN_TEST(test_arrival_across_millis_wrap);
   RUN_TEST(test_disturb_requires_resettle);
+  RUN_TEST(test_fidget_unsettles);
+  RUN_TEST(test_walkin_ramp_still_fires);
+  RUN_TEST(test_motion_score_scale);
+  RUN_TEST(test_imu_says_moving);
   return UNITY_END();
 }

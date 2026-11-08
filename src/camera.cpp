@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "esp_camera.h"
+#include "hal_motion.h"
 
 namespace {
 
@@ -19,6 +20,8 @@ uint16_t* frameCopy = nullptr;  // PSRAM, kW * kH
 uint8_t prevGrey[kGW * kGH];
 bool havePrev = false;
 uint32_t lastPollMs = 0;
+int emptyPolls = 0;
+bool stalled = false;  // the camera stopped delivering frames: stop asking
 int score = 0;
 bool haveBox = false;
 int boxX = 0, boxY = 0, boxW = 0, boxH = 0;
@@ -72,17 +75,31 @@ bool cameraBegin() {
   if (err != ESP_OK) return false;
   preview.setPsram(false);
   preview.setColorDepth(16);
-  preview.createSprite(kGW, kGH);
-  preview.fillScreen(TFT_BLACK);
   frameCopy = static_cast<uint16_t*>(ps_malloc(kW * kH * 2));
-  return frameCopy != nullptr;
+  if (!preview.createSprite(kGW, kGH) || !frameCopy) {
+    Serial.println("  camera: out of memory, turning it off");
+    preview.deleteSprite();
+    free(frameCopy);
+    frameCopy = nullptr;
+    esp_camera_deinit();
+    return false;
+  }
+  preview.fillScreen(TFT_BLACK);
+  return true;
 }
 
 bool cameraPoll(uint32_t nowMs) {
-  if (nowMs - lastPollMs < kPollMs) return false;
+  if (stalled || nowMs - lastPollMs < kPollMs) return false;
   lastPollMs = nowMs;
-  camera_fb_t* fb = esp_camera_fb_get();
-  if (!fb) return false;
+  camera_fb_t* fb = esp_camera_fb_get();  // can block for seconds if the camera stalls
+  if (!fb) {
+    if (++emptyPolls >= 3) {
+      stalled = true;
+      Serial.println("camera: no frames, giving up until restart");
+    }
+    return false;
+  }
+  emptyPolls = 0;
   if (fb->width != kW || fb->height != kH || fb->len < size_t(kW * kH * 2)) {
     esp_camera_fb_return(fb);
     return false;
@@ -92,7 +109,6 @@ bool cameraPoll(uint32_t nowMs) {
   esp_camera_fb_return(fb);
 
   auto* dst = static_cast<uint16_t*>(preview.getBuffer());  // sprite buffers are byte-swapped too
-  long total = 0;
   int moving = 0, minX = kGW, minY = kGH, maxX = -1, maxY = -1;
   for (int y = 0; y < kGH; ++y) {
     for (int x = 0; x < kGW; ++x) {
@@ -101,7 +117,6 @@ bool cameraPoll(uint32_t nowMs) {
       uint8_t g = grey(px);
       int i = y * kGW + x;
       int d = havePrev ? abs(int(g) - int(prevGrey[i])) : 0;
-      total += d;
       if (d > kCellChange) {
         ++moving;
         if (x < minX) minX = x;
@@ -112,7 +127,7 @@ bool cameraPoll(uint32_t nowMs) {
       prevGrey[i] = g;
     }
   }
-  score = havePrev ? int(total / (kGW * kGH)) : 0;
+  score = havePrev ? hal::motionScore(moving, kGW * kGH) : 0;
   havePrev = true;
   haveBox = moving >= kMinMovingCells;
   if (haveBox) {

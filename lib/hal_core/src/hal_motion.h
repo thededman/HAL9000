@@ -44,9 +44,17 @@ class ProximityEdge {
   bool armed_ = false;
 };
 
+// How much of the camera picture changed: 1% of the cells = 5 points, capped at 255.
+int motionScore(int movingCells, int totalCells);
+
+// HAL himself is moving: a jolt or tilt (accelerometer change > 0.08 g) or a turn
+// (any gyro axis > 5 deg/s). Then the camera view swings and nothing is an arrival.
+bool imuSaysMoving(const float accel[3], const float prevAccel[3], const float gyroDps[3]);
+
 // Camera motion scores (0..255, one per frame) -> "someone just walked in".
 // The room must be settled (score < threshold/2 for 20 s); then 2 frames in a row
-// at or above the threshold fire once, and the room must settle again.
+// at or above the threshold fire once, and the room must settle again. Middling
+// movement for over a second (someone already there, fidgeting) unsettles it.
 class ArrivalDetector {
  public:
   explicit ArrivalDetector(int threshold) : threshold_(threshold) {}
@@ -55,14 +63,18 @@ class ArrivalDetector {
   void disturb() {
     settled_ = false;
     settling_ = false;
+    busy_ = false;
     hits_ = 0;
   }
+  bool settled() const { return settled_; }
 
  private:
   int threshold_;
   bool settled_ = false;
   bool settling_ = false;
   uint32_t settleStartMs_ = 0;
+  bool busy_ = false;
+  uint32_t busySinceMs_ = 0;
   int hits_ = 0;
 };
 

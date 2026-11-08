@@ -94,14 +94,41 @@ bool ProximityEdge::update(int reading) {
   return false;
 }
 
+int motionScore(int movingCells, int totalCells) {
+  if (totalCells <= 0) return 0;
+  long s = long(movingCells) * 500 / totalCells;
+  return s > 255 ? 255 : int(s);
+}
+
+bool imuSaysMoving(const float a[3], const float p[3], const float g[3]) {
+  float jolt = std::fabs(std::sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]) - 1.0f);
+  float turn = std::fabs(a[0] - p[0]) + std::fabs(a[1] - p[1]) + std::fabs(a[2] - p[2]);
+  bool spinning = std::fabs(g[0]) > 5.0f || std::fabs(g[1]) > 5.0f || std::fabs(g[2]) > 5.0f;
+  return jolt > 0.08f || turn > 0.08f || spinning;
+}
+
 bool ArrivalDetector::update(int score, uint32_t nowMs) {
   if (settled_) {
-    hits_ = score >= threshold_ ? hits_ + 1 : 0;
-    if (hits_ < 2) return false;
-    settled_ = false;
-    settling_ = false;
+    if (score >= threshold_) {
+      busy_ = false;
+      if (++hits_ < 2) return false;
+      settled_ = false;
+      settling_ = false;
+      hits_ = 0;
+      return true;
+    }
     hits_ = 0;
-    return true;
+    if (score * 2 < threshold_) {
+      busy_ = false;
+    } else if (!busy_) {
+      busy_ = true;
+      busySinceMs_ = nowMs;
+    } else if (static_cast<int32_t>(nowMs - busySinceMs_) >= 1000) {  // someone's already there
+      settled_ = false;
+      settling_ = false;
+      busy_ = false;
+    }
+    return false;
   }
   if (score * 2 >= threshold_) {  // still busy: start the settle over
     settling_ = false;

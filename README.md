@@ -68,7 +68,8 @@ sees a hand a few centimetres away, which is why greetings need a wave or the ca
 nothing is saved or sent anywhere. Point him at the room, upright or leaning back a
 little; lying flat he only sees the ceiling. Moving HAL never counts as someone
 arriving. Settings in `config.txt`: `camera=on|off`, `camera_preview=on|off`, and
-`camera_motion_threshold` (default 20; lower notices smaller movements).
+`camera_motion_threshold` (default 20, meaning 4% of the picture has to change;
+lower notices smaller movements).
 
 ## Building and flashing
 

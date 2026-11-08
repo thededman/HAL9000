@@ -11,7 +11,7 @@ bool cameraBegin();
 bool cameraPoll(uint32_t nowMs);
 
 M5Canvas& cameraPreview();  // 80x60, 16-bit
-int cameraScore();          // 0..255, how much changed since the previous frame
+int cameraScore();          // 0..255: share of the picture that changed (1% = 5 points)
 // Moving area in 160x120 frame coordinates; false when too little changed.
 bool cameraBox(int* x, int* y, int* w, int* h);
 const uint16_t* cameraFrame();  // latest 160x120 frame, byte-swapped RGB565, or nullptr

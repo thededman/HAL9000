@@ -6,6 +6,20 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-08
+
+HAL can see.
+
+### Added
+- A tiny live camera view beside the eye. Frames stay in HAL's memory: nothing is
+  saved or sent anywhere. Hide it with `camera_preview=off`.
+- HAL notices someone walking into view and greets them like a wave (the room has
+  to be still for 20 seconds first; quiet hours still apply). Picking HAL up or
+  tilting him never counts as someone arriving.
+- A sixth console screen, "Visual Analysis": the live camera view with a targeting
+  overlay, while HAL says one of 20 new lines about what he sees.
+- Settings: `camera=on|off`, `camera_preview=on|off`, `camera_motion_threshold`.
+
 ## [0.1.0] - 2026-11-06
 
 HAL's first night on the shelf.

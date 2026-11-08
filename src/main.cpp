@@ -44,6 +44,7 @@ bool haveProximity = false;
 bool haveCamera = false;
 int camFrames = 0;
 int camPeak = 0;  // highest motion score since the last log line
+float gyroPeak = 0;  // highest gyro rate (deg/s) since the last log line
 hal::Mode lastMode = hal::Mode::Booting;
 bool lastQuiet = false;
 int lastBacklight = -1;
@@ -92,7 +93,8 @@ void drawFrame() {
     if (consoles.draw(screen, now - consoleStartMs, audio.level())) screen.pushSprite(0, 0);
     return;
   }
-  if (haveCamera && config.cameraPreview && m != hal::Mode::Daisy && m != hal::Mode::Dark) {
+  // No preview over the "I can't find my memory" line, or while HAL fades out.
+  if (haveCamera && haveMemory && config.cameraPreview && m != hal::Mode::Daisy && m != hal::Mode::Dark) {
     cameraPreview().pushSprite(240, 180);  // bottom-right, clear of the ring
   }
   float daisy = brain ? brain->daisyProgress() : 0;
@@ -123,13 +125,15 @@ hal::Inputs readInputs(uint32_t now) {
   }
   if (now - lastImuMs >= 20) {
     lastImuMs = now;
-    float px = ax, py = ay, pz = az;
+    const float prev[3] = {ax, ay, az};
     if (M5.Imu.getAccel(&ax, &ay, &az)) {
       in.motion = motion.update(ax, ay, az, now);
-      // Any jolt or tilt means the camera view is swinging: not someone walking in.
-      float jolt = fabsf(sqrtf(ax * ax + ay * ay + az * az) - 1.0f);
-      float turn = fabsf(ax - px) + fabsf(ay - py) + fabsf(az - pz);
-      if (arrival && (jolt > 0.08f || turn > 0.08f)) arrival->disturb();
+      // If HAL himself moves, the camera view swings: that's not someone walking in.
+      float g[3] = {0, 0, 0};
+      M5.Imu.getGyro(&g[0], &g[1], &g[2]);
+      for (float v : g) gyroPeak = fmaxf(gyroPeak, fabsf(v));
+      const float acc[3] = {ax, ay, az};
+      if (arrival && hal::imuSaysMoving(acc, prev, g)) arrival->disturb();
     }
   }
   if (fakeProx) in.proximityEdge = true;
@@ -260,9 +264,13 @@ void loop() {
 
   if (now - lastLogMs >= 500) {
     lastLogMs = now;
-    if (haveCamera) Serial.printf("cam=%d score=%d heap=%u ", camFrames * 2, camPeak, unsigned(ESP.getFreeHeap()));
+    if (haveCamera) {
+      Serial.printf("cam=%d score=%d settled=%d gyro=%.1f heap=%u ", camFrames * 2, camPeak, arrival->settled(), gyroPeak,
+                    unsigned(ESP.getFreeHeap()));
+    }
     camFrames = 0;
     camPeak = 0;
+    gyroPeak = 0;
     Serial.printf("prox=%d acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak, ax, ay, az, modeName(m), a.quiet);
     proxPeak = 0;
   }
