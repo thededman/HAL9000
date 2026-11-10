@@ -21,7 +21,8 @@
 #include "hal_voice_index.h"
 #include "net_time.h"
 #include "proximity.h"
-#include "sd_voice.h"
+#include "hal_loader.h"
+#include "sd_storage.h"
 
 namespace {
 
@@ -178,8 +179,15 @@ void setup() {
   Serial.printf("\nHAL 9000 booting%s\n", afterShutdown ? " (after shutdown)" : "");
 
   if (mountSd()) {
-    config = loadConfig();
-    haveMemory = loadVoiceIndex(voices);
+    SdStorage storage;
+    std::vector<std::string> warnings;
+    config = hal::loadConfig(storage, &warnings);
+    for (auto& w : warnings) Serial.printf("config: %s\n", w.c_str());
+    haveMemory = hal::loadVoiceIndex(storage, voices);
+    for (int i = 0; haveMemory && i < hal::kFolderCount; ++i) {
+      auto f = static_cast<hal::Folder>(i);
+      Serial.printf("  %-28s %d\n", hal::folderPath(f), voices.count(f));
+    }
   } else {
     Serial.println("no SD card");
   }
