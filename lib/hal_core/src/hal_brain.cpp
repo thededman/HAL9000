@@ -34,6 +34,10 @@ void Brain::play(Actions& a, Folder f, int index) {
   a.play = true;
   a.folder = f;
   a.index = index;
+  markPlayed();
+}
+
+void Brain::markPlayed() {
   lastPlayMs_ = now_;
   havePlayed_ = true;
 }
@@ -104,6 +108,11 @@ Actions Brain::tick(const Inputs& in) {
     case Mode::Idle:
     case Mode::Speaking:
     case Mode::Console: {
+      const bool talking = in.conversing || dialogueNow_ > 0;
+      if ((holdStart || tap) && talking) {  // Dave's finger beats any conversation
+        a.endConversation = true;
+        dialogueNow_ = 0;
+      }
       if (holdStart) {
         holdFired_ = true;
         a.stopAudio = true;
@@ -118,8 +127,23 @@ Actions Brain::tick(const Inputs& in) {
         consoleStartMs_ = now_;
         return a;
       }
+      if (in.sayLine > 0) {
+        a.stopAudio = true;
+        a.dialogueLine = in.sayLine;
+        markPlayed();
+        dialogueNow_ = in.sayLine;
+        mode_ = Mode::Speaking;
+        return a;
+      }
+      if (in.linkFailed) {
+        a.stopAudio = true;
+        dialogueNow_ = 0;
+        play(a, Folder::Rival);
+        mode_ = Mode::Speaking;
+        return a;
+      }
       bool shakeReady = !shaken_ || now_ - lastShakeMs_ >= uint32_t(cfg_.shakeCooldownSeconds) * 1000u;
-      if (in.motion != MotionEvent::None && mode_ != Mode::Console && shakeReady) {
+      if (in.motion != MotionEvent::None && mode_ != Mode::Console && shakeReady && !in.conversing) {
         a.stopAudio = true;
         play(a, Folder::Shake);
         mode_ = Mode::Speaking;
@@ -128,7 +152,11 @@ Actions Brain::tick(const Inputs& in) {
         return a;
       }
       if (mode_ == Mode::Speaking) {
-        if (finished(in)) mode_ = Mode::Idle;
+        if (finished(in)) {
+          if (dialogueNow_ > 0) a.dialogueDone = dialogueNow_;
+          dialogueNow_ = 0;
+          mode_ = Mode::Idle;
+        }
         return a;
       }
       if (mode_ == Mode::Console) {
@@ -137,7 +165,7 @@ Actions Brain::tick(const Inputs& in) {
       }
       // Idle
       bool greetReady = !greeted_ || now_ - lastGreetMs_ >= uint32_t(cfg_.greetCooldownMinutes) * 60000u;
-      if (in.proximityEdge && !a.quiet && greetReady) {
+      if (in.proximityEdge && !a.quiet && greetReady && !in.conversing) {
         play(a, greetFolder(in));
         mode_ = Mode::Speaking;
         greeted_ = true;
@@ -146,7 +174,7 @@ Actions Brain::tick(const Inputs& in) {
       }
       bool gapOk = !havePlayed_ || now_ - lastPlayMs_ >= kIdleQuietGapMs;
       bool idleDue = static_cast<int32_t>(now_ - nextIdleAtMs_) >= 0;  // wrap-safe after ~49.7 days
-      if (!a.quiet && idleDue && gapOk) {
+      if (!a.quiet && idleDue && gapOk && !in.conversing) {
         play(a, Folder::Idle);
         mode_ = Mode::Speaking;
         nextIdleAtMs_ = now_ + nextIdleDelayMs(rng_.random(), cfg_.idleMinMinutes, cfg_.idleMaxMinutes);

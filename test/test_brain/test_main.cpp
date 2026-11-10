@@ -25,6 +25,8 @@ struct Sim {
   int audioLeft = 0;
   long darkAt = -1;
   long restartAt = -1;
+  std::vector<int> dialogueLines, dialogueDones;
+  int ends = 0;
 
   explicit Sim(const hal::Config& c = hal::Config(), bool afterShutdown = false, int plea = 4, int daisy = 4)
       : brain(c, 1, afterShutdown) {
@@ -46,10 +48,18 @@ struct Sim {
         audioLeft = clipMs;
       }
       if (last.newConsole) ++newConsoles;
+      if (last.dialogueLine > 0) {
+        dialogueLines.push_back(last.dialogueLine);
+        audioLeft = clipMs;
+      }
+      if (last.dialogueDone > 0) dialogueDones.push_back(last.dialogueDone);
+      if (last.endConversation) ++ends;
       if (brain.mode() == Mode::Dark && darkAt < 0) darkAt = in.nowMs;
       if (last.restart && restartAt < 0) restartAt = in.nowMs;
-      in.proximityEdge = false;  // edges and motion last one tick
+      in.proximityEdge = false;  // edges, motion and requests last one tick
       in.motion = MotionEvent::None;
+      in.sayLine = -1;
+      in.linkFailed = false;
       audioLeft -= step;
     }
   }
@@ -296,6 +306,103 @@ void test_idle_remark_survives_millis_rollover() {
   TEST_ASSERT_EQUAL(1, s.playsOf(Folder::Idle));
 }
 
+// --- Conversations between the two HALs ---
+
+void test_conversing_suppresses_idle_greet_shake() {
+  hal::Config c;
+  c.idleMinMinutes = c.idleMaxMinutes = 6;
+  Sim s(c);
+  s.run(1500);
+  s.in.conversing = true;
+  s.in.proximityEdge = true;
+  s.run(20);
+  s.in.motion = MotionEvent::Shake;
+  s.run(20);
+  s.run(8 * 60000, 1000);  // an idle remark would be due by now
+  TEST_ASSERT_EQUAL(1, s.plays.size());  // only the boot line
+  s.in.conversing = false;
+  s.run(2000, 1000);
+  TEST_ASSERT_EQUAL(2, s.plays.size());  // once the conversation is over, he chats again
+}
+
+void test_say_line_plays_dialogue_line() {
+  Sim s;
+  s.run(1500);
+  s.in.conversing = true;
+  s.in.sayLine = 3;
+  s.run(20);
+  TEST_ASSERT_EQUAL(3, s.last.dialogueLine);
+  TEST_ASSERT_FALSE(s.last.play);
+  TEST_ASSERT_TRUE(s.brain.mode() == Mode::Speaking);
+}
+
+void test_dialogue_done_reported_once() {
+  Sim s;
+  s.run(1500);
+  s.in.conversing = true;
+  s.in.sayLine = 3;
+  s.run(20);
+  s.run(3000);
+  TEST_ASSERT_EQUAL(1, s.dialogueDones.size());
+  TEST_ASSERT_EQUAL(3, s.dialogueDones[0]);
+  TEST_ASSERT_TRUE(s.brain.mode() == Mode::Idle);
+}
+
+void test_say_interrupts_what_he_is_saying() {
+  Sim s;
+  s.clipMs = 5000;
+  s.run(100);  // boot line still playing
+  s.in.conversing = true;
+  s.in.sayLine = 2;
+  s.run(20);
+  TEST_ASSERT_TRUE(s.last.stopAudio);
+  TEST_ASSERT_EQUAL(2, s.last.dialogueLine);
+}
+
+void test_tap_while_conversing_ends_conversation() {
+  Sim s;
+  s.run(1500);
+  s.in.conversing = true;
+  s.in.sayLine = 1;
+  s.run(20);
+  s.tap();
+  TEST_ASSERT_EQUAL(1, s.ends);
+  TEST_ASSERT_EQUAL(1, s.newConsoles);
+  TEST_ASSERT_TRUE(s.lastPlay().folder == Folder::Tap);
+  TEST_ASSERT_EQUAL(0, s.dialogueDones.size());  // cut short, not finished
+}
+
+void test_hold_while_conversing_pleads_and_ends() {
+  Sim s(hal::Config(), false, 2, 4);
+  s.run(1500);
+  s.in.conversing = true;
+  s.in.touchDown = true;
+  s.run(3100);
+  TEST_ASSERT_TRUE(s.brain.mode() == Mode::Pleading);
+  TEST_ASSERT_EQUAL(1, s.ends);
+}
+
+void test_cannot_converse_while_pleading_or_dark() {
+  Sim s(hal::Config(), false, 2, 0);
+  s.run(1500);
+  TEST_ASSERT_TRUE(s.brain.canConverse());
+  s.in.touchDown = true;
+  s.run(3100);
+  TEST_ASSERT_FALSE(s.brain.canConverse());
+  s.in.sayLine = 1;
+  s.run(20);
+  TEST_ASSERT_EQUAL(0, s.dialogueLines.size());
+}
+
+void test_link_failed_plays_rival_line() {
+  Sim s;
+  s.run(1500);
+  s.in.linkFailed = true;
+  s.run(20);
+  TEST_ASSERT_TRUE(s.lastPlay().folder == Folder::Rival);
+  TEST_ASSERT_TRUE(s.brain.mode() == Mode::Speaking);
+}
+
 void test_quiet_volume() {
   Sim s;
   s.at(23, 0);
@@ -326,6 +433,14 @@ int main() {
   RUN_TEST(test_shake_interrupts_speaking_with_cooldown);
   RUN_TEST(test_idle_remark_fires_and_reschedules);
   RUN_TEST(test_idle_remark_survives_millis_rollover);
+  RUN_TEST(test_conversing_suppresses_idle_greet_shake);
+  RUN_TEST(test_say_line_plays_dialogue_line);
+  RUN_TEST(test_dialogue_done_reported_once);
+  RUN_TEST(test_say_interrupts_what_he_is_saying);
+  RUN_TEST(test_tap_while_conversing_ends_conversation);
+  RUN_TEST(test_hold_while_conversing_pleads_and_ends);
+  RUN_TEST(test_cannot_converse_while_pleading_or_dark);
+  RUN_TEST(test_link_failed_plays_rival_line);
   RUN_TEST(test_quiet_volume);
   return UNITY_END();
 }

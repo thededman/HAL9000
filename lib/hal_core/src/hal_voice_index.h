@@ -8,8 +8,8 @@
 
 namespace hal {
 
-enum class Folder { Boot, Reboot, Tap, GreetMorning, GreetAfternoon, GreetEvening, Shake, Idle, Plea, Relief, Daisy, Camera };
-constexpr int kFolderCount = 12;
+enum class Folder { Boot, Reboot, Tap, GreetMorning, GreetAfternoon, GreetEvening, Shake, Idle, Plea, Relief, Daisy, Camera, Rival };
+constexpr int kFolderCount = 13;
 
 // "/hal/voice/greet/morning" etc.
 const char* folderPath(Folder f);

@@ -60,6 +60,7 @@ void test_folder_paths() {
   TEST_ASSERT_EQUAL_STRING("/hal/voice/boot", hal::folderPath(Folder::Boot));
   TEST_ASSERT_EQUAL_STRING("/hal/voice/daisy", hal::folderPath(Folder::Daisy));
   TEST_ASSERT_EQUAL_STRING("/hal/voice/camera", hal::folderPath(Folder::Camera));
+  TEST_ASSERT_EQUAL_STRING("/hal/voice/rival", hal::folderPath(Folder::Rival));
 }
 
 int main() {
