@@ -20,7 +20,6 @@ struct Config {
   int proximityThreshold = 120;  // LTR-553 behind the glass: a hand within a few cm
   int holdSeconds = 3;
   bool camera = true;
-  bool cameraPreview = true;
   int cameraMotionThreshold = 20;
 };
 

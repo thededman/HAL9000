@@ -101,10 +101,12 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
       }
       continue;
     }
-    if (key == "camera" || key == "camera_preview") {
-      bool b;
-      if (!parseBool(value, &b)) warn(key + ": '" + value + "' should be on or off, using default");
-      else (key == "camera" ? c.camera : c.cameraPreview) = b;
+    if (key == "camera_preview") continue;  // retired in 0.3 (the main-screen preview is gone)
+    if (key == "camera") {
+      if (!parseBool(value, &c.camera)) {
+        c.camera = Config().camera;
+        warn(key + ": '" + value + "' should be on or off, using default");
+      }
       continue;
     }
     if (key == "quiet_start" || key == "quiet_end") {

@@ -123,19 +123,16 @@ void test_bad_timezone_warns_and_defaults() {
 void test_camera_defaults() {
   auto c = hal::parseConfig("", &w);
   TEST_ASSERT_TRUE(c.camera);
-  TEST_ASSERT_TRUE(c.cameraPreview);
   TEST_ASSERT_EQUAL(20, c.cameraMotionThreshold);
   TEST_ASSERT_EQUAL(0, w.size());
 }
 
 // Review Focus 3: booleans in any case
 void test_camera_booleans() {
-  auto c = hal::parseConfig("camera=Off\ncamera_preview=NO\n", &w);
+  auto c = hal::parseConfig("camera=Off\n", &w);
   TEST_ASSERT_FALSE(c.camera);
-  TEST_ASSERT_FALSE(c.cameraPreview);
-  c = hal::parseConfig("camera=YES\ncamera_preview=1\ncamera_motion_threshold=35\n", &w);
+  c = hal::parseConfig("camera=YES\ncamera_motion_threshold=35\n", &w);
   TEST_ASSERT_TRUE(c.camera);
-  TEST_ASSERT_TRUE(c.cameraPreview);
   TEST_ASSERT_EQUAL(35, c.cameraMotionThreshold);
   TEST_ASSERT_EQUAL(0, w.size());
 }
@@ -149,6 +146,13 @@ void test_camera_bad_values() {
   c = hal::parseConfig("camera_motion_threshold=300\n", &w);
   TEST_ASSERT_EQUAL(20, c.cameraMotionThreshold);
   TEST_ASSERT_EQUAL(1, w.size());
+}
+
+// The preview was removed in 0.3; cards written for 0.2 still say camera_preview=...
+void test_retired_camera_preview_is_ignored() {
+  auto c = hal::parseConfig("camera_preview=on\n", &w);
+  TEST_ASSERT_EQUAL(0, w.size());
+  TEST_ASSERT_TRUE(c.camera);
 }
 
 int main() {
@@ -165,5 +169,6 @@ int main() {
   RUN_TEST(test_camera_defaults);
   RUN_TEST(test_camera_booleans);
   RUN_TEST(test_camera_bad_values);
+  RUN_TEST(test_retired_camera_preview_is_ignored);
   return UNITY_END();
 }

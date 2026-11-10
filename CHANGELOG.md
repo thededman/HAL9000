@@ -11,6 +11,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
   dialogue from the film, replacing the "Alan" voice. Copy them onto the card with
   `tools/make_voice.py --copy-to /Volumes/HAL`.
 - "Daisy Bell" now starts in HAL's normal voice, then each verse is slower and deeper.
+- The banner above the eye no longer says "HAL 9000". Put your own image on the card as
+  `/hal/banner.png` (or `.jpg`, up to 320×38) and HAL shows it there, centred; without
+  one the plate stays plain.
+
+### Removed
+- The live camera view beside the eye. The camera now shows only on the Visual Analysis
+  screen (tap until it comes up), and still notices people walking in.
+  `camera_preview` in `config.txt` is ignored.
 
 ## [0.2.0] - 2026-11-08
 

@@ -5,12 +5,11 @@
 // Starts the camera. False (and logged) if it doesn't answer.
 bool cameraBegin();
 
-// At most every 66 ms: grabs a frame and refreshes the preview, the motion score,
-// the moving-area box and the full frame. True if a new frame arrived.
+// At most every 66 ms: grabs a frame and refreshes the motion score, the
+// moving-area box and the full frame (for the Visual Analysis screen). True if a new frame arrived.
 // Only call after cameraBegin() returned true.
 bool cameraPoll(uint32_t nowMs);
 
-M5Canvas& cameraPreview();  // 80x60, 16-bit
 int cameraScore();          // 0..255: share of the picture that changed (1% = 5 points)
 // Moving area in 160x120 frame coordinates; false when too little changed.
 bool cameraBox(int* x, int* y, int* w, int* h);

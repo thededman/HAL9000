@@ -93,10 +93,6 @@ void drawFrame() {
     if (consoles.draw(screen, now - consoleStartMs, audio.level())) screen.pushSprite(0, 0);
     return;
   }
-  // No preview over the "I can't find my memory" line, or while HAL fades out.
-  if (haveCamera && haveMemory && config.cameraPreview && m != hal::Mode::Daisy && m != hal::Mode::Dark) {
-    cameraPreview().pushSprite(240, 180);  // bottom-right, clear of the ring
-  }
   float daisy = brain ? brain->daisyProgress() : 0;
   drawEye(lens, eyeParamsFor(m, lastQuiet, daisy, audio.level(), now));
   lens.pushSprite(kEyeCx - kLensSprite / 2, kEyeCy - kLensSprite / 2, eyeTransparentKey());

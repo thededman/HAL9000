@@ -17,5 +17,4 @@ shake_cooldown_seconds=20
 proximity_threshold=120            # wave sensitivity: lower if waves don't get a greeting, raise if he greets an empty room
 hold_seconds=3
 camera=on                          # off: HAL never starts his camera
-camera_preview=on                  # the tiny live view beside the eye
 camera_motion_threshold=20         # walk-in: share of the picture that must change (20 = 4%); lower notices smaller movements

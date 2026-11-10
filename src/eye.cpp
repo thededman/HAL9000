@@ -1,4 +1,9 @@
+// SD.h must come before M5GFX so drawPngFile(SD, ...) gets its file wrapper.
+#include <SD.h>
+
 #include "eye.h"
+
+#include <string.h>
 
 #include <math.h>
 
@@ -27,19 +32,25 @@ uint16_t c565(Rgb c, float k) {
   return lgfx::color565(ch(c.r), ch(c.g), ch(c.b));
 }
 
+// Your banner image from the card, centred in the 320x38 strip above the ring.
+bool drawBanner(M5GFX& d) {
+  const char* const paths[] = {"/hal/banner.png", "/hal/banner.jpg"};
+  for (const char* path : paths) {
+    if (!SD.exists(path)) continue;
+    bool png = strcmp(path + strlen(path) - 3, "png") == 0;
+    bool ok = png ? d.drawPngFile(SD, path, 0, 0, 320, 38, 0, 0, 1.0f, 0.0f, datum_t::middle_center)
+                  : d.drawJpgFile(SD, path, 0, 0, 320, 38, 0, 0, 1.0f, 0.0f, datum_t::middle_center);
+    if (ok) return true;
+    Serial.printf("skip %s: can't decode\n", path);
+  }
+  return false;
+}
+
 }  // namespace
 
 void drawEyeBackground(M5GFX& d, bool noMemory) {
   d.startWrite();
   d.fillScreen(TFT_BLACK);
-  // Nameplate: a thin brushed bar with the name in white.
-  for (int y = 6; y < 32; ++y) {
-    int v = 70 + (y < 19 ? (y - 6) * 4 : (32 - y) * 3);
-    d.drawFastHLine(64, y, 192, d.color565(v, v, v + 6));
-  }
-  d.setTextColor(TFT_WHITE);
-  d.setTextDatum(middle_center);
-  d.drawString("HAL 9000", 160, 20, &fonts::FreeSansBold12pt7b);
   // Metal ring: light at the top, darker at the bottom.
   for (int r = kRingR; r > kBezelR; --r) {
     int v = 60 + (r - kBezelR) * 14;
@@ -51,6 +62,15 @@ void drawEyeBackground(M5GFX& d, bool noMemory) {
     d.setTextColor(d.color565(220, 220, 220));
     d.setTextDatum(bottom_center);
     d.drawString("I can't find my memory, Dave.", 160, 239, &fonts::FreeSans9pt7b);
+  }
+  d.endWrite();
+  // The banner goes on after the screen transaction ends: it reads the SD card,
+  // which shares the bus with the display. No image: a plain brushed plate.
+  if (!noMemory && drawBanner(d)) return;
+  d.startWrite();
+  for (int y = 6; y < 32; ++y) {
+    int v = 70 + (y < 19 ? (y - 6) * 4 : (32 - y) * 3);
+    d.drawFastHLine(64, y, 192, d.color565(v, v, v + 6));
   }
   d.endWrite();
 }

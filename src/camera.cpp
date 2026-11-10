@@ -10,12 +10,11 @@
 namespace {
 
 constexpr int kW = 160, kH = 120;       // camera frame (QQVGA)
-constexpr int kGW = 80, kGH = 60;       // preview / analysis grid
+constexpr int kGW = 80, kGH = 60;       // motion analysis grid
 constexpr uint32_t kPollMs = 66;        // ~15 fps
 constexpr int kCellChange = 25;         // grey-level change that counts a cell as moving
 constexpr int kMinMovingCells = 12;
 
-M5Canvas preview(&M5.Display);
 uint16_t* frameCopy = nullptr;  // PSRAM, kW * kH
 uint8_t prevGrey[kGW * kGH];
 bool havePrev = false;
@@ -73,18 +72,12 @@ bool cameraBegin() {
   M5.In_I2C.begin();  // hand the bus back to touch, IMU, RTC and proximity
   Serial.printf("  camera: %s (0x%x)\n", err == ESP_OK ? "ok" : "failed", err);
   if (err != ESP_OK) return false;
-  preview.setPsram(false);
-  preview.setColorDepth(16);
   frameCopy = static_cast<uint16_t*>(ps_malloc(kW * kH * 2));
-  if (!preview.createSprite(kGW, kGH) || !frameCopy) {
+  if (!frameCopy) {
     Serial.println("  camera: out of memory, turning it off");
-    preview.deleteSprite();
-    free(frameCopy);
-    frameCopy = nullptr;
     esp_camera_deinit();
     return false;
   }
-  preview.fillScreen(TFT_BLACK);
   return true;
 }
 
@@ -108,13 +101,10 @@ bool cameraPoll(uint32_t nowMs) {
   memcpy(frameCopy, src, kW * kH * 2);
   esp_camera_fb_return(fb);
 
-  auto* dst = static_cast<uint16_t*>(preview.getBuffer());  // sprite buffers are byte-swapped too
   int moving = 0, minX = kGW, minY = kGH, maxX = -1, maxY = -1;
   for (int y = 0; y < kGH; ++y) {
     for (int x = 0; x < kGW; ++x) {
-      uint16_t px = frameCopy[(y * 2) * kW + x * 2];
-      dst[y * kGW + x] = px;
-      uint8_t g = grey(px);
+      uint8_t g = grey(frameCopy[(y * 2) * kW + x * 2]);
       int i = y * kGW + x;
       int d = havePrev ? abs(int(g) - int(prevGrey[i])) : 0;
       if (d > kCellChange) {
@@ -139,7 +129,6 @@ bool cameraPoll(uint32_t nowMs) {
   return true;
 }
 
-M5Canvas& cameraPreview() { return preview; }
 int cameraScore() { return score; }
 
 bool cameraBox(int* x, int* y, int* w, int* h) {
