@@ -5,25 +5,19 @@
 #include <string.h>
 
 #include "esp_camera.h"
-#include "hal_motion.h"
+#include "hal_motiongrid.h"
 
 namespace {
 
 constexpr int kW = 160, kH = 120;       // camera frame (QQVGA)
-constexpr int kGW = 80, kGH = 60;       // motion analysis grid
 constexpr uint32_t kPollMs = 66;        // ~15 fps
-constexpr int kCellChange = 25;         // grey-level change that counts a cell as moving
-constexpr int kMinMovingCells = 12;
 
 uint16_t* frameCopy = nullptr;  // PSRAM, kW * kH
-uint8_t prevGrey[kGW * kGH];
-bool havePrev = false;
+hal::MotionGrid grid;  // shared with the Cardputer
+uint8_t greyGrid[hal::MotionGrid::kW * hal::MotionGrid::kH];
 uint32_t lastPollMs = 0;
 int emptyPolls = 0;
 bool stalled = false;  // the camera stopped delivering frames: stop asking
-int score = 0;
-bool haveBox = false;
-int boxX = 0, boxY = 0, boxW = 0, boxH = 0;
 
 camera_config_t config() {
   camera_config_t c = {};
@@ -54,13 +48,6 @@ camera_config_t config() {
   c.grab_mode = CAMERA_GRAB_LATEST;
   c.sccb_i2c_port = -1;
   return c;
-}
-
-// Byte-swapped RGB565 -> grey 0..255.
-inline uint8_t grey(uint16_t swapped) {
-  uint16_t v = (swapped >> 8) | (swapped << 8);
-  int r = (v >> 11) & 31, g = (v >> 5) & 63, b = v & 31;
-  return static_cast<uint8_t>((r * 8 * 2 + g * 4 * 4 + b * 8) / 7);
 }
 
 }  // namespace
@@ -101,43 +88,15 @@ bool cameraPoll(uint32_t nowMs) {
   memcpy(frameCopy, src, kW * kH * 2);
   esp_camera_fb_return(fb);
 
-  int moving = 0, minX = kGW, minY = kGH, maxX = -1, maxY = -1;
-  for (int y = 0; y < kGH; ++y) {
-    for (int x = 0; x < kGW; ++x) {
-      uint8_t g = grey(frameCopy[(y * 2) * kW + x * 2]);
-      int i = y * kGW + x;
-      int d = havePrev ? abs(int(g) - int(prevGrey[i])) : 0;
-      if (d > kCellChange) {
-        ++moving;
-        if (x < minX) minX = x;
-        if (y < minY) minY = y;
-        if (x > maxX) maxX = x;
-        if (y > maxY) maxY = y;
-      }
-      prevGrey[i] = g;
-    }
-  }
-  score = havePrev ? hal::motionScore(moving, kGW * kGH) : 0;
-  havePrev = true;
-  haveBox = moving >= kMinMovingCells;
-  if (haveBox) {
-    boxX = minX * 2;
-    boxY = minY * 2;
-    boxW = (maxX - minX + 1) * 2;
-    boxH = (maxY - minY + 1) * 2;
-  }
+  for (int y = 0; y < hal::MotionGrid::kH; ++y)
+    for (int x = 0; x < hal::MotionGrid::kW; ++x)
+      greyGrid[y * hal::MotionGrid::kW + x] = hal::greyFromSwapped565(frameCopy[(y * 2) * kW + x * 2]);
+  grid.update(greyGrid);
   return true;
 }
 
-int cameraScore() { return score; }
+int cameraScore() { return grid.score(); }
 
-bool cameraBox(int* x, int* y, int* w, int* h) {
-  if (!haveBox) return false;
-  *x = boxX;
-  *y = boxY;
-  *w = boxW;
-  *h = boxH;
-  return true;
-}
+bool cameraBox(int* x, int* y, int* w, int* h) { return grid.box(x, y, w, h); }
 
-const uint16_t* cameraFrame() { return havePrev ? frameCopy : nullptr; }
+const uint16_t* cameraFrame() { return grid.havePrevious() ? frameCopy : nullptr; }
