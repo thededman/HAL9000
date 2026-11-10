@@ -21,6 +21,9 @@ struct Config {
   int holdSeconds = 3;
   bool camera = true;
   int cameraMotionThreshold = 20;
+  bool link = false;  // talk to the other HAL over Wi-Fi
+  int linkPort = 9000;
+  std::string peerHost = "hal9000-old.local";  // where HAL Zero finds the desk HAL
 };
 
 // key=value lines, '#' comments. Bad values keep their default and add a

@@ -57,6 +57,7 @@ const IntKey kIntKeys[] = {
     {"proximity_threshold", &Config::proximityThreshold, 1, 2047},
     {"hold_seconds", &Config::holdSeconds, 1, 10},
     {"camera_motion_threshold", &Config::cameraMotionThreshold, 1, 255},
+    {"link_port", &Config::linkPort, 1024, 65535},
 };
 
 }  // namespace
@@ -102,11 +103,16 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
       continue;
     }
     if (key == "camera_preview") continue;  // retired in 0.3 (the main-screen preview is gone)
-    if (key == "camera") {
-      if (!parseBool(value, &c.camera)) {
-        c.camera = Config().camera;
-        warn(key + ": '" + value + "' should be on or off, using default");
-      }
+    if (key == "camera" || key == "link") {
+      bool& field = key == "camera" ? c.camera : c.link;
+      if (!parseBool(value, &field)) warn(key + ": '" + value + "' should be on or off, using default");
+      continue;
+    }
+    if (key == "peer_host") {  // a host name or IP address
+      bool ok = !value.empty() && value.size() <= 64;
+      for (char ch : value) ok = ok && (std::isalnum(static_cast<unsigned char>(ch)) || ch == '.' || ch == '-');
+      if (ok) c.peerHost = value;
+      else warn(key + ": '" + value + "' isn't a host name or IP address, using default");
       continue;
     }
     if (key == "quiet_start" || key == "quiet_end") {

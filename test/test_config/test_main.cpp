@@ -155,6 +155,30 @@ void test_retired_camera_preview_is_ignored() {
   TEST_ASSERT_TRUE(c.camera);
 }
 
+// Linking the two HALs
+void test_link_defaults() {
+  auto c = hal::parseConfig("", &w);
+  TEST_ASSERT_FALSE(c.link);
+  TEST_ASSERT_EQUAL(9000, c.linkPort);
+  TEST_ASSERT_EQUAL_STRING("hal9000-old.local", c.peerHost.c_str());
+}
+
+void test_link_settings() {
+  auto c = hal::parseConfig("link=on\nlink_port=9100\npeer_host=192.168.1.40\n", &w);
+  TEST_ASSERT_TRUE(c.link);
+  TEST_ASSERT_EQUAL(9100, c.linkPort);
+  TEST_ASSERT_EQUAL_STRING("192.168.1.40", c.peerHost.c_str());
+  TEST_ASSERT_EQUAL(0, w.size());
+}
+
+void test_link_bad_values() {
+  auto c = hal::parseConfig("link=sometimes\nlink_port=80\npeer_host=two words\n", &w);
+  TEST_ASSERT_FALSE(c.link);
+  TEST_ASSERT_EQUAL(9000, c.linkPort);
+  TEST_ASSERT_EQUAL_STRING("hal9000-old.local", c.peerHost.c_str());
+  TEST_ASSERT_EQUAL(3, w.size());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_on_empty);
@@ -170,5 +194,8 @@ int main() {
   RUN_TEST(test_camera_booleans);
   RUN_TEST(test_camera_bad_values);
   RUN_TEST(test_retired_camera_preview_is_ignored);
+  RUN_TEST(test_link_defaults);
+  RUN_TEST(test_link_settings);
+  RUN_TEST(test_link_bad_values);
   return UNITY_END();
 }
