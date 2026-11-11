@@ -1,5 +1,6 @@
-# Builds HAL Zero for the Cardputer Zero (Debian 13 trixie, arm64) on an
-# Apple-silicon Mac: same distro and libraries as the device.
+# Builds HAL Zero for the Cardputer Zero: Debian 13 trixie, arm64, the same distro and
+# libraries as the device. tools/cardputer.sh builds it with --platform linux/arm64
+# (native on Apple silicon, emulated on Intel/AMD).
 FROM debian:trixie
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config libsdl2-dev python3 python3-venv git ca-certificates \

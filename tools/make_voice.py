@@ -105,6 +105,14 @@ def mine_name(filename: str) -> str:
     return f"{slug(pathlib.Path(filename).stem, words=8)}.wav"
 
 
+def player_command(which=shutil.which) -> list[str] | None:
+    """The command that plays a WAV here: afplay on macOS, aplay or paplay on Linux; None if there is none."""
+    for cmd in (["afplay"], ["aplay", "-q"], ["paplay"]):
+        if which(cmd[0]):
+            return cmd
+    return None
+
+
 def folder_for(rel: str) -> str:
     """Voice folder for a lines file, given its path inside the lines dir:
     "tap.txt" -> "tap", "greet_morning.txt" -> "greet/morning", "screens/chess.txt" -> "screens/chess"."""
@@ -335,10 +343,13 @@ def audition_new(voice, text: str, play: bool, tmp: pathlib.Path) -> None:
         say(voice, text, dst, tone, tmp)
         print(f"  {dst.relative_to(ROOT)}  {label}: speed {tone.length_scale}, pitch x{tone.pitch}"
               + (f", {tone.filters}" if tone.filters else ""))
-    if play:
+    player = player_command() if play else None
+    if play and not player:
+        print("No audio player found (afplay, aplay or paplay): open the files above to listen.")
+    if player:
         for label, _, dst in takes:
             print(f"Playing {label}...")
-            subprocess.run(["afplay", str(dst)], check=False)
+            subprocess.run(player + [str(dst)], check=False)
 
 
 def push_to(target: str) -> bool:

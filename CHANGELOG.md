@@ -4,6 +4,18 @@ All notable changes to HAL are written down here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `docs/SETUP.md`: a step-by-step guide to setting everything up from scratch, for macOS
+  and Linux.
+- An MIT licence, and a note that this is an unofficial fan project.
+
+### Changed
+- `tools/cardputer.sh build` always builds for the Cardputer's arm64 chip, so it also
+  works from Intel and AMD computers (emulated).
+- The voice tool's audition plays through `aplay` or `paplay` on Linux.
+
 ## [0.4.1] - 2026-11-10
 
 Small fixes from the v0.4.0 review.
