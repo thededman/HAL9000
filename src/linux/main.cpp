@@ -10,7 +10,10 @@
 #include <SDL.h>
 
 #include <algorithm>
+#include <atomic>
+#include <csignal>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <memory>
@@ -18,6 +21,7 @@
 #include <vector>
 
 #include "camera_feed.h"
+#include "fb_io.h"
 #include "consoles.h"
 #include "eye.h"
 #include "hal_brain.h"
@@ -37,6 +41,11 @@
 namespace {
 
 const hal::Layout& L = hal::kCardputer;
+std::atomic<bool> quitSignal{false}, shotSignal{false};
+void onSignal(int sig) {
+  if (sig == SIGUSR1) shotSignal = true;  // pkill -USR1 hal9000: screenshot to ~/hal/shots
+  else quitSignal = true;                 // Ctrl-C / kill: quit cleanly (keyboard released)
+}
 constexpr uint32_t kBootIrisMs = 700;
 
 const char* modeName(hal::Mode m) {
@@ -151,6 +160,8 @@ struct App {
     std::vector<std::string> warnings;
     cfg = hal::loadConfig(storage, &warnings);
     for (auto& w : warnings) halLog("config: %s", w.c_str());
+    setenv("TZ", cfg.timezone.c_str(), 1);  // HAL's own time zone, whatever the device is set to
+    tzset();
     haveMemory = hal::loadVoiceIndex(storage, voices);
     halLog("files in %s: %s", storage.root().c_str(), haveMemory ? "found" : "missing /voice");
     loadDialogues();
@@ -464,13 +475,14 @@ struct App {
 int main(int argc, char** argv) {
   const char* shotsDir = nullptr;
   const char* root = std::getenv("HAL_ROOT");
-  bool fullscreen = false;
+  bool fullscreen = false, forceWindow = false;
   int scale = 3;
   std::string linkArg, dialogueArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
     else if (!std::strcmp(argv[i], "--fullscreen")) fullscreen = true;
+    else if (!std::strcmp(argv[i], "--window")) forceWindow = true;  // a window even on the Cardputer
     else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) scale = std::max(1, std::atoi(argv[++i]));
     else if (!std::strcmp(argv[i], "--link") && i + 1 < argc) linkArg = argv[++i];
     else if (!std::strcmp(argv[i], "--dialogue") && i + 1 < argc) dialogueArg = argv[++i];
@@ -489,27 +501,42 @@ int main(int argc, char** argv) {
   if (app.cfg.link) app.link.start(app.cfg.peerHost, app.cfg.linkPort);
   app.autoDialogue = dialogueArg;
 
+  // The Cardputer's own LCD and keyboard when they're here, otherwise a window.
   SdlIo io;
-  if (!io.open(L.w, L.h, fullscreen, scale)) return 1;
+  FbIo fbio;
+  const bool useFb = FbIo::available() && !forceWindow;
+  if (useFb ? !fbio.open() : !io.open(L.w, L.h, fullscreen, scale)) return 1;
+  std::signal(SIGINT, onSignal);
+  std::signal(SIGTERM, onSignal);
+  std::signal(SIGHUP, onSignal);
+  std::signal(SIGUSR1, onSignal);
   app.audioOk = app.audio.begin();
   app.startMs = nowMs();
   KeyInput keys;
   uint32_t lastFrame = 0;
-  for (;;) {
-    io.poll(&keys);
+  while (!quitSignal) {
+    if (useFb) fbio.poll(&keys);
+    else io.poll(&keys);
     if (!app.onKeys(keys)) break;
     uint32_t now = nowMs();
     app.tick(keys.spaceDown, now);
     if (now - lastFrame >= 33) {
       lastFrame = now;
       app.render(now);
-      io.present(app.frame);
+      if (useFb) fbio.present(app.frame);
+      else io.present(app.frame);
+    }
+    if (shotSignal.exchange(false)) {
+      KeyInput f12;
+      f12.pressed.push_back(SDLK_F12);
+      app.onKeys(f12);
     }
     SDL_Delay(2);
   }
   app.link.stop();
   app.audio.close();
-  io.close();
+  if (useFb) fbio.close();
+  else io.close();
   SDL_Quit();
   return 0;
 }
