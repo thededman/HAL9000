@@ -15,6 +15,7 @@ class LinkServer {
   bool connected() { return client_ && client_.connected(); }
   void poll(std::vector<hal::Message>* in, bool* dropped);  // never blocks
   bool send(const hal::Message& m);
+  void drop();  // hang up on HAL Zero (he went quiet); the next poll reports it
   // For the comms screen.
   int msgsIn() const { return msgsIn_; }
   int msgsOut() const { return msgsOut_; }

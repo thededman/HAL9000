@@ -163,8 +163,9 @@ std::string formatMessage(const Message& m) {
 PeerState peerState(bool connected, int peerVersion, uint32_t requestMs, uint32_t lastStateMs, uint32_t nowMs) {
   if (!connected) return PeerState::NotResponding;
   if (peerVersion == 1) return PeerState::TooOld;
+  if (requestMs && nowMs - requestMs >= 2000) return PeerState::NotResponding;  // asked, no STATE within 2 s
   if (lastStateMs && nowMs - lastStateMs <= 5000) return PeerState::Ok;
-  if (requestMs && nowMs - requestMs < 2000) return PeerState::Waiting;
+  if (requestMs) return PeerState::Waiting;
   return PeerState::NotResponding;
 }
 

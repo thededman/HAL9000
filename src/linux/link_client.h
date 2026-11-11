@@ -17,6 +17,7 @@ class LinkClient {
   void stop();
   bool connected() const { return fd_.load() >= 0; }
   bool send(const hal::Message& m);  // false if not connected (or the write failed)
+  void drop();                       // give up on this connection (the peer went quiet); reconnects
   // Messages received since the last call; `dropped` is set when the connection went away.
   void poll(std::vector<hal::Message>* in, bool* dropped);
 

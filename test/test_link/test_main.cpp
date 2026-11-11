@@ -181,9 +181,10 @@ void test_peer_watch_answers_then_goes_quiet() {
   w.sent(3000);
   w.received(3050);
   w.sent(5000);  // no more answers
+  TEST_ASSERT(w.state(true, 2, 6999) == hal::PeerState::Ok);             // asked 2.0 s ago: still in time
+  TEST_ASSERT(w.state(true, 2, 7000) == hal::PeerState::NotResponding);  // spec: no STATE within 2 s
   w.sent(7000);
-  TEST_ASSERT(w.state(true, 2, 7500) == hal::PeerState::Ok);             // last STATE 4.45 s ago
-  TEST_ASSERT(w.state(true, 2, 8100) == hal::PeerState::NotResponding);  // stale, asked 3.1 s ago
+  TEST_ASSERT(w.state(true, 2, 7500) == hal::PeerState::NotResponding);  // the oldest question still counts
   TEST_ASSERT(w.state(false, 2, 1100) == hal::PeerState::NotResponding);
 }
 
@@ -196,6 +197,33 @@ void test_peer_watch_forget() {
   TEST_ASSERT(w.state(true, 2, 1100) == hal::PeerState::NotResponding);
   w.sent(1100);
   TEST_ASSERT(w.state(true, 2, 1200) == hal::PeerState::Waiting);
+}
+
+// A desk HAL that loses power never closes the connection: HAL Zero pings every
+// 2 s and gives up after 5 s with nothing heard.
+void test_liveness_pings_every_two_seconds() {
+  hal::LinkLiveness l;
+  l.connected(1000);
+  TEST_ASSERT_FALSE(l.pingDue(2999));
+  TEST_ASSERT_TRUE(l.pingDue(3000));
+  l.pinged(3000);
+  TEST_ASSERT_FALSE(l.pingDue(4999));
+  TEST_ASSERT_TRUE(l.pingDue(5000));
+}
+
+void test_liveness_silent_after_five_seconds() {
+  hal::LinkLiveness l;
+  l.connected(1000);
+  TEST_ASSERT_FALSE(l.silent(6000));
+  TEST_ASSERT_TRUE(l.silent(6001));
+  l.heard(5500);  // a PONG, a STATE, anything
+  TEST_ASSERT_FALSE(l.silent(10500));
+  TEST_ASSERT_TRUE(l.silent(10501));
+}
+
+void test_liveness_idle_before_connecting() {
+  hal::LinkLiveness l;
+  TEST_ASSERT_FALSE(l.silent(100000));  // nothing to time out yet
 }
 
 int main() {
@@ -216,5 +244,8 @@ int main() {
   RUN_TEST(test_peer_watch_silent);
   RUN_TEST(test_peer_watch_answers_then_goes_quiet);
   RUN_TEST(test_peer_watch_forget);
+  RUN_TEST(test_liveness_pings_every_two_seconds);
+  RUN_TEST(test_liveness_silent_after_five_seconds);
+  RUN_TEST(test_liveness_idle_before_connecting);
   return UNITY_END();
 }

@@ -53,7 +53,8 @@ Message parseMessage(const std::string& line);
 std::string formatMessage(const Message& m);  // without the newline
 
 // What HAL Zero's diagnostics screen shows about the desk HAL. requestMs = when the
-// latest STATUS was sent (0 = never); lastStateMs = when the last STATE arrived (0 = never).
+// oldest unanswered STATUS was sent (0 = none outstanding); lastStateMs = when the last
+// STATE arrived (0 = never). A STATUS unanswered for 2 s means not responding.
 enum class PeerState { Waiting, Ok, NotResponding, TooOld };
 PeerState peerState(bool connected, int peerVersion, uint32_t requestMs, uint32_t lastStateMs, uint32_t nowMs);
 
@@ -72,6 +73,20 @@ class PeerWatch {
 
  private:
   uint32_t lastSent_ = 0, waitingSince_ = 0, lastState_ = 0;  // 0 = never
+};
+
+// Notices a peer that went quiet without closing the connection (the CoreS3 losing
+// power sends nothing at all): ping every 2 s, give up after 5 s with nothing heard.
+class LinkLiveness {
+ public:
+  void connected(uint32_t now) { heard_ = lastPing_ = now == 0 ? 1 : now; }
+  void heard(uint32_t now) { heard_ = now == 0 ? 1 : now; }
+  bool pingDue(uint32_t now) const { return now - lastPing_ >= 2000; }
+  void pinged(uint32_t now) { lastPing_ = now; }
+  bool silent(uint32_t now) const { return heard_ != 0 && now - heard_ > 5000; }
+
+ private:
+  uint32_t heard_ = 0, lastPing_ = 0;  // 0 = not connected
 };
 
 // Turns TCP chunks into whole lines; lines longer than maxLine are dropped.

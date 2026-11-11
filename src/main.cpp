@@ -58,6 +58,9 @@ std::string linkDialogue;
 int linkSayN = -1;
 uint32_t linkLastMsgMs = 0;
 std::vector<hal::Message> linkInbox;
+hal::LinkLiveness zeroLiveness;  // HAL Zero (v2) pings every 2 s; silence = he lost power
+int zeroVersion = 0;             // from HAL Zero's HELLO
+bool zeroWasConnected = false;
 int camFrames = 0;
 int camPeak = 0;  // highest motion score since the last log line
 float gyroPeak = 0;  // highest gyro rate (deg/s) since the last log line
@@ -356,8 +359,19 @@ void loop() {
   if (config.link && !linkServer.started() && WiFi.status() == WL_CONNECTED) linkServer.begin(config.linkPort);
   bool linkDropped = false;
   linkServer.poll(&linkInbox, &linkDropped);
+  const bool zeroConnected = linkServer.connected();
+  if (zeroConnected && !zeroWasConnected) {
+    zeroLiveness.connected(now);
+    zeroVersion = 0;
+  }
+  zeroWasConnected = zeroConnected;
   for (const hal::Message& m : linkInbox) {
     linkLastMsgMs = now;
+    zeroLiveness.heard(now);
+    if (m.type == hal::MsgType::Hello) {
+      zeroVersion = m.version;
+      continue;
+    }
     hal::Message r;
     if (m.type == hal::MsgType::Ping) {
       r.type = hal::MsgType::Pong;
@@ -383,6 +397,12 @@ void loop() {
       continue;
     }
     linkServer.send(r);
+  }
+  // A v2 HAL Zero pings every 2 s: if he goes quiet (power pulled), hang up so the
+  // comms screen stops showing him and he can reconnect. v1 never pings: leave him be.
+  if (zeroConnected && zeroVersion >= 2 && zeroLiveness.silent(now)) {
+    Serial.println("link: HAL Zero went quiet");
+    linkServer.drop();
   }
   if (linkDropped || (linkConversing && now - linkLastMsgMs > 30000)) linkConversing = false;
   in.conversing = linkConversing;

@@ -143,6 +143,9 @@ struct App {
   hal::PeerStatus peerStatus;
   int peerVersion = 0;                       // from the desk HAL's HELLO (0 = not seen)
   hal::PeerWatch peerWatch;                  // STATUS sent, STATE received
+  hal::LinkLiveness liveness;                // pings, so a powered-off desk HAL is noticed
+  bool wasConnected = false;
+  bool diagGloated = false;                  // said a rival line on this diagnostics screen
 
   explicit App(std::string root) : storage(std::move(root)) {}
 
@@ -318,7 +321,12 @@ struct App {
     // The desk HAL's messages.
     bool dropped = false;
     link.poll(&inbox, &dropped);
+    const bool nowConnected = link.connected();
+    if (nowConnected && !wasConnected) liveness.connected(now);
+    wasConnected = nowConnected;
     for (const hal::Message& m : inbox) {
+      liveness.heard(now);
+      if (m.type == hal::MsgType::Pong) continue;
       if (m.type == hal::MsgType::Ping) {
         hal::Message pong;
         pong.type = hal::MsgType::Pong;
@@ -331,6 +339,14 @@ struct App {
         handleConductor(conductor.onRemote(m, now));
       }
     }
+    if (nowConnected && liveness.silent(now)) {  // no FIN when the CoreS3 loses power
+      link.drop();
+    } else if (nowConnected && liveness.pingDue(now)) {
+      hal::Message ping;
+      ping.type = hal::MsgType::Ping;
+      link.send(ping);
+      liveness.pinged(now);
+    }
     if (dropped) {
       peerVersion = 0;
       peerWatch.forget();
@@ -338,11 +354,11 @@ struct App {
     if (dropped && conductor.active()) handleConductor(conductor.onDisconnected(now));
     // Diagnostics and benchmark ask the desk HAL how he is: on opening, then every 2 s.
     const std::string& shown = consoles.currentId();
-    if (brain->mode() == hal::Mode::Console && (shown == "diagnostics" || shown == "benchmark") && link.connected() &&
-        peerWatch.due(now)) {
-      hal::Message status;
-      status.type = hal::MsgType::Status;
-      if (link.send(status)) peerWatch.sent(now);
+    if (brain->mode() == hal::Mode::Console && (shown == "diagnostics" || shown == "benchmark")) askStatus(now);
+    // Diagnostics finds the old model isn't answering: HAL Zero gloats, once per screen.
+    if (brain->mode() == hal::Mode::Console && shown == "diagnostics" && !diagGloated) {
+      hal::PeerState st = peerWatch.state(link.connected(), peerVersion, now);
+      if (st == hal::PeerState::NotResponding || st == hal::PeerState::TooOld) gloatNow();
     }
     if (now - lastSysMs >= 500) {
       lastSysMs = now;
@@ -410,14 +426,16 @@ struct App {
       wantScreen.clear();
       consoleStart = now;
       lineMs = 0;
+      diagGloated = false;
+      // Ask straight away, so the first frame already says "contacting" (or has numbers).
+      if (id == "diagnostics" || id == "benchmark") askStatus(now);
       if (a.play) {
-        std::string path;
-        bool found;
-        if (id == "diagnostics" && !link.connected() && voices.count(hal::Folder::Rival) > 0)
-          found = voices.pick(hal::Folder::Rival, &path);  // nobody to diagnose: gloat instead
-        else
-          found = hal::pickConsoleLine(id, screenVoices, voices, &path);
-        if (found) startLine(path);
+        if (id == "diagnostics" && (!link.connected() || peerVersion == 1)) {
+          gloatNow();  // nobody to diagnose (or too old to): gloat instead
+        } else {
+          std::string path;
+          if (hal::pickConsoleLine(id, screenVoices, voices, &path)) startLine(path);
+        }
         a.play = false;
       }
     }
@@ -444,6 +462,21 @@ struct App {
     }
     if (m != lastMode) halLog("mode %s -> %s", modeName(lastMode), modeName(m));
     lastMode = m;
+  }
+
+  // Sends STATUS to the desk HAL if one is due (on opening, then every 2 s).
+  void askStatus(uint32_t now) {
+    if (!link.connected() || !peerWatch.due(now)) return;
+    hal::Message status;
+    status.type = hal::MsgType::Status;
+    if (link.send(status)) peerWatch.sent(now);
+  }
+
+  // A rival line instead of the diagnostics line (at most once per screen).
+  void gloatNow() {
+    diagGloated = true;
+    std::string path;
+    if (voices.count(hal::Folder::Rival) > 0 && voices.pick(hal::Folder::Rival, &path)) startLine(path);
   }
 
   bool startLine(const std::string& path) {

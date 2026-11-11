@@ -60,6 +60,10 @@ bool LinkServer::send(const hal::Message& m) {
   return ok;
 }
 
+void LinkServer::drop() {
+  if (client_) client_.stop();
+}
+
 std::string LinkServer::peerAddress() {
   if (!client_ || !client_.connected()) return "";
   return client_.remoteIP().toString().c_str();

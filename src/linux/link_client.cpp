@@ -90,6 +90,13 @@ void LinkClient::run() {
   }
 }
 
+void LinkClient::drop() {
+  if (fd_.load() < 0) return;
+  halLog("link: the desk HAL went quiet");
+  closeFd();
+  dropped_ = true;
+}
+
 void LinkClient::closeFd() {
   int fd = fd_.exchange(-1);
   if (fd >= 0) close(fd);
