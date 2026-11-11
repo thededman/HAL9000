@@ -9,6 +9,7 @@
 
 #include "../hal_layout.h"
 #include "hal_link.h"
+#include "hal_readings.h"
 
 namespace screens {
 
@@ -62,6 +63,13 @@ struct PeerView {
   hal::PeerStatus status;
 };
 
+// A part of the device on the unit-diagnostic wireframe ("CAM", "SPK", ...).
+struct UnitPart {
+  const char* code;
+  bool ok;
+};
+enum class UnitModel { CoreS3, Cardputer };
+
 // Everything a screen may draw from. Each HAL fills in what it has.
 struct ScreenData {
   CameraView cam;
@@ -74,6 +82,13 @@ struct ScreenData {
   LinkStats link;
   SysStats sys;
   PeerView peer;
+  // The film-style screens. The lists belong to the HAL's glue and are updated in
+  // place (pointers, so nothing is copied or allocated per frame).
+  const std::vector<hal::Reading>* readings = nullptr;
+  const std::vector<UnitPart>* parts = nullptr;
+  UnitModel unitModel = UnitModel::CoreS3;
+  float gravity[3] = {0, 0, 0}, gravityHome[3] = {0, 0, 0};  // in model axes: x right, y up, z out of the screen
+  bool gravityValid = false;                                 // false until HAL has settled
 };
 
 // Title bar across the top and a status line along the bottom.
@@ -91,6 +106,11 @@ void sensors(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& 
 void chess(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
 void memory(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);  // also Daisy Bell
 void comms(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+
+// Film-style screens with real data, on both HALs.
+void cards(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void wall(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void unit(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
 
 // HAL Zero's own screens.
 void diagnostics(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);

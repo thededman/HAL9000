@@ -91,6 +91,88 @@ bool savePng(M5Canvas& c, const std::string& path) {
   return ok;
 }
 
+// Sample readings for the film-style screen previews (with 40 points of history each).
+std::vector<hal::Reading> sampleReadings(bool desk) {
+  std::vector<hal::Reading> out;
+  auto log40 = [&](auto make) {
+    hal::Reading slot;
+    for (int i = 0; i < 40; ++i) hal::logReading(slot, make(i));
+    out.push_back(slot);
+  };
+  auto wob = [](int i, float amp) { return int(amp * std::sin(i * 0.35f)); };
+  if (desk) {
+    log40([&](int i) { return hal::powerReading(15 + (39 - i) / 8, false); });  // running low: alarm
+    log40([&](int i) { return hal::lightReading(38 + wob(i, 6)); });
+    log40([&](int i) { return hal::proximityReading(35 + wob(i, 10)); });
+    log40([&](int i) { return hal::motionReading(4 + wob(i, 3)); });
+    log40([&](int i) { return hal::tempReading(48 + i / 20); });
+    log40([&](int i) { return hal::netReading(-46 + wob(i, 3)); });
+    log40([&](int i) { return hal::memoryReading(102 + wob(i, 4), 320); });
+    log40([&](int) { return hal::linkReading(true, true); });
+    log40([&](int i) { return hal::cameraReading(true, 12 + wob(i, 10)); });
+    log40([&](int i) { return hal::audioReading(128 + wob(i, 90), 40); });
+    log40([&](int i) { return hal::clockReading(73620 + i); });
+    log40([&](int i) { return hal::uptimeReading(765 + i); });
+  } else {
+    log40([&](int i) { return hal::cpuReading(41 + wob(i, 18)); });
+    log40([&](int i) { return hal::memoryReading(120000 + wob(i, 9000) * 1, 360448); });
+    log40([&](int i) { return hal::tempReading(55 + i / 20); });
+    log40([&](int i) { return hal::netReading(-50 + wob(i, 3)); });
+    log40([&](int) { return hal::linkReading(true, false); });
+    log40([&](int i) { return hal::cameraReading(true, 3 + wob(i, 3)); });
+    log40([&](int i) { return hal::tiltReading(2 + (i > 30 ? i - 30 : 0)); });
+    log40([&](int i) { return hal::audioReading(128 + wob(i, 90), 112); });
+    log40([&](int i) { return hal::clockReading(73620 + i); });
+    log40([&](int i) { return hal::uptimeReading(94200 + i); });
+    log40([&](int) { return hal::peerReading(hal::PeerState::NotResponding, ""); });  // alarm
+  }
+  return out;
+}
+
+// The film-style screens for one layout: each state worth seeing.
+template <typename Shot>
+void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenData d, Shot shot) {
+  const std::vector<hal::Reading> readings = sampleReadings(desk);
+  const std::vector<screens::UnitPart> parts =
+      desk ? std::vector<screens::UnitPart>{{"CAM", true}, {"SPK", true}, {"IMU", true}, {"PRX", true}, {"SD", true}, {"NET", true}, {"LNK", true}}
+           : std::vector<screens::UnitPart>{{"CAM", true}, {"SPK", true}, {"IMU", true}, {"KBD", true}, {"NET", true}, {"LNK", false}};
+  d.readings = &readings;
+  d.parts = &parts;
+  d.unitModel = desk ? screens::UnitModel::CoreS3 : screens::UnitModel::Cardputer;
+  d.gravityValid = true;
+  d.gravity[1] = d.gravityHome[1] = -1;
+  const uint32_t alarmAt = desk ? 100 : 10 * 1600 + 100;  // PWR is first on the desk, DSK last on HAL Zero
+  screens::cards(c, lay, 1700, d);
+  shot("cards");
+  screens::cards(c, lay, alarmAt, d);
+  shot("cards-alarm");
+  screens::wall(c, lay, 2600, d);
+  shot("wall");
+  screens::wall(c, lay, 4300 + (desk ? 0 : 16000), d);
+  shot("wall-other-tile");
+  screens::unit(c, lay, 2600, d);
+  shot("unit");
+  screens::ScreenData tilted = d;
+  tilted.gravity[0] = 0.5f;
+  tilted.gravity[1] = -0.866f;
+  screens::unit(c, lay, 2600, tilted);
+  shot("unit-tilted-30");
+  screens::ScreenData flipped = d;
+  flipped.gravity[1] = 1;  // upside down
+  screens::unit(c, lay, 2600, flipped);
+  shot("unit-upside-down");
+  screens::ScreenData none = d;
+  none.readings = nullptr;
+  none.parts = nullptr;
+  none.gravityValid = false;
+  screens::cards(c, lay, 2600, none);
+  shot("cards-no-data");
+  screens::wall(c, lay, 2600, none);
+  shot("wall-no-data");
+  screens::unit(c, lay, 2600, none);
+  shot("unit-settling");
+}
+
 enum class Overlay { None, Menu, Dialogues };
 
 struct App {
@@ -669,6 +751,11 @@ struct App {
     variant("retirement-postponed", screens::retirement, 2600, late);
     variant("upgrade-start", screens::upgrade, 0, d);
     variant("upgrade-8s", screens::upgrade, 8000, d);
+    filmShots(frame, L, false, d, [&](const char* name) {
+      char nm[64];
+      std::snprintf(nm, sizeof nm, "%02d-film-%s", n++, name);
+      shot(nm);
+    });
     return failures ? 1 : 0;
   }
 };
@@ -725,6 +812,7 @@ int deskShots(const std::string& dir) {
   none.sensors = screens::DeskSensors();
   screens::sensors(c, hal::kCoreS3, 2600, none);
   shot("sensors-no-data");
+  filmShots(c, hal::kCoreS3, true, d, [&](const char* name) { shot(std::string("film-") + name); });
   return failures ? 1 : 0;
 }
 
