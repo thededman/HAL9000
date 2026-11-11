@@ -4,6 +4,33 @@ All notable changes to HAL are written down here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-10
+
+More screens on both HALs, and HAL Zero can diagnose the old model.
+
+### Added
+- Four new console screens on the desk HAL, each with its own lines: a **sensor array**
+  with his real readings (room light, proximity, tilt, motion, battery, chip
+  temperature, Wi-Fi, memory), a **chess** game he always wins (checkmate lands as he
+  finishes his line), his **memory banks**, and a **comms** antenna showing the link to
+  HAL Zero.
+- During "Daisy Bell" the desk HAL's memory banks go dark one by one.
+- Five new screens on HAL Zero, each with its own lines: **diagnostics** of the desk HAL
+  over Wi-Fi with a verdict on every number (also in the menu as "Diagnose the old
+  model"), a **benchmark** of the two, a **system monitor** of the Cardputer, a
+  **retirement countdown** for the old model, and an **upgrade log**.
+- 45 new spoken lines (20 for the desk HAL, 25 for HAL Zero).
+- `hal9000 --show SCREEN` opens a screen once HAL Zero has booted; `--shots DIR
+  --layout cores3` previews the desk HAL's screens on the Mac.
+
+### Changed
+- The two HALs speak link version 2. A v0.3 desk HAL still talks to HAL Zero; HAL Zero
+  just reports its firmware as too old to diagnose.
+- HAL Zero notices within seconds when the desk HAL loses power or goes quiet (and
+  gloats about it), then reconnects when he's back. The desk HAL's comms screen stops
+  showing HAL Zero once he's gone.
+- The desk HAL's light sensor is read at a higher gain: it sits behind dark glass.
+
 ## [0.3.0] - 2026-11-10
 
 HAL gets a rival.

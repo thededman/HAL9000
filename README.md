@@ -72,10 +72,10 @@ own clips (mp3, m4a, wav): put them in a folder and pass `--mine-from <folder>`.
 
 | Do this | HAL does |
 |---|---|
-| Tap the screen | A console screen and a joke; tap again for another |
+| Tap the screen | A console screen and a joke; tap again for another. Some screens bring their own lines: the sensor array (his real light, motion, battery, temperature, Wi-Fi and memory readings), a chess game he always wins, his memory banks, and the comms antenna to HAL Zero |
 | Wave a hand just above the top edge (by the camera) | Greets you for the time of day, at most every 10 minutes |
 | Shake, pick up or tip him over | Complains, at most every 20 seconds |
-| Hold the screen for 3 seconds | Pleads with you; let go and he's relieved, keep holding and he sings "Daisy Bell", goes dark and restarts |
+| Hold the screen for 3 seconds | Pleads with you; let go and he's relieved, keep holding and he sings "Daisy Bell" while his memory banks go dark one by one, then he goes dark and restarts |
 | Leave him alone | An unprompted remark every 20–60 minutes |
 | Walk into his camera's view | Greets you like a wave (the room has to be still for 20 s first) |
 | Tap until Visual Analysis comes up | A live camera view with a targeting overlay, and a line about what he "sees" |
@@ -107,7 +107,7 @@ python3.11 -m venv ~/.platformio/penv && ~/.platformio/penv/bin/pip install plat
 ```
 
 While the monitor is open you can type single letters to test without touching
-HAL: `T` tap, `H` hold on/off, `P` wave, `K` shake, `W` a Wi-Fi network that
+HAL: `T` tap, `N` tap and show the next screen in order (for screenshots), `H` hold on/off, `P` wave, `K` shake, `W` a Wi-Fi network that
 doesn't exist (he should give up after 15 s), and `S` dumps a raw screenshot.
 
 ## HAL Zero
@@ -134,15 +134,32 @@ up/down opens the menu, D lists the conversations, Enter picks, Esc goes back (a
 quits from the eye). The arrows are F (up), X (down), Z (left) and C (right), with or
 without Fn.
 
+**His screens.** Besides the shared console screens and Visual Analysis, HAL Zero has
+five of his own, each with its own lines: **diagnostics** of the desk HAL over the link
+(his real uptime, memory, camera, lines spoken, mode, Wi-Fi and firmware, each with a
+verdict; also in the menu as "Diagnose the old model"), a **benchmark** of the two,
+a **system monitor** of the Cardputer itself, a **retirement countdown** for the old
+model, and an **upgrade log**. `tools/cardputer.sh run --show diagnostics` opens one
+straight after booting.
+
 **His files** live in `~/hal` on the Cardputer, laid out like `/hal` on the card:
 `config.txt`, `voice/`, `dialogues/`. Render his voice with
 `tools/make_voice.py --model new` and copy it over with `--push-to pi@cardputerzero.local`.
+
+## Previewing screens on the Mac
+
+```bash
+~/.platformio/penv/bin/pio run -e sim
+.pio/build/sim/program --shots /tmp/zero                    # HAL Zero's screens as PNGs
+.pio/build/sim/program --shots /tmp/desk --layout cores3    # the desk HAL's, at 320×240
+```
 
 ## The two HALs talking
 
 1. On the CoreS3's card, set `link=on` in `/hal/config.txt` and put the desk HAL's
    dialogue lines in `/hal/voice/dialogue/` (`make_voice.py --dialogues`, then
-   `--copy-to`).
+   `--copy-to`). The screens' lines go the same way: `content/lines/screens/` for the desk
+   HAL (copied to `/hal/voice/screens/`), `content/new/lines/screens/` for HAL Zero.
 2. HAL Zero's `~/hal/config.txt` has `link=on` too (the default settings file does).
    He finds the desk HAL as `hal9000-old.local` on the same Wi-Fi; `peer_host` and
    `link_port` change that.
