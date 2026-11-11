@@ -17,7 +17,7 @@ bool proximityBegin() {
             && M5.In_I2C.writeRegister8(kAddr, kPsPulses, 0x08, kFreq)
             && M5.In_I2C.writeRegister8(kAddr, kPsRate, 0x00, kFreq)    // every 50 ms
             && M5.In_I2C.writeRegister8(kAddr, kPsContr, 0x03, kFreq);  // proximity: active
-  M5.In_I2C.writeRegister8(kAddr, kAlsContr, 0x01, kFreq);              // light: active, gain 1x
+  M5.In_I2C.writeRegister8(kAddr, kAlsContr, 0x1D, kFreq);  // light: active, gain 96x (it's behind dark glass)
   return ok;
 }
 

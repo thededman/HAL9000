@@ -16,6 +16,9 @@ struct Countdown {
 };
 Countdown retirementCountdown(int secondsSinceMidnight);  // 0..86399
 
+// Room light 0..100 on a log scale from the light sensor's raw 0..65535 count.
+int lightPercent(int raw);
+
 int rotatingIndex(uint32_t tMs, uint32_t periodMs, int count);  // which item, changing every periodMs
 
 enum class Metric { Uptime, FreeMemory, Camera, Lines, Wifi };

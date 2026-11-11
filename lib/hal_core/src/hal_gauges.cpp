@@ -22,6 +22,13 @@ Countdown retirementCountdown(int secondsSinceMidnight) {
   return c;
 }
 
+int lightPercent(int raw) {
+  if (raw <= 0) return 0;
+  float pct = std::log10(raw + 1.0f) / std::log10(65536.0f) * 100.0f;
+  int p = static_cast<int>(pct + 0.5f);
+  return p > 100 ? 100 : p;
+}
+
 int rotatingIndex(uint32_t tMs, uint32_t periodMs, int count) {
   if (count <= 0 || periodMs == 0) return 0;
   return static_cast<int>((tMs / periodMs) % static_cast<uint32_t>(count));

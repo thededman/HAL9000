@@ -69,11 +69,22 @@ void test_verdicts() {
   TEST_ASSERT_EQUAL_STRING("BUSY", hal::modeVerdict("dark"));
 }
 
+// Room light on a log scale (the CoreS3's light sensor sits behind dark glass).
+void test_light_percent() {
+  TEST_ASSERT_EQUAL(0, hal::lightPercent(-1));
+  TEST_ASSERT_EQUAL(0, hal::lightPercent(0));
+  TEST_ASSERT_EQUAL(6, hal::lightPercent(1));
+  TEST_ASSERT_EQUAL(41, hal::lightPercent(96));
+  TEST_ASSERT_EQUAL(62, hal::lightPercent(1000));
+  TEST_ASSERT_EQUAL(100, hal::lightPercent(65535));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_memory_modules);
   RUN_TEST(test_countdown);
   RUN_TEST(test_rotating_index);
   RUN_TEST(test_verdicts);
+  RUN_TEST(test_light_percent);
   return UNITY_END();
 }

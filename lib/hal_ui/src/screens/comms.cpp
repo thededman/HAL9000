@@ -42,7 +42,7 @@ void comms(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d)
   c.fillCircle(int(fx), int(fy), 2, up ? red() : dim());
   if (up) {  // wavefronts going out
     for (int w = 0; w < 4; ++w) {
-      float dist = r * 0.7f + fmodf(tMs * 0.05f + w * 24.0f, 96.0f);
+      float dist = r * 0.7f + fmodf(tMs * 0.04f + w * 15.0f, 60.0f);  // stays clear of the text
       float half = 4 + dist * 0.12f;
       float wx = cx + ax * dist, wy = cy + ay * dist;
       c.drawLine(int(wx - px * half), int(wy - py * half), int(wx + px * half), int(wy + py * half), blue());

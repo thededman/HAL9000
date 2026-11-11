@@ -16,6 +16,7 @@
 #include "hal_dialogue.h"
 #include "hal_layout.h"
 #include "debug_shot.h"
+#include "hal_gauges.h"
 #include "hal_screen_voices.h"
 #include "hal_version.h"
 #include "eye.h"
@@ -117,7 +118,7 @@ void readDeskSensors() {
   s.valid = true;
   if (haveProximity) {
     int raw = ambientRead();
-    if (raw >= 0) s.lightPct = std::min(100, raw / 40);
+    if (raw >= 0) s.lightPct = hal::lightPercent(raw);
     s.proximity = proxReading;
   }
   s.tiltDeg = motion.tiltFromHomeDeg();
@@ -469,7 +470,9 @@ void loop() {
     camFrames = 0;
     camPeak = 0;
     gyroPeak = 0;
-    Serial.printf("prox=%d acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak, ax, ay, az, modeName(m), a.quiet);
+    Serial.printf("prox=%d light=%d bat=%d%%/%dmV acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak,
+                  haveProximity ? ambientRead() : -1, int(M5.Power.getBatteryLevel()), int(M5.Power.getBatteryVoltage()),
+                  ax, ay, az, modeName(m), a.quiet);
     proxPeak = 0;
   }
   frameIfDue();
