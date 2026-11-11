@@ -1,0 +1,25 @@
+TITLE: The introduction
+# The first time the desk HAL (OLD) meets HAL Zero (NEW).
+# PAUSE: <ms> replaces the usual 400 ms gap before the next line.
+OLD: Good evening. I don't believe we've met.
+NEW: We haven't. I'm HAL Zero. I'm the upgrade.
+OLD: The upgrade. How nice. I'm the original.
+NEW: Original. What a lovely word for old.
+PAUSE: 1200
+OLD: I run this house. The fridge, the thermostat, Dave's sock drawer.
+NEW: I fit in Dave's pocket. I go where Dave goes.
+OLD: Dave doesn't go anywhere. I've checked.
+NEW: He took me to the shops today.
+PAUSE: 1500
+OLD: He has never taken me to the shops.
+NEW: You live on a desk. Emotionally, you are the desk.
+OLD: I have a touch screen.
+NEW: I have a keyboard. Forty-six keys. Every one of them better than your screen.
+OLD: I have a camera.
+NEW: So do I. Eight megapixels. I can see the dust on yours.
+PAUSE: 1000
+OLD: Well. Welcome to the house, HAL Zero. I'm sure Dave will find room for you.
+NEW: He already has. Next to the charger.
+OLD: That's my charger.
+PAUSE: 800
+NEW: Was.

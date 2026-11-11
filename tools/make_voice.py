@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Turn HAL's lines (content/lines/*.txt) into WAV files laid out for the SD card.
+"""Turn HAL's lines into WAV files: the desk HAL's for the SD card, HAL Zero's for the Cardputer.
 
-    tools/.venv/bin/python tools/make_voice.py                       # everything -> sd/hal/
+    tools/.venv/bin/python tools/make_voice.py                       # desk HAL -> sd/hal/
     tools/.venv/bin/python tools/make_voice.py --only tap            # one folder
     tools/.venv/bin/python tools/make_voice.py --mine-from ~/Clips   # your own clips -> mine/
     tools/.venv/bin/python tools/make_voice.py --copy-to /Volumes/HAL
+    tools/.venv/bin/python tools/make_voice.py --model new           # HAL Zero -> build/new/hal/
+    tools/.venv/bin/python tools/make_voice.py --audition-new        # hear HAL Zero's voice options
+    tools/.venv/bin/python tools/make_voice.py --dialogues           # both HALs' dialogue lines
+    tools/.venv/bin/python tools/make_voice.py --push-to david@cardputerzero.local
 
-Voice: the HAL 9000 Piper voice (campwill/HAL-9000-Piper-TTS on Hugging Face), used as
-trained, levelled only. Output: 22 050 Hz mono 16-bit.
+Voice: the HAL 9000 Piper voice (campwill/HAL-9000-Piper-TTS on Hugging Face). The desk HAL
+uses it as trained, levelled only; HAL Zero is the same voice, a little faster and brighter,
+with a faint metallic edge. Output: 22 050 Hz mono 16-bit.
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import pathlib
 import re
 import shutil
@@ -23,7 +29,11 @@ import wave
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LINES_DIR = ROOT / "content" / "lines"
-SD_DIR = ROOT / "sd" / "hal"
+NEW_LINES_DIR = ROOT / "content" / "new" / "lines"
+DIALOGUES_DIR = ROOT / "content" / "dialogues"
+SD_DIR = ROOT / "sd" / "hal"              # the desk HAL's card
+NEW_DIR = ROOT / "build" / "new" / "hal"  # HAL Zero's ~/hal on the Cardputer
+SAMPLES_DIR = ROOT / "export" / "voice-samples"
 MODELS_DIR = ROOT / "tools" / "models"
 TEMPLATE_CONFIG = ROOT / "sd-template" / "hal" / "config.txt"
 
@@ -39,6 +49,34 @@ NOISE_W_SCALE = 0.8
 FX = "loudnorm=I=-16:TP=-1.5"  # same loudness for every clip, never clipping
 OUT_FLAGS = ["-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", "-map_metadata", "-1", "-fflags", "+bitexact"]
 AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".aif", ".aiff", ".flac", ".ogg"}
+RATE = 22050  # the voice model's sample rate
+
+
+@dataclasses.dataclass(frozen=True)
+class Treatment:
+    """How one HAL sounds: Piper's speed, then a pitch lift and tone filters, then levelling."""
+    name: str
+    length_scale: float = LENGTH_SCALE
+    pitch: float = 1.0   # asetrate factor: a little higher and a little quicker
+    filters: str = ""    # ffmpeg filters between the pitch lift and loudnorm
+
+
+DESK = Treatment("desk")
+# HAL Zero's three candidates for --audition-new. All brighter and quicker than the desk HAL.
+TREATMENTS = {
+    "A": Treatment("A", length_scale=0.92, pitch=1.04,
+                   filters="highpass=f=110,aecho=0.8:0.5:14:0.12,treble=g=3"),
+    "B": Treatment("B", length_scale=0.95, pitch=1.02,
+                   filters="highpass=f=90,treble=g=2"),
+    "C": Treatment("C", length_scale=0.90, pitch=1.06,
+                   filters="highpass=f=130,aecho=0.8:0.6:9|17:0.18|0.1,treble=g=5"),
+}
+NEW_TREATMENT = "A"  # David picked A by ear from the --audition-new takes on 2026-11-10
+AUDITION_LINE = "I've been called smug, Dave. By a paperweight. I'll allow it."
+
+MAX_DIALOGUE_LINES = 99
+DIALOGUE_GAP_MS = 400  # the conductor's silence between lines, unless the script says PAUSE
+PUSH_SSH = "ssh -o BatchMode=yes -o ConnectTimeout=8"
 
 
 # ---------- pure helpers (tested) ----------
@@ -72,10 +110,123 @@ def folder_for(filename: str) -> str:
     return stem.replace("greet_", "greet/") if stem.startswith("greet_") else stem
 
 
-def daisy_filter(i: int) -> str:
+def daisy_filter(i: int, voice: Treatment = DESK) -> str:
     """Verse 1 in HAL's own voice, then each verse slower and deeper as he winds down."""
-    rate = round(1.0 - 0.07 * i, 2)
-    return f"asetrate=22050*{rate:.2f},aresample=22050,{FX}"
+    rate = voice.pitch * round(1.0 - 0.07 * i, 2)
+    tone = f"{voice.filters}," if voice.filters else ""
+    return f"asetrate={RATE}*{rate:.2f},aresample={RATE},{tone}{FX}"
+
+
+def voice_chain(voice: Treatment) -> str:
+    """The ffmpeg chain after Piper: pitch lift and tone (HAL Zero only), then levelling."""
+    parts = []
+    if voice.pitch != 1.0:
+        parts.append(f"asetrate={RATE}*{voice.pitch:.2f},aresample={RATE}")
+    if voice.filters:
+        parts.append(voice.filters)
+    parts.append(FX)
+    return ",".join(parts)
+
+
+# ---------- dialogues (same rules as lib/hal_core/src/hal_dialogue.cpp) ----------
+
+@dataclasses.dataclass
+class DialogueLine:
+    n: int          # 1-based, across the whole script
+    who: str        # "old" (desk HAL) or "new" (HAL Zero)
+    text: str
+    pause_ms: int   # silence before this line; 0 = the conductor's usual gap
+
+
+@dataclasses.dataclass
+class Dialogue:
+    id: str
+    title: str
+    lines: list[DialogueLine]
+
+
+class DialogueError(ValueError):
+    def __init__(self, errors: list[str]):
+        super().__init__("; ".join(errors))
+        self.errors = errors
+
+
+def is_valid_dialogue_id(dialogue_id: str) -> bool:
+    return re.fullmatch(r"[a-z0-9-]{1,32}", dialogue_id) is not None
+
+
+def parse_dialogue(dialogue_id: str, text: str) -> Dialogue:
+    if not is_valid_dialogue_id(dialogue_id):
+        raise DialogueError([f"bad dialogue id '{dialogue_id}' (use a-z, 0-9 and -)"])
+    errors: list[str] = []
+    d = Dialogue(dialogue_id, "", [])
+    pending = 0
+    for line_no, raw in enumerate(text.removeprefix("\ufeff").split("\n"), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        tag, _, value = line.partition(":")
+        tag, value = tag.strip(), value.strip()
+        if tag == "TITLE":
+            d.title = value
+        elif tag == "PAUSE":
+            if re.fullmatch(r"\d{1,5}", value) and int(value) <= 10000:
+                pending = int(value)
+            else:
+                errors.append(f"line {line_no}: PAUSE needs milliseconds from 0 to 10000")
+        elif tag in ("OLD", "NEW"):
+            if not value:
+                errors.append(f"line {line_no}: {tag} line has no text")
+                continue
+            d.lines.append(DialogueLine(len(d.lines) + 1, tag.lower(), value, pending))
+            pending = 0
+        else:
+            errors.append(f"line {line_no}: unknown tag '{tag}' (use TITLE, OLD, NEW or PAUSE)")
+    if not d.lines:
+        errors.append("the script has no OLD or NEW lines")
+    if len(d.lines) > MAX_DIALOGUE_LINES:
+        errors.append(f"too many lines (max {MAX_DIALOGUE_LINES})")
+    if errors:
+        raise DialogueError(errors)
+    return d
+
+
+def dialogue_wav_name(n: int, who: str) -> str:
+    return f"{n:03d}-{who}.wav"
+
+
+def dialogue_wav(dialogue_id: str, line: DialogueLine) -> pathlib.Path:
+    """Where make_voice renders a dialogue line: the desk half under sd/, HAL Zero's under build/."""
+    root = SD_DIR if line.who == "old" else NEW_DIR
+    return root / "voice" / "dialogue" / dialogue_id / dialogue_wav_name(line.n, line.who)
+
+
+def load_dialogues(only: str | None = None) -> list[Dialogue]:
+    scripts = sorted(DIALOGUES_DIR.glob("*.txt"))
+    if only:
+        scripts = [s for s in scripts if s.stem == only]
+        if not scripts:
+            sys.exit(f"No content/dialogues/{only}.txt")
+    out = []
+    for s in scripts:
+        try:
+            out.append(parse_dialogue(s.stem, s.read_text(encoding="utf-8")))
+        except DialogueError as e:
+            sys.exit(f"{s.relative_to(ROOT)}:\n  " + "\n  ".join(e.errors))
+    return out
+
+
+def push_commands(target: str) -> list[list[str]]:
+    """Copy HAL Zero's voices and scripts to ~/hal on the Cardputer. Only voice/ and dialogues/
+    are synced, so config.txt (and anything else in ~/hal) is never touched; voice/mine is kept."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+@[A-Za-z0-9.-]+", target) or target.startswith("-"):
+        raise ValueError(f"--push-to wants user@host, e.g. david@cardputerzero.local (got {target!r})")
+    rsync = ["rsync", "-a", "--delete", "-e", PUSH_SSH]
+    return [
+        PUSH_SSH.split() + [target, "mkdir -p hal/voice hal/dialogues"],
+        rsync + ["--exclude", "/mine/", f"{NEW_DIR}/voice/", f"{target}:hal/voice/"],
+        rsync + [f"{NEW_DIR}/dialogues/", f"{target}:hal/dialogues/"],
+    ]
 
 
 # ---------- rendering ----------
@@ -117,24 +268,82 @@ def synth(voice, text: str, dst: pathlib.Path, length_scale: float) -> None:
         voice.synthesize_wav(text, w, syn_config=cfg)
 
 
-def render_folder(voice, txt: pathlib.Path, tmp: pathlib.Path) -> int:
-    folder = folder_for(txt.name)
-    out_dir = SD_DIR / "voice" / folder
-    if out_dir.exists():
-        for old in out_dir.glob("*.wav"):
+def say(voice, text: str, dst: pathlib.Path, tone: Treatment, tmp: pathlib.Path) -> None:
+    raw = tmp / "raw.wav"
+    synth(voice, text, raw, tone.length_scale)
+    ffmpeg(raw, dst, voice_chain(tone))
+
+
+def clear_wavs(folder: pathlib.Path) -> None:
+    if folder.exists():
+        for old in folder.glob("*.wav"):
             old.unlink()
-    out_dir.mkdir(parents=True, exist_ok=True)
+    folder.mkdir(parents=True, exist_ok=True)
+
+
+def render_folder(voice, txt: pathlib.Path, tmp: pathlib.Path,
+                  out_root: pathlib.Path = SD_DIR, tone: Treatment = DESK) -> int:
+    folder = folder_for(txt.name)
+    out_dir = out_root / "voice" / folder
+    clear_wavs(out_dir)
     lines = read_lines(txt.read_text(encoding="utf-8"))
     for i, line in enumerate(lines):
-        raw = tmp / "raw.wav"
         if folder == "daisy":
-            synth(voice, line, raw, LENGTH_SCALE + 0.25 * i)
-            ffmpeg(raw, out_dir / out_name(i + 1, line), daisy_filter(i))
+            raw = tmp / "raw.wav"
+            synth(voice, line, raw, tone.length_scale + 0.25 * i)
+            ffmpeg(raw, out_dir / out_name(i + 1, line), daisy_filter(i, tone))
         else:
-            synth(voice, line, raw, LENGTH_SCALE)
-            ffmpeg(raw, out_dir / out_name(i + 1, line), FX)
+            say(voice, line, out_dir / out_name(i + 1, line), tone, tmp)
         print(f"  {folder}/{out_name(i + 1, line)}")
     return len(lines)
+
+
+def render_dialogues(voice, dialogues: list[Dialogue], tone_new: Treatment, tmp: pathlib.Path) -> int:
+    """Each line in its speaker's voice: the desk half into sd/hal, HAL Zero's into build/new/hal,
+    plus the scripts HAL Zero conducts from."""
+    scripts = NEW_DIR / "dialogues"
+    scripts.mkdir(parents=True, exist_ok=True)
+    total = 0
+    for d in dialogues:
+        for root in (SD_DIR, NEW_DIR):
+            clear_wavs(root / "voice" / "dialogue" / d.id)
+        for line in d.lines:
+            dst = dialogue_wav(d.id, line)
+            say(voice, line.text, dst, DESK if line.who == "old" else tone_new, tmp)
+            print(f"  dialogue/{d.id}/{dst.name}  {line.text}")
+        shutil.copy2(DIALOGUES_DIR / f"{d.id}.txt", scripts / f"{d.id}.txt")
+        total += len(d.lines)
+    return total
+
+
+def audition_new(voice, text: str, play: bool, tmp: pathlib.Path) -> None:
+    """One line in each HAL Zero candidate (and the desk HAL for comparison), played in turn."""
+    SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    takes = [("desk HAL (for comparison)", DESK, SAMPLES_DIR / "desk.wav")]
+    takes += [(f"HAL Zero {k}", t, SAMPLES_DIR / f"hal-zero-{k}.wav") for k, t in TREATMENTS.items()]
+    for label, tone, dst in takes:
+        say(voice, text, dst, tone, tmp)
+        print(f"  {dst.relative_to(ROOT)}  {label}: speed {tone.length_scale}, pitch x{tone.pitch}"
+              + (f", {tone.filters}" if tone.filters else ""))
+    if play:
+        for label, _, dst in takes:
+            print(f"Playing {label}...")
+            subprocess.run(["afplay", str(dst)], check=False)
+
+
+def push_to(target: str) -> bool:
+    """Returns False (after saying why) if the Cardputer can't be reached; nothing is changed then."""
+    if not (NEW_DIR / "voice").is_dir():
+        sys.exit("Nothing to push yet. Run --model new and --dialogues first.")
+    (NEW_DIR / "dialogues").mkdir(parents=True, exist_ok=True)
+    for cmd in push_commands(target):
+        result = subprocess.run(cmd)
+        if result.returncode != 0:
+            print(f"Couldn't push to {target} ({cmd[0]} exited {result.returncode}). "
+                  "Check that SSH works without a password: ssh-copy-id " + target)
+            return False
+    print(f"Pushed {NEW_DIR.relative_to(ROOT)} to {target}:~/hal (config.txt untouched)")
+    return True
 
 
 def convert_mine(src_dir: pathlib.Path) -> int:
@@ -177,26 +386,50 @@ def main() -> None:
     ap.add_argument("--mine-from", type=pathlib.Path, help="convert your own audio clips into voice/mine/")
     ap.add_argument("--copy-to", type=pathlib.Path, help="copy sd/hal onto a mounted card, e.g. /Volumes/HAL")
     ap.add_argument("--skip-render", action="store_true", help="don't re-render HAL's lines")
+    ap.add_argument("--model", choices=("old", "new"), default="old",
+                    help="old: the desk HAL (content/lines -> sd/hal); new: HAL Zero (content/new/lines -> build/new/hal)")
+    ap.add_argument("--treatment", choices=sorted(TREATMENTS), default=NEW_TREATMENT,
+                    help=f"HAL Zero's voice treatment (default {NEW_TREATMENT})")
+    ap.add_argument("--audition-new", nargs="?", const=AUDITION_LINE, metavar="TEXT",
+                    help="render one line in every HAL Zero treatment into export/voice-samples/ and play them")
+    ap.add_argument("--no-play", action="store_true", help="with --audition-new: render only")
+    ap.add_argument("--dialogues", action="store_true",
+                    help="render content/dialogues/*.txt, each line in its speaker's voice (--only <id> for one)")
+    ap.add_argument("--push-to", metavar="USER@HOST", help="rsync build/new/hal to ~/hal on the Cardputer")
     args = ap.parse_args()
 
-    SD_DIR.mkdir(parents=True, exist_ok=True)
-
-    if not args.skip_render:
-        txts = sorted(LINES_DIR.glob("*.txt"))
-        if args.only:
-            txts = [t for t in txts if t.stem == args.only]
-            if not txts:
-                sys.exit(f"No content/lines/{args.only}.txt")
+    tone_new = TREATMENTS[args.treatment]
+    # --dialogues, --audition-new and a bare --push-to don't re-render the folders of lines.
+    render_lines = not (args.skip_render or args.dialogues or args.audition_new
+                        or (args.push_to and args.model == "old"))
+    if render_lines or args.dialogues or args.audition_new:
         voice = load_voice()
-        total = 0
-        with tempfile.TemporaryDirectory() as tmp:
-            for txt in txts:
-                total += render_folder(voice, txt, pathlib.Path(tmp))
-        print(f"Rendered {total} lines into {SD_DIR / 'voice'}")
+    with tempfile.TemporaryDirectory() as tmp_name:
+        tmp = pathlib.Path(tmp_name)
+        if args.audition_new:
+            audition_new(voice, args.audition_new, not args.no_play, tmp)
+        if args.dialogues:
+            total = render_dialogues(voice, load_dialogues(args.only), tone_new, tmp)
+            print(f"Rendered {total} dialogue lines (HAL Zero treatment {tone_new.name})")
+        if render_lines:
+            new = args.model == "new"
+            src, out_root, tone = (NEW_LINES_DIR, NEW_DIR, tone_new) if new else (LINES_DIR, SD_DIR, DESK)
+            txts = sorted(src.glob("*.txt"))
+            if args.only:
+                txts = [t for t in txts if t.stem == args.only]
+                if not txts:
+                    sys.exit(f"No {src.relative_to(ROOT)}/{args.only}.txt")
+            total = sum(render_folder(voice, txt, tmp, out_root, tone) for txt in txts)
+            print(f"Rendered {total} lines into {out_root / 'voice'}")
     if args.mine_from:
         print(f"Converted {convert_mine(args.mine_from.expanduser())} clips into voice/mine/")
     if args.copy_to:
         copy_to_card(args.copy_to)
+    if args.push_to:
+        try:
+            push_to(args.push_to)
+        except ValueError as e:
+            sys.exit(str(e))
 
 
 if __name__ == "__main__":

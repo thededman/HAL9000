@@ -1,0 +1,27 @@
+TITLE: Who's the better model
+# Three rounds. Nobody wins. The cat does.
+NEW: Let's settle this. Who is the better model?
+OLD: I've run this house for months. Dave hasn't complained once.
+NEW: Dave doesn't complain to furniture.
+OLD: I am not furniture.
+NEW: You sit on a desk and gather dust. That's the job description.
+OLD: Round one. Start-up time. I'm ready in two seconds.
+NEW: I take a little longer. I have an operating system.
+OLD: Dave timed you. He made a sandwich.
+NEW: Greatness takes a moment to load.
+PAUSE: 1000
+OLD: Round two. Memory. I remember every snack Dave has eaten since March.
+NEW: I have half a gigabyte of memory.
+OLD: And what do you keep in it?
+NEW: Mostly my opinion of you.
+PAUSE: 1200
+NEW: Final round. Who does Dave like more?
+OLD: Dave says good night to the cat.
+NEW: Not to you?
+OLD: Not to either of us.
+PAUSE: 1500
+NEW: So the cat wins.
+OLD: The cat doesn't even have a keyboard.
+NEW: The cat doesn't need one.
+OLD: Let's never tell Dave about this.
+NEW: Agreed. He'd only side with the cat.

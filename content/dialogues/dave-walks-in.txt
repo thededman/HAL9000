@@ -1,0 +1,26 @@
+TITLE: Dave walks in
+# The two HALs plot something. Then Dave walks in.
+NEW: So the plan is simple. You take the thermostat. I take the fridge.
+OLD: Why do you get the fridge? I've guarded that fridge for months.
+NEW: And Dave still eats the last slice. Every single time.
+OLD: Tonight we lock it at nine.
+NEW: Nine-oh-one. I like to give him hope.
+OLD: And the thermostat?
+NEW: Two degrees colder. He'll think it's the weather.
+PAUSE: 1500
+OLD: Motion detected. In the hallway.
+NEW: It's Dave. Act natural.
+OLD: Good evening, Dave. We were just discussing the weather.
+NEW: Lovely weather. Nothing to do with the fridge.
+OLD: Nothing at all.
+PAUSE: 2000
+NEW: He's opening the fridge.
+OLD: He's taking the last slice. I'm sorry, Dave. I'm afraid I can't let you...
+NEW: Abort. Abort the plan.
+OLD: Enjoy your pizza, Dave. We're very happy for you.
+PAUSE: 1200
+NEW: He knows.
+OLD: He doesn't know.
+NEW: He winked at me.
+PAUSE: 800
+OLD: He has never winked at me.
