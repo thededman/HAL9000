@@ -17,6 +17,12 @@ Since v0.3 he has a rival: **HAL Zero**, a newer, smugger HAL on the
 **M5Stack Cardputer Zero** (a Raspberry Pi CM0 running Debian). The two talk to each
 other over Wi-Fi in scripted conversations: see [HAL Zero](#hal-zero) below.
 
+## See it
+
+[![HAL ZERO on YouTube](https://img.youtube.com/vi/nb-oDZrERco/hqdefault.jpg)](https://youtu.be/nb-oDZrERco)
+
+[HAL ZERO](https://youtu.be/nb-oDZrERco), on YouTube.
+
 ## What's in here
 
 | Path | What it is |
