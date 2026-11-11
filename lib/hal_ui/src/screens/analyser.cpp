@@ -5,12 +5,12 @@
 
 namespace screens {
 
-void analyser(M5Canvas& c, uint32_t tMs, uint8_t level) {
+void analyser(M5Canvas& c, const hal::Layout& L, uint32_t tMs, uint8_t level) {
   static float bars[24];
-  frame(c, "VOCAL ANALYSIS", tMs);
+  frame(c, L, "VOCAL ANALYSIS", tMs);
 
-  const int top = 40, bottom = 200, w = 11, gap = 2, left = 4;
-  for (int y = top; y <= bottom; y += 20) c.drawFastHLine(0, y, 320, dim());
+  const int top = L.Y(40), bottom = L.Y(200), w = 11, gap = 2, left = 4;
+  for (int y = top; y <= bottom; y += L.H(20)) c.drawFastHLine(0, y, L.w, dim());
 
   float loud = level / 255.0f;
   for (int i = 0; i < 24; ++i) {
@@ -29,13 +29,13 @@ void analyser(M5Canvas& c, uint32_t tMs, uint8_t level) {
 
   c.setTextDatum(top_left);
   c.setTextColor(white());
-  c.drawString("SOURCE: HAL 9000", 8, 24, &fonts::Font0);
+  c.drawString(L.small ? "SOURCE: HAL ZERO" : "SOURCE: HAL 9000", 8, L.Y(24), &fonts::Font0);
   c.setTextDatum(top_right);
   c.setTextColor(blue());
-  c.drawString("SINCERITY 100%   MENACE 3%", 312, 24, &fonts::Font0);
+  c.drawString("SINCERITY 100%   MENACE 3%", L.w - 8, L.Y(24), &fonts::Font0);
   c.setTextDatum(top_left);
   c.setTextColor(level ? red() : dim());
-  c.drawString(level ? "TRANSMITTING" : "LISTENING", 8, 208, &fonts::Font0);
+  c.drawString(level ? "TRANSMITTING" : "LISTENING", 8, L.Y(208), &fonts::Font0);
 }
 
 }  // namespace screens

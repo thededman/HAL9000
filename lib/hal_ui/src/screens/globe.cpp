@@ -21,9 +21,9 @@ P3 project(float lat, float lon, float spin) {
 
 }  // namespace
 
-void globe(M5Canvas& c, uint32_t tMs, uint8_t level) {
-  frame(c, "SURVEILLANCE", tMs);
-  const int cx = 160, cy = 122, r = 88;
+void globe(M5Canvas& c, const hal::Layout& L, uint32_t tMs, uint8_t level) {
+  frame(c, L, "SURVEILLANCE", tMs);
+  const int cx = L.w / 2, cy = L.Y(122), r = L.H(88);
   float spin = tMs * 0.0004f;
   c.drawCircle(cx, cy, r, blue());
 
@@ -57,11 +57,11 @@ void globe(M5Canvas& c, uint32_t tMs, uint8_t level) {
 
   c.setTextDatum(top_left);
   c.setTextColor(blue());
-  c.drawString("SUBJECT: DAVE", 8, 26, &fonts::Font0);
-  c.drawString("STATUS: AT HOME", 8, 36, &fonts::Font0);
+  c.drawString("SUBJECT: DAVE", 8, L.Y(26), &fonts::Font0);
+  c.drawString("STATUS: AT HOME", 8, L.Y(36), &fonts::Font0);
   c.setTextDatum(top_right);
-  c.drawString(level ? "UPLINK: ACTIVE" : "UPLINK: STANDBY", 312, 26, &fonts::Font0);
-  c.drawString("ESCAPE ROUTES: 0", 312, 36, &fonts::Font0);
+  c.drawString(level ? "UPLINK: ACTIVE" : "UPLINK: STANDBY", L.w - 8, L.Y(26), &fonts::Font0);
+  c.drawString("ESCAPE ROUTES: 0", L.w - 8, L.Y(36), &fonts::Font0);
 }
 
 }  // namespace screens

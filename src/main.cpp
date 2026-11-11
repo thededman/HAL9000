@@ -13,6 +13,7 @@
 #include "audio.h"
 #include "camera.h"
 #include "consoles.h"
+#include "hal_layout.h"
 #include "debug_shot.h"
 #include "eye.h"
 #include "hal_brain.h"
@@ -29,6 +30,8 @@ namespace {
 constexpr uint32_t kShutdownMagic = 0x48414C21;  // "HAL!"
 RTC_NOINIT_ATTR uint32_t shutdownFlag;           // survives ESP.restart()
 
+const hal::Layout& L = hal::kCoreS3;
+SdStorage storage;
 Audio audio;
 hal::VoiceIndex voices(esp_random());
 hal::Config config;
@@ -87,16 +90,26 @@ void setBacklight(int level) {
   M5.Display.setBrightness(level);
 }
 
+// What the camera sees right now, for the Visual Analysis screen.
+screens::CameraView cameraView() {
+  screens::CameraView v;
+  if (!haveCamera) return v;
+  v.frame = cameraFrame();
+  v.hasBox = cameraBox(&v.bx, &v.by, &v.bw, &v.bh);
+  v.score = cameraScore();
+  return v;
+}
+
 void drawFrame() {
   uint32_t now = millis();
   hal::Mode m = brain ? brain->mode() : hal::Mode::Booting;
   if (m == hal::Mode::Console) {
-    if (consoles.draw(screen, now - consoleStartMs, audio.level())) screen.pushSprite(0, 0);
+    if (consoles.draw(screen, M5.Display, L, now - consoleStartMs, audio.level(), cameraView())) screen.pushSprite(0, 0);
     return;
   }
   float daisy = brain ? brain->daisyProgress() : 0;
-  drawEye(lens, eyeParamsFor(m, lastQuiet, daisy, audio.level(), now));
-  lens.pushSprite(kEyeCx - kLensSprite / 2, kEyeCy - kLensSprite / 2, eyeTransparentKey());
+  drawEye(lens, L, eyeParamsFor(m, lastQuiet, daisy, audio.level(), now));
+  lens.pushSprite(lensX(L), lensY(L), eyeTransparentKey());
 }
 
 // Keeps the eye moving while something slow (Wi-Fi) blocks the loop.
@@ -179,7 +192,6 @@ void setup() {
   Serial.printf("\nHAL 9000 booting%s\n", afterShutdown ? " (after shutdown)" : "");
 
   if (mountSd()) {
-    SdStorage storage;
     std::vector<std::string> warnings;
     config = hal::loadConfig(storage, &warnings);
     for (auto& w : warnings) Serial.printf("config: %s\n", w.c_str());
@@ -198,18 +210,18 @@ void setup() {
 
   lens.setPsram(false);
   lens.setColorDepth(16);
-  lens.createSprite(kLensSprite, kLensSprite);
+  lens.createSprite(L.lensSprite, L.lensSprite);
   screen.setPsram(false);   // 75 KB in internal RAM
   screen.setColorDepth(8);  // RGB332 is plenty for the console readouts
-  screen.createSprite(320, 240);
+  screen.createSprite(L.w, L.h);
   if (config.camera) haveCamera = cameraBegin();
   else Serial.println("  camera off in config.txt");
-  consoles.begin(esp_random(), haveCamera);
+  consoles.begin(esp_random(), haveCamera, haveMemory ? &storage : nullptr);
 
   brain.reset(new hal::Brain(config, esp_random(), afterShutdown));
   brain->setSequenceLengths(voices.count(hal::Folder::Plea), voices.count(hal::Folder::Daisy));
   setBacklight(160);
-  drawEyeBackground(M5.Display, !haveMemory);
+  drawEyeBackground(M5.Display, L, haveMemory ? &storage : nullptr, !haveMemory);
 }
 
 void loop() {
@@ -261,7 +273,7 @@ void loop() {
   hal::Mode m = brain->mode();
   if (m != lastMode) {
     Serial.printf("mode %s -> %s\n", modeName(lastMode), modeName(m));
-    if (lastMode == hal::Mode::Console) drawEyeBackground(M5.Display, !haveMemory);
+    if (lastMode == hal::Mode::Console) drawEyeBackground(M5.Display, L, haveMemory ? &storage : nullptr, !haveMemory);
     lastMode = m;
   }
   setBacklight(m == hal::Mode::Dark ? 0 : (a.quiet ? 60 : 160));

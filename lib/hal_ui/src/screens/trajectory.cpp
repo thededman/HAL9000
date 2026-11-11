@@ -5,13 +5,13 @@
 
 namespace screens {
 
-void trajectory(M5Canvas& c, uint32_t tMs, uint8_t level) {
-  frame(c, "TRAJECTORY ANALYSIS", tMs);
-  const int cx = 160, cy = 120, rx = 120, ry = 62;
+void trajectory(M5Canvas& c, const hal::Layout& L, uint32_t tMs, uint8_t level) {
+  frame(c, L, "TRAJECTORY ANALYSIS", tMs);
+  const int cx = L.w / 2, cy = L.Y(120), rx = 120, ry = L.H(62);
 
   // Grid and range rings.
-  for (int x = 20; x < 320; x += 40) c.drawFastVLine(x, 24, 196, dim());
-  for (int y = 40; y < 222; y += 30) c.drawFastHLine(0, y, 320, dim());
+  for (int x = 20; x < L.w; x += 40) c.drawFastVLine(x, L.Y(24), L.H(196), dim());
+  for (int y = L.Y(40); y < L.Y(222); y += L.H(30)) c.drawFastHLine(0, y, L.w, dim());
   c.drawEllipse(cx, cy, rx, ry, blue());
   c.drawEllipse(cx, cy, rx - 1, ry - 1, blue());
   for (int i = 0; i < 36; ++i) {
@@ -26,9 +26,9 @@ void trajectory(M5Canvas& c, uint32_t tMs, uint8_t level) {
   c.fillCircle(cx + rx, cy, 6, red());
   c.setTextDatum(top_center);
   c.setTextColor(white());
-  c.drawString("COUCH", cx - rx + 4, cy + 10, &fonts::Font2);
+  c.drawString("COUCH", cx - rx + 4, cy + L.H(10), L.font2());
   c.setTextColor(red());
-  c.drawString("KITCHEN", cx + rx - 8, cy + 10, &fonts::Font2);
+  c.drawString("KITCHEN", cx + rx - 8, cy + L.H(10), L.font2());
 
   // Dave, with a fading trail.
   float a0 = 3.14159f + tMs * 0.0011f;
@@ -43,12 +43,12 @@ void trajectory(M5Canvas& c, uint32_t tMs, uint8_t level) {
   c.setTextColor(blue());
   char buf[48];
   snprintf(buf, sizeof buf, "TRIPS TODAY: %lu", (unsigned long)(11 + tMs / 5700));
-  c.drawString(buf, 8, 26, &fonts::Font0);
-  c.drawString("PURPOSE: SNACK (PROBABLE)", 8, 36, &fonts::Font0);
+  c.drawString(buf, 8, L.Y(26), &fonts::Font0);
+  c.drawString("PURPOSE: SNACK (PROBABLE)", 8, L.Y(36), &fonts::Font0);
   c.setTextDatum(top_right);
-  c.drawString(level > 100 ? "HAL: COMMENTING" : "HAL: OBSERVING", 312, 26, &fonts::Font0);
+  c.drawString(level > 100 ? "HAL: COMMENTING" : "HAL: OBSERVING", L.w - 8, L.Y(26), &fonts::Font0);
   snprintf(buf, sizeof buf, "ETA FRIDGE %02lu.%lu S", (unsigned long)(9 - tMs / 1000 % 10), (unsigned long)(tMs / 100 % 10));
-  c.drawString(buf, 312, 36, &fonts::Font0);
+  c.drawString(buf, L.w - 8, L.Y(36), &fonts::Font0);
 }
 
 }  // namespace screens
