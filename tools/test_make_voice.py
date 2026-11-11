@@ -25,6 +25,22 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(mv.folder_for("greet_evening.txt"), "greet/evening")
         self.assertEqual(mv.folder_for("tap.txt"), "tap")
 
+    def test_folder_for_screens(self):
+        self.assertEqual(mv.folder_for("screens/chess.txt"), "screens/chess")
+
+    def test_folder_for_existing(self):
+        self.assertEqual(mv.folder_for("greet_morning.txt"), "greet/morning")
+
+    def test_lines_files_include_screens(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d)
+            (root / "screens").mkdir()
+            for n in ["tap.txt", "boot.txt", "screens/comms.txt", "screens/chess.txt"]:
+                (root / n).write_text("x\n")
+            (root / "notes.md").write_text("")
+            names = [f.relative_to(root).as_posix() for f in mv.lines_files(root)]
+            self.assertEqual(names, ["boot.txt", "tap.txt", "screens/chess.txt", "screens/comms.txt"])
+
     def test_daisy_filters(self):
         f3 = mv.daisy_filter(3)
         self.assertIn("asetrate=22050*0.79", f3)

@@ -105,9 +105,19 @@ def mine_name(filename: str) -> str:
     return f"{slug(pathlib.Path(filename).stem, words=8)}.wav"
 
 
-def folder_for(filename: str) -> str:
-    stem = pathlib.Path(filename).stem
+def folder_for(rel: str) -> str:
+    """Voice folder for a lines file, given its path inside the lines dir:
+    "tap.txt" -> "tap", "greet_morning.txt" -> "greet/morning", "screens/chess.txt" -> "screens/chess"."""
+    path = pathlib.PurePosixPath(rel)
+    stem = path.stem
+    if str(path.parent) != ".":
+        return f"{path.parent}/{stem}"
     return stem.replace("greet_", "greet/") if stem.startswith("greet_") else stem
+
+
+def lines_files(src: pathlib.Path) -> list[pathlib.Path]:
+    """The lines files to render: the folder's own, then each console screen's (screens/<id>.txt)."""
+    return sorted(src.glob("*.txt")) + sorted(src.glob("screens/*.txt"))
 
 
 def daisy_filter(i: int, voice: Treatment = DESK) -> str:
@@ -282,8 +292,8 @@ def clear_wavs(folder: pathlib.Path) -> None:
 
 
 def render_folder(voice, txt: pathlib.Path, tmp: pathlib.Path,
-                  out_root: pathlib.Path = SD_DIR, tone: Treatment = DESK) -> int:
-    folder = folder_for(txt.name)
+                  out_root: pathlib.Path = SD_DIR, tone: Treatment = DESK, rel: str | None = None) -> int:
+    folder = folder_for(rel or txt.name)
     out_dir = out_root / "voice" / folder
     clear_wavs(out_dir)
     lines = read_lines(txt.read_text(encoding="utf-8"))
@@ -382,7 +392,7 @@ def copy_to_card(card: pathlib.Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--only", help="render just this lines file, e.g. tap or greet_morning")
+    ap.add_argument("--only", help="render just this lines file, e.g. tap, greet_morning or screens/chess")
     ap.add_argument("--mine-from", type=pathlib.Path, help="convert your own audio clips into voice/mine/")
     ap.add_argument("--copy-to", type=pathlib.Path, help="copy sd/hal onto a mounted card, e.g. /Volumes/HAL")
     ap.add_argument("--skip-render", action="store_true", help="don't re-render HAL's lines")
@@ -414,12 +424,13 @@ def main() -> None:
         if render_lines:
             new = args.model == "new"
             src, out_root, tone = (NEW_LINES_DIR, NEW_DIR, tone_new) if new else (LINES_DIR, SD_DIR, DESK)
-            txts = sorted(src.glob("*.txt"))
+            txts = lines_files(src)
             if args.only:
-                txts = [t for t in txts if t.stem == args.only]
+                txts = [t for t in txts if t.relative_to(src).with_suffix("").as_posix() == args.only]
                 if not txts:
                     sys.exit(f"No {src.relative_to(ROOT)}/{args.only}.txt")
-            total = sum(render_folder(voice, txt, tmp, out_root, tone) for txt in txts)
+            total = sum(render_folder(voice, txt, tmp, out_root, tone, txt.relative_to(src).as_posix())
+                        for txt in txts)
             print(f"Rendered {total} lines into {out_root / 'voice'}")
     if args.mine_from:
         print(f"Converted {convert_mine(args.mine_from.expanduser())} clips into voice/mine/")
