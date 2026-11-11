@@ -1,0 +1,15 @@
+#!/bin/sh
+# Starts HAL Zero on the Cardputer Zero's own screen and keyboard.
+# M5Stack's launcher shares that screen, so it's paused while HAL Zero runs and
+# brought back (to its lock screen) when he quits: Esc, the menu's Quit, or
+# `pkill hal9000`. Extra arguments go to hal9000 (e.g. --link HOST, --dialogue ID).
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"   # PipeWire, for sound
+[ -t 2 ] || exec > /tmp/hal-zero.log 2>&1      # started from the launcher: keep a log
+DIR="$(cd "$(dirname "$0")" && pwd)"
+L=$(pgrep -u "$(id -u)" -x M5CardputerZero)
+[ -n "$L" ] && kill -STOP $L
+trap 'true' INT HUP   # Ctrl-C reaches hal9000, which quits cleanly; this script carries on
+"$DIR/hal9000" --root "$HOME/hal" "$@"
+status=$?
+[ -n "$L" ] && kill -CONT $L
+exit $status

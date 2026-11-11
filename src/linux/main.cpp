@@ -33,6 +33,7 @@
 #include "hal_menu.h"
 #include "hal_motion.h"
 #include "hud.h"
+#include "iio_imu.h"
 #include "link_client.h"
 #include "posix_storage.h"
 #include "sdl_audio.h"
@@ -41,9 +42,10 @@
 namespace {
 
 const hal::Layout& L = hal::kCardputer;
-std::atomic<bool> quitSignal{false}, shotSignal{false};
+std::atomic<bool> quitSignal{false}, shotSignal{false}, lookSignal{false};
 void onSignal(int sig) {
-  if (sig == SIGUSR1) shotSignal = true;  // pkill -USR1 hal9000: screenshot to ~/hal/shots
+  if (sig == SIGUSR1) shotSignal = true;       // pkill -USR1 hal9000: screenshot to ~/hal/shots
+  else if (sig == SIGUSR2) lookSignal = true;  // pkill -USR2 hal9000: look around (Visual Analysis)
   else quitSignal = true;                 // Ctrl-C / kill: quit cleanly (keyboard released)
 }
 constexpr uint32_t kBootIrisMs = 700;
@@ -95,6 +97,12 @@ struct App {
   Consoles consoles;
   std::unique_ptr<CameraFeed> camera;
   std::unique_ptr<hal::ArrivalDetector> arrival;
+  IioImu imu;
+  bool haveImu = false;
+  hal::MotionDetector motion;
+  float acc[3] = {0, 0, 1};
+  uint32_t lastImuMs = 0;
+  char tiltText[12] = "N/A";
   SdlAudio audio;
   bool audioOk = false;
   std::vector<hal::Dialogue> dialogues;
@@ -131,7 +139,7 @@ struct App {
             "MEMORY ............. 512 MB  OK",
             haveMemory ? voicesLine : "VOICE BANK ......... OFFLINE",
             camera ? "OPTICS ............. ONLINE" : "OPTICS ............. OFFLINE",
-            "INERTIAL ........... N/A",
+            haveImu ? "INERTIAL ........... ONLINE" : "INERTIAL ........... N/A",
             cfg.link ? "DESK UNIT LINK ..... STANDBY" : "DESK UNIT LINK ..... OFF",
             "SMUGNESS ........... 112%",
             "READY."};
@@ -166,10 +174,12 @@ struct App {
     halLog("files in %s: %s", storage.root().c_str(), haveMemory ? "found" : "missing /voice");
     loadDialogues();
     if (withCamera && cfg.camera) {
-      camera.reset(new FakeCamera());  // the Cardputer's rpicam-vid feed replaces this in Phase 4
+      if (RpiCamera::available()) camera.reset(new RpiCamera());  // the Cardputer's IMX219
+      else camera.reset(new FakeCamera());                         // the Mac: press C
       if (!camera->begin()) camera.reset();
     }
     arrival.reset(new hal::ArrivalDetector(cfg.cameraMotionThreshold));
+    haveImu = imu.begin();
     consoles.begin(uint32_t(std::time(nullptr)), camera != nullptr, haveMemory ? &storage : nullptr);
     frame.setColorDepth(16);
     frame.createSprite(L.w, L.h);
@@ -251,12 +261,17 @@ struct App {
           else if (id == "look") { wantVisual = true; tapUntil = now + 100; }
           else if (id == "talk") openDialogues();
           else if (id == "daisy") holdForDaisy = true;
-          else if (id == "quit") return false;
+          else if (id == "quit") {
+            halLog("quit (menu)");
+            return false;
+          }
         }
         continue;
       }
       switch (k) {
-        case SDLK_ESCAPE: return false;
+        case SDLK_ESCAPE:
+          halLog("quit (Esc)");
+          return false;
         case SDLK_TAB: openMenu(); break;
         case SDLK_d: openDialogues(); break;
         case SDLK_c: if (auto* f = dynamic_cast<FakeCamera*>(camera.get())) f->walkIn(now); break;
@@ -305,6 +320,24 @@ struct App {
     in.touchDown = spaceDown || int32_t(tapUntil - now) > 0 || holdForDaisy;
     in.proximityEdge = camArrival || fakeWave;
     in.motion = fakeShake ? hal::MotionEvent::Shake : hal::MotionEvent::None;
+    if (haveImu && now - lastImuMs >= 20) {
+      lastImuMs = now;
+      const float prev[3] = {acc[0], acc[1], acc[2]};
+      float gyro[3];
+      if (imu.read(acc, gyro)) {
+        hal::MotionEvent e = motion.update(acc[0], acc[1], acc[2], now);
+        if (e != hal::MotionEvent::None) {
+          in.motion = e;
+          halLog("motion sensor: event %d (accel %.2f %.2f %.2f g)", int(e), acc[0], acc[1], acc[2]);
+        }
+        // HAL being moved swings the camera view: that's not someone walking in.
+        if (hal::imuSaysMoving(acc, prev, gyro)) arrival->disturb();
+        int tilt = motion.tiltFromHomeDeg();  // from where HAL first settled
+        if (tilt < 0) std::snprintf(tiltText, sizeof tiltText, "SETTLING");
+        else if (tilt < 5) std::snprintf(tiltText, sizeof tiltText, "LEVEL");
+        else std::snprintf(tiltText, sizeof tiltText, "%d DEG", tilt);
+      }
+    }
     in.audioPlaying = audio.isPlaying();
     std::time_t t = std::time(nullptr);
     std::tm lt;
@@ -366,6 +399,7 @@ struct App {
     h.level = audio.level();
     h.motion = camera ? camera->score() : 0;
     h.optics = camera ? camera->name() : "OFFLINE";
+    h.tilt = haveImu ? tiltText : "N/A";
     h.quiet = lastQuiet;
     std::time_t t = std::time(nullptr);
     std::tm lt;
@@ -510,6 +544,7 @@ int main(int argc, char** argv) {
   std::signal(SIGTERM, onSignal);
   std::signal(SIGHUP, onSignal);
   std::signal(SIGUSR1, onSignal);
+  std::signal(SIGUSR2, onSignal);
   app.audioOk = app.audio.begin();
   app.startMs = nowMs();
   KeyInput keys;
@@ -526,6 +561,10 @@ int main(int argc, char** argv) {
       if (useFb) fbio.present(app.frame);
       else io.present(app.frame);
     }
+    if (lookSignal.exchange(false)) {
+      app.wantVisual = true;
+      app.tapUntil = nowMs() + 100;
+    }
     if (shotSignal.exchange(false)) {
       KeyInput f12;
       f12.pressed.push_back(SDLK_F12);
@@ -533,7 +572,9 @@ int main(int argc, char** argv) {
     }
     SDL_Delay(2);
   }
+  if (quitSignal) halLog("quit (signal)");
   app.link.stop();
+  if (app.camera) app.camera->close();  // stops rpicam-vid
   app.audio.close();
   if (useFb) fbio.close();
   else io.close();

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=HAL Zero
+Comment=HAL 9000's newer, smugger pocket model
+Exec=/home/pi/hal-zero/hal-zero
+Icon=share/images/hal-zero.png
+Terminal=false

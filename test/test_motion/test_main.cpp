@@ -234,6 +234,18 @@ void test_imu_says_moving() {
   TEST_ASSERT_TRUE(hal::imuSaysMoving(jolted, still, calm));
 }
 
+// Tilt is measured from where HAL first settled, whichever way the sensor is mounted
+// (the Cardputer Zero's BMI270 reads gravity on its x axis).
+void test_tilt_from_home() {
+  Feed f;
+  TEST_ASSERT_EQUAL_INT(-1, f.det.tiltFromHomeDeg());  // no rest yet
+  f.hold(-1, 0, 0, 2500);
+  TEST_ASSERT_EQUAL_INT(0, f.det.tiltFromHomeDeg());
+  f.hold(-kCos30, kSin30, 0, 3000);  // tipped 30 degrees and left there: rest moves, home stays
+  int tilt = f.det.tiltFromHomeDeg();
+  TEST_ASSERT_TRUE(tilt >= 28 && tilt <= 31);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_still_is_quiet);
@@ -255,5 +267,6 @@ int main() {
   RUN_TEST(test_walkin_ramp_still_fires);
   RUN_TEST(test_motion_score_scale);
   RUN_TEST(test_imu_says_moving);
+  RUN_TEST(test_tilt_from_home);
   return UNITY_END();
 }

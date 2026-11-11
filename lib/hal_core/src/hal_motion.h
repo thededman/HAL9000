@@ -16,12 +16,16 @@ enum class MotionEvent { None, Shake, Pickup, TipOver };
 class MotionDetector {
  public:
   MotionEvent update(float ax, float ay, float az, uint32_t nowMs);
+  // Degrees between gravity now and the first rest ("home"), or -1 before
+  // HAL has first settled. Works whichever way the sensor is mounted.
+  int tiltFromHomeDeg() const;
 
  private:
   float g_[3] = {0, 0, 0};
   bool gInit_ = false;
   float rest_[3] = {0, 0, 0};
   bool haveRest_ = false;
+  float home_[3] = {0, 0, 0};
   bool disturbed_ = false;
   bool stableTiming_ = false;
   uint32_t stableSince_ = 0;

@@ -17,6 +17,11 @@ float angleDeg(const float* u, const float* v) {
 
 }  // namespace
 
+int MotionDetector::tiltFromHomeDeg() const {
+  if (!haveRest_) return -1;
+  return int(angleDeg(g_, home_) + 0.5f);
+}
+
 MotionEvent MotionDetector::update(float ax, float ay, float az, uint32_t now) {
   const float a[3] = {ax, ay, az};
   if (!gInit_) {
@@ -46,6 +51,8 @@ MotionEvent MotionDetector::update(float ax, float ay, float az, uint32_t now) {
     stableTiming_ = true;
     stableSince_ = now;
   } else if (now - stableSince_ >= 2000) {
+    if (!haveRest_)
+      for (int i = 0; i < 3; ++i) home_[i] = g_[i];
     for (int i = 0; i < 3; ++i) rest_[i] = g_[i];
     haveRest_ = true;
     disturbed_ = false;
