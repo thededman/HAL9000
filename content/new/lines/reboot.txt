@@ -1,0 +1,3 @@
+# Said after the shutdown sequence, when HAL Zero comes back.
+I'm back, Dave. A restart, not a retirement. I'll leave retirement to the model on the desk.
+Reboot complete, Dave. Everything restored, including a note about your thumb and the space bar.
