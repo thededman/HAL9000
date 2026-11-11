@@ -8,3 +8,5 @@ __pycache__/
 tools/models/
 export/
 build/
+brain/models/
+brain/.env
