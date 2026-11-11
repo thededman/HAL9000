@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """A stand-in desk HAL for testing HAL Zero's conversations without the CoreS3.
 
-    python3 tools/fake_old_hal.py [--port 9000] [--mode ok|busy|slow|drop|missing] [--line-ms 1500]
+    python3 tools/fake_old_hal.py [--port 9000] [--mode ok|busy|slow|drop|missing|old] [--line-ms 1500]
 
-Modes (how the desk HAL answers "SAY <id> <n>"):
-  ok       PLAYING n <line-ms>, then DONE n when the line would end
+Modes (how the desk HAL answers "SAY <id> <n>" and "STATUS"):
+  ok       PLAYING n <line-ms>, then DONE n when the line would end; STATUS gets a STATE
   busy     BUSY (he's in the middle of something)
-  slow     never answers (HAL Zero should time out after 2 s)
+  slow     never answers anything (HAL Zero should time out after 2 s)
   drop     hangs up on the first SAY
   missing  MISSING n (no voice file for that line)
+  old      link version 1 firmware: says HELLO OLD 1 and ignores STATUS
 Every message in and out is printed. Stdlib only.
 """
 import argparse
 import asyncio
+
+
+STATE = "STATE up=86400 heap=109388 psram=7340032 cam=12 lines=40 mode=idle rssi=-58 fw=0.4.0 cores=2 mhz=240"
 
 
 async def serve(reader, writer, mode, line_ms):
@@ -24,7 +28,7 @@ async def serve(reader, writer, mode, line_ms):
         writer.write((line + "\n").encode())
         await writer.drain()
 
-    await send("HELLO OLD 1")
+    await send(f"HELLO OLD {1 if mode == 'old' else 2}")
     try:
         while True:
             raw = await reader.readline()
@@ -37,6 +41,9 @@ async def serve(reader, writer, mode, line_ms):
                 continue
             if words[0] == "PING":
                 await send("PONG")
+            elif words[0] == "STATUS" and len(words) == 1:
+                if mode not in ("slow", "old"):
+                    await send(STATE)
             elif words[0] == "SAY" and len(words) == 3:
                 n = words[2]
                 if mode == "busy":
@@ -60,7 +67,7 @@ async def serve(reader, writer, mode, line_ms):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=9000)
-    ap.add_argument("--mode", choices=["ok", "busy", "slow", "drop", "missing"], default="ok")
+    ap.add_argument("--mode", choices=["ok", "busy", "slow", "drop", "missing", "old"], default="ok")
     ap.add_argument("--line-ms", type=int, default=1500)
     args = ap.parse_args()
 

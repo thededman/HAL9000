@@ -158,6 +158,46 @@ void test_peer_state() {
   TEST_ASSERT(hal::peerState(true, 0, 1000, 1200, 1300) == PeerState::Ok);             // HELLO not seen yet
 }
 
+// HAL Zero re-asks every 2 s; a desk HAL that never answers must still read as
+// not responding 2 s after the first unanswered STATUS.
+void test_peer_watch_silent() {
+  hal::PeerWatch w;
+  TEST_ASSERT_TRUE(w.due(500));
+  w.sent(1000);
+  TEST_ASSERT_FALSE(w.due(2999));
+  TEST_ASSERT(w.state(true, 2, 2999) == hal::PeerState::Waiting);
+  TEST_ASSERT_TRUE(w.due(3000));
+  w.sent(3000);
+  TEST_ASSERT(w.state(true, 2, 3300) == hal::PeerState::NotResponding);
+  w.sent(5000);
+  TEST_ASSERT(w.state(true, 2, 5100) == hal::PeerState::NotResponding);
+}
+
+void test_peer_watch_answers_then_goes_quiet() {
+  hal::PeerWatch w;
+  w.sent(1000);
+  w.received(1050);
+  TEST_ASSERT(w.state(true, 2, 1100) == hal::PeerState::Ok);
+  w.sent(3000);
+  w.received(3050);
+  w.sent(5000);  // no more answers
+  w.sent(7000);
+  TEST_ASSERT(w.state(true, 2, 7500) == hal::PeerState::Ok);             // last STATE 4.45 s ago
+  TEST_ASSERT(w.state(true, 2, 8100) == hal::PeerState::NotResponding);  // stale, asked 3.1 s ago
+  TEST_ASSERT(w.state(false, 2, 1100) == hal::PeerState::NotResponding);
+}
+
+void test_peer_watch_forget() {
+  hal::PeerWatch w;
+  w.sent(1000);
+  w.received(1050);
+  w.forget();  // link dropped
+  TEST_ASSERT_TRUE(w.due(1100));
+  TEST_ASSERT(w.state(true, 2, 1100) == hal::PeerState::NotResponding);
+  w.sent(1100);
+  TEST_ASSERT(w.state(true, 2, 1200) == hal::PeerState::Waiting);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_parse_examples);
@@ -173,5 +213,8 @@ int main() {
   RUN_TEST(test_longest_state_fits);
   RUN_TEST(test_version_two_still_reads_one);
   RUN_TEST(test_peer_state);
+  RUN_TEST(test_peer_watch_silent);
+  RUN_TEST(test_peer_watch_answers_then_goes_quiet);
+  RUN_TEST(test_peer_watch_forget);
   return UNITY_END();
 }

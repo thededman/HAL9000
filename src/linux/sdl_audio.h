@@ -17,6 +17,7 @@ class SdlAudio {
   void stop();
   bool isPlaying() const;
   uint8_t level() const;  // 0..255
+  uint32_t durationMs() const;  // length of the clip playing (or last played)
   void setVolume(int v) { volume_ = v < 0 ? 0 : v > 255 ? 255 : v; }
   void close();
 

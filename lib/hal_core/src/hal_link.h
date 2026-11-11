@@ -57,6 +57,23 @@ std::string formatMessage(const Message& m);  // without the newline
 enum class PeerState { Waiting, Ok, NotResponding, TooOld };
 PeerState peerState(bool connected, int peerVersion, uint32_t requestMs, uint32_t lastStateMs, uint32_t nowMs);
 
+// HAL Zero's bookkeeping for STATUS requests while diagnostics or benchmark shows:
+// ask on opening, then every 2 s; "waiting" runs from the oldest unanswered request,
+// so a desk HAL that never answers reads as not responding after 2 s.
+class PeerWatch {
+ public:
+  bool due(uint32_t now) const { return lastSent_ == 0 || now - lastSent_ >= 2000; }
+  void sent(uint32_t now);
+  void received(uint32_t now);
+  void forget() { lastSent_ = waitingSince_ = lastState_ = 0; }  // the link dropped
+  PeerState state(bool connected, int peerVersion, uint32_t now) const {
+    return peerState(connected, peerVersion, waitingSince_, lastState_, now);
+  }
+
+ private:
+  uint32_t lastSent_ = 0, waitingSince_ = 0, lastState_ = 0;  // 0 = never
+};
+
 // Turns TCP chunks into whole lines; lines longer than maxLine are dropped.
 class LineSplitter {
  public:

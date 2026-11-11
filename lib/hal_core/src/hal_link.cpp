@@ -168,6 +168,17 @@ PeerState peerState(bool connected, int peerVersion, uint32_t requestMs, uint32_
   return PeerState::NotResponding;
 }
 
+void PeerWatch::sent(uint32_t now) {
+  if (now == 0) now = 1;  // 0 means "never"
+  if (waitingSince_ == 0) waitingSince_ = now;
+  lastSent_ = now;
+}
+
+void PeerWatch::received(uint32_t now) {
+  lastState_ = now == 0 ? 1 : now;
+  waitingSince_ = 0;
+}
+
 std::vector<std::string> LineSplitter::feed(const char* data, size_t len) {
   std::vector<std::string> lines;
   for (size_t i = 0; i < len; ++i) {

@@ -2,7 +2,7 @@
 // (and in a window on the Mac). Same brain, voices and console screens as the
 // desk HAL on the CoreS3; this file is the Linux glue around them.
 //
-//   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID]
+//   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID] [--show SCREEN]
 //   hal9000 --shots DIR --layout cores3      the desk HAL's screens at 320x240, for review
 //
 // Keys: Space = HAL's "finger" (tap / hold), Tab or Up/Down = menu, D = dialogues, Esc = back/quit,
@@ -41,6 +41,8 @@
 #include "posix_storage.h"
 #include "sdl_audio.h"
 #include "sdl_io.h"
+#include "sysmon.h"
+#include "hal_screen_voices.h"
 
 namespace {
 
@@ -132,6 +134,15 @@ struct App {
   uint32_t gloatUntil = 0;
   std::string autoDialogue;  // --dialogue: start this one once booted
   std::vector<hal::Message> inbox;
+  std::string autoShow;  // --show: open this screen once booted
+  // The new screens: lines per screen, this machine, and the desk HAL's status.
+  hal::ScreenVoices screenVoices{uint32_t(std::time(nullptr))};
+  SysMon sysmon;
+  uint32_t lastSysMs = 0;
+  uint32_t lineMs = 0;  // length of the line HAL started with the current console screen
+  hal::PeerStatus peerStatus;
+  int peerVersion = 0;                       // from the desk HAL's HELLO (0 = not seen)
+  hal::PeerWatch peerWatch;                  // STATUS sent, STATE received
 
   explicit App(std::string root) : storage(std::move(root)) {}
 
@@ -186,6 +197,9 @@ struct App {
     arrival.reset(new hal::ArrivalDetector(cfg.cameraMotionThreshold));
     haveImu = imu.begin();
     consoles.begin(uint32_t(std::time(nullptr)), screens::Owner::Zero, camera != nullptr, haveMemory ? &storage : nullptr);
+    if (haveMemory) screenVoices.load(storage, consoles.ids());
+    for (const std::string& id : consoles.ids())
+      if (screenVoices.count(id) > 0) halLog("  /hal/voice/screens/%s: %d", id.c_str(), screenVoices.count(id));
     frame.setColorDepth(16);
     frame.createSprite(L.w, L.h);
     background.setColorDepth(16);
@@ -208,6 +222,7 @@ struct App {
   void openMenu() {
     menu.open({{"say", "Say something"},
                {"look", camera ? "Look around (Visual Analysis)" : "Look around (no camera)"},
+               {"diagnose", "Diagnose the old model"},
                {"talk", "Talk to the desk unit"},
                {"daisy", "Shut down (Daisy Bell)"},
                {"quit", "Quit HAL Zero"}});
@@ -264,6 +279,7 @@ struct App {
           if (dialogueList) startDialogue(id);
           else if (id == "say") tapUntil = now + 100;
           else if (id == "look") { wantScreen = "visual"; tapUntil = now + 100; }
+          else if (id == "diagnose") { wantScreen = "diagnostics"; tapUntil = now + 100; }
           else if (id == "talk") openDialogues();
           else if (id == "daisy") holdForDaisy = true;
           else if (id == "quit") {
@@ -307,11 +323,36 @@ struct App {
         hal::Message pong;
         pong.type = hal::MsgType::Pong;
         link.send(pong);
+      } else if (m.type == hal::MsgType::State) {  // the desk HAL's numbers, for diagnostics
+        peerStatus = m.status;
+        peerWatch.received(now);
       } else {
+        if (m.type == hal::MsgType::Hello) peerVersion = m.version;
         handleConductor(conductor.onRemote(m, now));
       }
     }
+    if (dropped) {
+      peerVersion = 0;
+      peerWatch.forget();
+    }
     if (dropped && conductor.active()) handleConductor(conductor.onDisconnected(now));
+    // Diagnostics and benchmark ask the desk HAL how he is: on opening, then every 2 s.
+    const std::string& shown = consoles.currentId();
+    if (brain->mode() == hal::Mode::Console && (shown == "diagnostics" || shown == "benchmark") && link.connected() &&
+        peerWatch.due(now)) {
+      hal::Message status;
+      status.type = hal::MsgType::Status;
+      if (link.send(status)) peerWatch.sent(now);
+    }
+    if (now - lastSysMs >= 500) {
+      lastSysMs = now;
+      sysmon.sample();
+    }
+    if (!autoShow.empty() && brain->mode() == hal::Mode::Idle) {
+      wantScreen = autoShow;
+      tapUntil = now + 100;
+      autoShow.clear();
+    }
     if (!autoDialogue.empty() && brain->mode() == hal::Mode::Idle) {
       startDialogue(autoDialogue);
       autoDialogue.clear();
@@ -367,14 +408,23 @@ struct App {
     if (a.newConsole) {
       std::string id = !wantScreen.empty() && consoles.show(wantScreen) ? wantScreen : consoles.next();
       wantScreen.clear();
-      bool visual = id == "visual";
       consoleStart = now;
-      if (visual && a.play && voices.count(hal::Folder::Camera) > 0) a.folder = hal::Folder::Camera;
+      lineMs = 0;
+      if (a.play) {
+        std::string path;
+        bool found;
+        if (id == "diagnostics" && !link.connected() && voices.count(hal::Folder::Rival) > 0)
+          found = voices.pick(hal::Folder::Rival, &path);  // nobody to diagnose: gloat instead
+        else
+          found = hal::pickConsoleLine(id, screenVoices, voices, &path);
+        if (found) startLine(path);
+        a.play = false;
+      }
     }
     if (a.play) {
       std::string path;
       bool found = a.index < 0 ? voices.pick(a.folder, &path) : voices.at(a.folder, a.index, &path);
-      if (found) audio.playFile(storage, path);
+      if (found) startLine(path);
     }
     if (a.dialogueLine > 0) {
       std::string path = hal::dialogueVoicePath(conductor.dialogue().id, a.dialogueLine, hal::Speaker::New);
@@ -396,12 +446,25 @@ struct App {
     lastMode = m;
   }
 
+  bool startLine(const std::string& path) {
+    if (!audio.playFile(storage, path)) return false;
+    lineMs = audio.durationMs();
+    return true;
+  }
+
   // What the console screens draw from.
   screens::ScreenData screenData(uint32_t now) const {
-    (void)now;
     screens::ScreenData d;
     d.cam = camera ? camera->view() : screens::CameraView();
     d.voiceLevel = audio.level();
+    d.lineMs = lineMs;
+    const std::string& id = consoles.currentId();
+    if (id == "sysmon" || id == "benchmark") d.sys = sysmon.stats();
+    d.peer.state = peerWatch.state(link.connected(), peerVersion, now);
+    d.peer.status = peerStatus;
+    time_t t = std::time(nullptr);
+    struct tm lt;
+    if (localtime_r(&t, &lt)) d.secondsSinceMidnight = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
     return d;
   }
 
@@ -629,7 +692,7 @@ int main(int argc, char** argv) {
   const char* root = std::getenv("HAL_ROOT");
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg, layoutArg;
+  std::string linkArg, dialogueArg, layoutArg, showArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -639,6 +702,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--link") && i + 1 < argc) linkArg = argv[++i];
     else if (!std::strcmp(argv[i], "--dialogue") && i + 1 < argc) dialogueArg = argv[++i];
     else if (!std::strcmp(argv[i], "--layout") && i + 1 < argc) layoutArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--show") && i + 1 < argc) showArg = argv[++i];
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
@@ -654,6 +718,7 @@ int main(int argc, char** argv) {
   }
   if (app.cfg.link) app.link.start(app.cfg.peerHost, app.cfg.linkPort);
   app.autoDialogue = dialogueArg;
+  app.autoShow = showArg;
 
   // The Cardputer's own LCD and keyboard when they're here, otherwise a window.
   SdlIo io;

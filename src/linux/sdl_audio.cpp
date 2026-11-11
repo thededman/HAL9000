@@ -26,6 +26,8 @@ bool SdlAudio::begin() {
   return true;
 }
 
+uint32_t SdlAudio::durationMs() const { return static_cast<uint32_t>(env_.size()) * kFrameMs; }
+
 bool SdlAudio::playFile(const hal::Storage& storage, const std::string& halPath) {
   if (!dev_) return false;
   stop();
