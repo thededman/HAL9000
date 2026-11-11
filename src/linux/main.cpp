@@ -657,6 +657,10 @@ struct App {
     variant("benchmark-spec-sheet", screens::benchmark, 2600, d);
     variant("sysmon-live", screens::sysmon, 2600, sys);
     variant("sysmon-no-data", screens::sysmon, 2600, d);
+    screens::ScreenData gap = sys;  // Wi-Fi switched off, temperature unreadable for a moment
+    for (int i = 50; i < 60; ++i) gap.sys.rssiDbm[i] = std::nanf("");
+    gap.sys.tempC[40] = std::nanf("");
+    variant("sysmon-wifi-off", screens::sysmon, 2600, gap);
     screens::ScreenData noon = d;
     noon.secondsSinceMidnight = 43200;
     variant("retirement", screens::retirement, 2600, noon);
@@ -705,6 +709,10 @@ int deskShots(const std::string& dir) {
   daisy.daisyProgress = 0.5f;
   screens::memory(c, hal::kCoreS3, 2600, daisy);
   shot("memory-daisy");
+  for (uint32_t t : {2244u, 2600u, 3100u}) {  // the sweep's widest angle: waves clear of the text
+    screens::comms(c, hal::kCoreS3, t, d);
+    shot("comms-sweep-" + std::to_string(t));
+  }
   screens::ScreenData off = d;
   off.link.connected = false;
   screens::comms(c, hal::kCoreS3, 2600, off);

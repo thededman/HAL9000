@@ -490,9 +490,11 @@ void loop() {
     camFrames = 0;
     camPeak = 0;
     gyroPeak = 0;
-    Serial.printf("prox=%d light=%d bat=%d%%/%dmV acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak,
-                  haveProximity ? ambientRead() : -1, int(M5.Power.getBatteryLevel()), int(M5.Power.getBatteryVoltage()),
-                  ax, ay, az, modeName(m), a.quiet);
+    // Light and battery as the sensor array last read them (-1 = not read yet): the
+    // sensors are only read while that screen is up.
+    Serial.printf("prox=%d light=%d%% bat=%d%% acc=%.2f,%.2f,%.2f mode=%s quiet=%d\n", proxPeak,
+                  deskSensors.valid ? deskSensors.lightPct : -1, deskSensors.valid ? deskSensors.batteryPct : -1, ax, ay, az,
+                  modeName(m), a.quiet);
     proxPeak = 0;
   }
   frameIfDue();

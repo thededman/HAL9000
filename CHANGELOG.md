@@ -4,6 +4,17 @@ All notable changes to HAL are written down here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- HAL Zero's system monitor shows Wi-Fi as OFF (and a gap in the graph) when Wi-Fi
+  drops, instead of repeating the last signal strength; the same for the temperature.
+- The desk HAL's comms screen with `link=off` says NO CARRIER and adds LINK DISABLED;
+  its signal waves no longer cross the labels.
+- The desk HAL reads its light sensor and battery only while the sensor array is
+  showing (the USB status log shows the last readings).
+- `tools/cardputer.sh deploy` swaps the new program in only once it has fully copied.
+
 ## [0.4.0] - 2026-11-10
 
 More screens on both HALs, and HAL Zero can diagnose the old model.

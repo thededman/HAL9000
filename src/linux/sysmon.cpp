@@ -2,6 +2,7 @@
 
 #include <unistd.h>
 
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -51,10 +52,14 @@ void SysMon::sample() {
     long total = hal::parseMeminfoKb(text, "MemTotal"), avail = hal::parseMeminfoKb(text, "MemAvailable");
     if (total > 0 && avail >= 0) push(stats_.memUsedPct, 100.0f * float(total - avail) / float(total));
   }
+  // A reading that disappears is a gap (NaN), so the screen shows it's gone rather than
+  // repeating the last value.
   if (slurp("/sys/class/thermal/thermal_zone0/temp", &text) && !text.empty())
     push(stats_.tempC, std::atoi(text.c_str()) / 1000.0f);
+  else if (!stats_.tempC.empty())
+    push(stats_.tempC, std::nanf(""));
   if (slurp("/proc/net/wireless", &text)) {
     int dbm = hal::parseWirelessDbm(text);
-    if (dbm != 0) push(stats_.rssiDbm, float(dbm));
+    push(stats_.rssiDbm, dbm != 0 ? float(dbm) : std::nanf(""));  // no interface listed: Wi-Fi off
   }
 }

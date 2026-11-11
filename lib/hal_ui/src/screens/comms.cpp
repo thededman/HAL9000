@@ -40,17 +40,20 @@ void comms(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d)
   const float fx = cx + ax * r * 0.6f, fy = cy + ay * r * 0.6f;  // the feed
   c.drawLine(int(cx), int(cy), int(fx), int(fy), blue());
   c.fillCircle(int(fx), int(fy), 2, up ? red() : dim());
-  if (up) {  // wavefronts going out
+  const int x0 = 150;  // the text column
+  if (up) {  // wavefronts going out; any that would reach the text aren't drawn
     for (int w = 0; w < 4; ++w) {
-      float dist = r * 0.7f + fmodf(tMs * 0.04f + w * 15.0f, 60.0f);  // stays clear of the text
+      float dist = r * 0.7f + fmodf(tMs * 0.04f + w * 15.0f, 60.0f);
       float half = 4 + dist * 0.12f;
       float wx = cx + ax * dist, wy = cy + ay * dist;
-      c.drawLine(int(wx - px * half), int(wy - py * half), int(wx + px * half), int(wy + py * half), blue());
+      int x1 = int(wx - px * half), x2 = int(wx + px * half);
+      if (std::max(x1, x2) >= x0 - 4) continue;
+      c.drawLine(x1, int(wy - py * half), x2, int(wy + py * half), blue());
     }
   }
 
   // Right: the link in numbers.
-  const int x0 = 150, rowH = L.H(24);
+  const int rowH = L.H(24);
   int y = L.Y(30);
   char buf[48];
   auto row = [&](const char* label, const char* value, uint16_t col) {
@@ -61,7 +64,7 @@ void comms(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d)
     c.drawString(value, x0 + 54, y, &fonts::Font0);
     y += rowH;
   };
-  row("LINK", up ? "CONNECTED" : !enabled ? "DISABLED" : "NO CARRIER", up ? blue() : red());
+  row("LINK", up ? "CONNECTED" : "NO CARRIER", up ? blue() : red());
   row("PEER", up && !k.peer.empty() ? k.peer.c_str() : "--", white());
   snprintf(buf, sizeof buf, "%d IN / %d OUT", k.msgsIn, k.msgsOut);
   row("TRAFFIC", buf, white());
@@ -76,10 +79,15 @@ void comms(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d)
     c.fillRect(x0 + 54 + b * 8, y + 16 - bh, 6, bh, b < bars ? blue() : dim());
   }
 
-  if (!up) {  // big status, blinking
+  if (!up) {  // big status, blinking; with link=off in config.txt, says why
+    const int cx2 = L.w * 3 / 4 - 10;
     c.setTextDatum(bottom_center);
     c.setTextColor((tMs / 600) % 2 ? red() : dim());
-    c.drawString(enabled ? "NO CARRIER" : "LINK DISABLED", L.w * 3 / 4 - 10, L.footerLineY - 4, L.font2());
+    c.drawString("NO CARRIER", cx2, L.footerLineY - 4, L.font2());
+    if (!enabled) {
+      c.setTextColor(red());
+      c.drawString("LINK DISABLED", cx2, L.footerLineY - 24, &fonts::Font0);
+    }
   }
 }
 

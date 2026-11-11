@@ -53,7 +53,7 @@ struct SysStats {
   bool valid = false;
   int cores = 0, maxMHz = 0;
   long memTotalKb = 0;
-  std::vector<float> cpu[4], memUsedPct, tempC, rssiDbm;
+  std::vector<float> cpu[4], memUsedPct, tempC, rssiDbm;  // NaN = no reading at that moment
 };
 
 // What HAL Zero knows about the desk HAL, for diagnostics and benchmark.
