@@ -2,7 +2,7 @@
 // (and in a window on the Mac). Same brain, voices and console screens as the
 // desk HAL on the CoreS3; this file is the Linux glue around them.
 //
-//   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR]
+//   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID]
 //
 // Keys: Space = HAL's "finger" (tap / hold), Tab = menu, D = dialogues, Esc = back/quit,
 // F12 = screenshot. Testing: C = someone walks past the camera, P = wave, K = shake.
@@ -29,6 +29,7 @@
 #include "hal_menu.h"
 #include "hal_motion.h"
 #include "hud.h"
+#include "link_client.h"
 #include "posix_storage.h"
 #include "sdl_audio.h"
 #include "sdl_io.h"
@@ -74,12 +75,6 @@ bool savePng(M5Canvas& c, const std::string& path) {
   return ok;
 }
 
-// The link to the desk HAL arrives in Phase 6; until then he's never reachable.
-struct LinkClient {
-  bool connected() const { return false; }
-  bool send(const hal::Message&) { return false; }
-};
-
 enum class Overlay { None, Menu, Dialogues };
 
 struct App {
@@ -113,6 +108,8 @@ struct App {
   bool pendingGloat = false;
   std::string gloatText;
   uint32_t gloatUntil = 0;
+  std::string autoDialogue;  // --dialogue: start this one once booted
+  std::vector<hal::Message> inbox;
 
   explicit App(std::string root) : storage(std::move(root)) {}
 
@@ -269,6 +266,23 @@ struct App {
 
   void tick(bool spaceDown, uint32_t now) {
     if (!booted) return;
+    // The desk HAL's messages.
+    bool dropped = false;
+    link.poll(&inbox, &dropped);
+    for (const hal::Message& m : inbox) {
+      if (m.type == hal::MsgType::Ping) {
+        hal::Message pong;
+        pong.type = hal::MsgType::Pong;
+        link.send(pong);
+      } else {
+        handleConductor(conductor.onRemote(m, now));
+      }
+    }
+    if (dropped && conductor.active()) handleConductor(conductor.onDisconnected(now));
+    if (!autoDialogue.empty() && brain->mode() == hal::Mode::Idle) {
+      startDialogue(autoDialogue);
+      autoDialogue.clear();
+    }
     bool camArrival = false;
     if (camera && camera->poll(now)) camArrival = arrival->update(camera->score(), now);
     if (camArrival) halLog("arrival (score %d)", camera->score());
@@ -452,17 +466,28 @@ int main(int argc, char** argv) {
   const char* root = std::getenv("HAL_ROOT");
   bool fullscreen = false;
   int scale = 3;
+  std::string linkArg, dialogueArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
     else if (!std::strcmp(argv[i], "--fullscreen")) fullscreen = true;
     else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) scale = std::max(1, std::atoi(argv[++i]));
+    else if (!std::strcmp(argv[i], "--link") && i + 1 < argc) linkArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--dialogue") && i + 1 < argc) dialogueArg = argv[++i];
   }
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
 
   App app(rootDir);
   app.setup(true);
   if (shotsDir) return app.shots(shotsDir);
+  if (!linkArg.empty()) {  // --link host[:port] overrides config.txt
+    app.cfg.link = true;
+    size_t colon = linkArg.rfind(':');
+    app.cfg.peerHost = colon == std::string::npos ? linkArg : linkArg.substr(0, colon);
+    if (colon != std::string::npos) app.cfg.linkPort = std::atoi(linkArg.c_str() + colon + 1);
+  }
+  if (app.cfg.link) app.link.start(app.cfg.peerHost, app.cfg.linkPort);
+  app.autoDialogue = dialogueArg;
 
   SdlIo io;
   if (!io.open(L.w, L.h, fullscreen, scale)) return 1;
@@ -482,6 +507,7 @@ int main(int argc, char** argv) {
     }
     SDL_Delay(2);
   }
+  app.link.stop();
   app.audio.close();
   io.close();
   SDL_Quit();
