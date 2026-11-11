@@ -5,8 +5,8 @@
 namespace {
 constexpr uint8_t kAddr = 0x23;
 constexpr uint32_t kFreq = 400000;
-constexpr uint8_t kPsContr = 0x81, kPsLed = 0x82, kPsPulses = 0x83, kPsRate = 0x84;
-constexpr uint8_t kPartId = 0x86, kPsData0 = 0x8D;
+constexpr uint8_t kAlsContr = 0x80, kPsContr = 0x81, kPsLed = 0x82, kPsPulses = 0x83, kPsRate = 0x84;
+constexpr uint8_t kPartId = 0x86, kAlsData = 0x88, kPsData0 = 0x8D;
 }  // namespace
 
 bool proximityBegin() {
@@ -17,6 +17,7 @@ bool proximityBegin() {
             && M5.In_I2C.writeRegister8(kAddr, kPsPulses, 0x08, kFreq)
             && M5.In_I2C.writeRegister8(kAddr, kPsRate, 0x00, kFreq)    // every 50 ms
             && M5.In_I2C.writeRegister8(kAddr, kPsContr, 0x03, kFreq);  // proximity: active
+  M5.In_I2C.writeRegister8(kAddr, kAlsContr, 0x01, kFreq);              // light: active, gain 1x
   return ok;
 }
 
@@ -24,4 +25,10 @@ int proximityRead() {
   uint8_t b[2];
   if (!M5.In_I2C.readRegister(kAddr, kPsData0, b, 2, kFreq)) return -1;
   return b[0] | ((b[1] & 0x07) << 8);
+}
+
+int ambientRead() {
+  uint8_t b[4];  // CH1 then CH0, read together so they're from the same measurement
+  if (!M5.In_I2C.readRegister(kAddr, kAlsData, b, 4, kFreq)) return -1;
+  return b[2] | (b[3] << 8);  // CH0: visible + infrared
 }

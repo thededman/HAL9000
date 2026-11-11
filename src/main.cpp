@@ -16,6 +16,8 @@
 #include "hal_dialogue.h"
 #include "hal_layout.h"
 #include "debug_shot.h"
+#include "hal_screen_voices.h"
+#include "hal_version.h"
 #include "eye.h"
 #include "hal_brain.h"
 #include "hal_clock.h"
@@ -62,6 +64,15 @@ hal::Mode lastMode = hal::Mode::Booting;
 bool lastQuiet = false;
 int lastBacklight = -1;
 uint32_t consoleStartMs = 0;
+uint32_t daisyStartMs = 0;
+uint32_t lineMs = 0;  // length of the line HAL started with the current console screen
+int linesSpoken = 0;  // since boot, for HAL Zero's diagnostics
+float gyroNow = 0;    // deg/s, for the sensor array
+hal::ScreenVoices screenVoices(1);
+screens::DeskSensors deskSensors;
+uint32_t lastSensorsMs = 0;
+size_t debugScreen = 0;  // debug 'N': the next screen in catalogue order
+bool debugNext = false;
 uint32_t lastFrameMs = 0, lastProxMs = 0, lastImuMs = 0, lastLogMs = 0;
 int proxReading = 0;
 int proxPeak = 0;  // highest reading since the last log line
@@ -87,10 +98,66 @@ bool mountSd() {
   return SD.begin(cs, SPI, 25000000);
 }
 
+bool startLine(const std::string& path) {
+  if (!audio.playFile(path.c_str())) return false;
+  ++linesSpoken;
+  lineMs = audio.durationMs();
+  return true;
+}
+
 void play(const hal::Actions& a) {
   std::string path;
   bool found = a.index < 0 ? voices.pick(a.folder, &path) : voices.at(a.folder, a.index, &path);
-  if (found) audio.playFile(path.c_str());
+  if (found) startLine(path);
+}
+
+// The desk HAL's sensors, for the sensor array (read only while it's showing).
+void readDeskSensors() {
+  screens::DeskSensors s;
+  s.valid = true;
+  if (haveProximity) {
+    int raw = ambientRead();
+    if (raw >= 0) s.lightPct = std::min(100, raw / 40);
+    s.proximity = proxReading;
+  }
+  s.tiltDeg = motion.tiltFromHomeDeg();
+  s.motionDps = gyroNow;
+  s.batteryPct = M5.Power.getBatteryLevel();
+  s.charging = M5.Power.isCharging() == m5::Power_Class::is_charging;
+  s.chipTempC = static_cast<int>(temperatureRead());
+  s.rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
+  s.heapFree = static_cast<int>(ESP.getFreeHeap());
+  s.psramFree = static_cast<int>(ESP.getFreePsram());
+  deskSensors = s;
+}
+
+screens::LinkStats linkStats() {
+  screens::LinkStats k;
+  k.valid = true;
+  k.enabled = config.link;
+  k.connected = linkServer.connected();
+  k.peer = linkServer.peerAddress();
+  k.msgsIn = linkServer.msgsIn();
+  k.msgsOut = linkServer.msgsOut();
+  k.last = linkServer.lastMessage();
+  k.rssi = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
+  return k;
+}
+
+// The answer to HAL Zero's STATUS: our real numbers.
+hal::PeerStatus deskStatus() {
+  hal::PeerStatus s;
+  s.upS = static_cast<int>(millis() / 1000);
+  s.heap = static_cast<int>(std::min<uint32_t>(ESP.getFreeHeap(), 9999999));
+  s.psram = static_cast<int>(std::min<uint32_t>(ESP.getFreePsram(), 99999999));
+  s.cam = haveCamera ? std::max(0, std::min(100, cameraScore())) : 0;
+  s.lines = std::min(linesSpoken, 9999999);
+  s.mode = modeName(brain->mode());
+  s.rssi = WiFi.status() == WL_CONNECTED ? std::max(-127, std::min(0, static_cast<int>(WiFi.RSSI()))) : 0;
+  s.fw = hal::kHalVersion;
+  s.cores = ESP.getChipCores();
+  s.mhz = static_cast<int>(getCpuFrequencyMhz());
+  return s;
 }
 
 void setBacklight(int level) {
@@ -116,7 +183,18 @@ void drawFrame() {
     screens::ScreenData d;
     d.cam = cameraView();
     d.voiceLevel = audio.level();
+    d.lineMs = lineMs;
+    d.sensors = deskSensors;
+    if (consoles.currentId() == "comms") d.link = linkStats();
     if (consoles.draw(screen, M5.Display, L, now - consoleStartMs, d)) screen.pushSprite(0, 0);
+    return;
+  }
+  if (m == hal::Mode::Daisy) {  // the memory banks go dark one by one as he sings
+    screens::ScreenData d;
+    d.voiceLevel = audio.level();
+    d.daisyProgress = brain->daisyProgress();
+    screens::memory(screen, L, now - daisyStartMs, d);
+    screen.pushSprite(0, 0);
     return;
   }
   float daisy = brain ? brain->daisyProgress() : 0;
@@ -154,6 +232,7 @@ hal::Inputs readInputs(uint32_t now) {
       float g[3] = {0, 0, 0};
       M5.Imu.getGyro(&g[0], &g[1], &g[2]);
       for (float v : g) gyroPeak = fmaxf(gyroPeak, fabsf(v));
+      gyroNow = sqrtf(g[0] * g[0] + g[1] * g[1] + g[2] * g[2]);
       const float acc[3] = {ax, ay, az};
       if (arrival && hal::imuSaysMoving(acc, prev, g)) arrival->disturb();
     }
@@ -229,6 +308,10 @@ void setup() {
   if (config.camera) haveCamera = cameraBegin();
   else Serial.println("  camera off in config.txt");
   consoles.begin(esp_random(), screens::Owner::Desk, haveCamera, haveMemory ? &storage : nullptr);
+  screenVoices = hal::ScreenVoices(esp_random());
+  if (haveMemory) screenVoices.load(storage, consoles.ids());
+  for (const std::string& id : consoles.ids())
+    if (screenVoices.count(id) > 0) Serial.printf("  %-28s %d\n", (std::string(hal::kScreenVoiceRoot) + "/" + id).c_str(), screenVoices.count(id));
 
   brain.reset(new hal::Brain(config, esp_random(), afterShutdown));
   brain->setSequenceLengths(voices.count(hal::Folder::Plea), voices.count(hal::Folder::Daisy));
@@ -244,6 +327,10 @@ void loop() {
     case 'H': fakeHold = !fakeHold; break;
     case 'P': fakeProx = true; break;
     case 'K': fakeShake = true; break;
+    case 'N':  // tap, showing the next screen in catalogue order (for screenshots)
+      fakeTouchUntil = now + 100;
+      debugNext = true;
+      break;
     case 'W': {  // debug: a Wi-Fi network that doesn't exist must time out without freezing HAL
       hal::Config bogus = config;
       bogus.wifiSsid = "hal-no-such-network";
@@ -288,6 +375,9 @@ void loop() {
     } else if (m.type == hal::MsgType::End) {
       linkConversing = false;
       continue;
+    } else if (m.type == hal::MsgType::Status) {  // HAL Zero diagnosing us; mid-dialogue is fine
+      r.type = hal::MsgType::State;
+      r.status = deskStatus();
     } else {
       continue;
     }
@@ -311,17 +401,30 @@ void loop() {
   lastQuiet = a.quiet;
   if (a.stopAudio) audio.stop();
   if (a.newConsole) {
-    bool visual = consoles.next() == "visual";
+    std::string id;
+    if (debugNext) {
+      std::vector<std::string> ids = consoles.ids();
+      id = ids[debugScreen++ % ids.size()];
+      consoles.show(id);
+      debugNext = false;
+    } else {
+      id = consoles.next();
+    }
     consoleStartMs = now;
-    // Visual Analysis gets a camera line, if there are any on the card.
-    if (visual && a.play && voices.count(hal::Folder::Camera) > 0) a.folder = hal::Folder::Camera;
+    lineMs = 0;
+    if (id == "sensors") lastSensorsMs = 0;  // fresh numbers straight away
+    if (a.play) {  // the screen's own line, a camera line for Visual Analysis, or a tap line
+      std::string path;
+      if (hal::pickConsoleLine(id, screenVoices, voices, &path)) startLine(path);
+      a.play = false;
+    }
   }
   if (a.play) play(a);
   if (a.dialogueLine > 0) {
     std::string path = hal::dialogueVoicePath(linkDialogue, a.dialogueLine, hal::Speaker::Old);
     hal::Message r;
     r.n = a.dialogueLine;
-    if (audio.playFile(path.c_str())) {
+    if (startLine(path)) {
       r.type = hal::MsgType::Playing;
       r.ms = int(audio.durationMs());
     } else {
@@ -345,8 +448,15 @@ void loop() {
   hal::Mode m = brain->mode();
   if (m != lastMode) {
     Serial.printf("mode %s -> %s\n", modeName(lastMode), modeName(m));
-    if (lastMode == hal::Mode::Console) drawEyeBackground(M5.Display, L, haveMemory ? &storage : nullptr, !haveMemory);
+    // Console screens and the Daisy memory banks draw over the eye: put it back.
+    if (lastMode == hal::Mode::Console || lastMode == hal::Mode::Daisy)
+      drawEyeBackground(M5.Display, L, haveMemory ? &storage : nullptr, !haveMemory);
+    if (m == hal::Mode::Daisy) daisyStartMs = now;
     lastMode = m;
+  }
+  if (m == hal::Mode::Console && consoles.currentId() == "sensors" && (lastSensorsMs == 0 || now - lastSensorsMs >= 500)) {
+    lastSensorsMs = now;
+    readDeskSensors();
   }
   setBacklight(m == hal::Mode::Dark ? 0 : (a.quiet ? 60 : 160));
 

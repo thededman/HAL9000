@@ -4,3 +4,4 @@
 
 bool proximityBegin();  // false if the sensor doesn't answer
 int proximityRead();    // 0..2047, bigger = closer; -1 on error
+int ambientRead();      // room light, raw visible channel 0..65535; -1 on error

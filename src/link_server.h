@@ -3,6 +3,7 @@
 // itself as hal9000-old.local and takes one connection on the link port.
 #include <WiFi.h>
 
+#include <string>
 #include <vector>
 
 #include "hal_link.h"
@@ -14,10 +15,17 @@ class LinkServer {
   bool connected() { return client_ && client_.connected(); }
   void poll(std::vector<hal::Message>* in, bool* dropped);  // never blocks
   bool send(const hal::Message& m);
+  // For the comms screen.
+  int msgsIn() const { return msgsIn_; }
+  int msgsOut() const { return msgsOut_; }
+  const std::string& lastMessage() const { return last_; }
+  std::string peerAddress();
 
  private:
   WiFiServer* server_ = nullptr;
   WiFiClient client_;
   bool hadClient_ = false;
   hal::LineSplitter splitter_;
+  int msgsIn_ = 0, msgsOut_ = 0;
+  std::string last_;
 };

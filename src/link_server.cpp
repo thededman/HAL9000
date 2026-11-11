@@ -44,7 +44,10 @@ void LinkServer::poll(std::vector<hal::Message>* in, bool* dropped) {
     if (n <= 0) break;
     for (const std::string& line : splitter_.feed(buf, size_t(n))) {
       hal::Message m = hal::parseMessage(line);
-      if (m.type != hal::MsgType::Invalid) in->push_back(m);
+      if (m.type == hal::MsgType::Invalid) continue;
+      in->push_back(m);
+      ++msgsIn_;
+      last_ = line;
     }
   }
 }
@@ -52,5 +55,12 @@ void LinkServer::poll(std::vector<hal::Message>* in, bool* dropped) {
 bool LinkServer::send(const hal::Message& m) {
   if (!client_ || !client_.connected()) return false;
   std::string line = hal::formatMessage(m) + "\n";
-  return client_.write(reinterpret_cast<const uint8_t*>(line.data()), line.size()) == line.size();
+  bool ok = client_.write(reinterpret_cast<const uint8_t*>(line.data()), line.size()) == line.size();
+  if (ok) ++msgsOut_;
+  return ok;
+}
+
+std::string LinkServer::peerAddress() {
+  if (!client_ || !client_.connected()) return "";
+  return client_.remoteIP().toString().c_str();
 }
