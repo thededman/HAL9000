@@ -85,4 +85,10 @@ void analyser(M5Canvas& c, const hal::Layout& L, uint32_t tMs, uint8_t level);
 void globe(M5Canvas& c, const hal::Layout& L, uint32_t tMs, uint8_t level);
 void visual(M5Canvas& c, const hal::Layout& L, uint32_t tMs, uint8_t level, const CameraView& cam);
 
+// The desk HAL's own screens.
+void sensors(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void chess(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void memory(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);  // also Daisy Bell
+void comms(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+
 }  // namespace screens

@@ -30,6 +30,10 @@ const std::vector<ScreenDef>& screenCatalogue() {
        [](M5Canvas& c, const hal::Layout& L, uint32_t t, const ScreenData& d) { screens::analyser(c, L, t, d.voiceLevel); }},
       {"globe", Owner::Both,
        [](M5Canvas& c, const hal::Layout& L, uint32_t t, const ScreenData& d) { screens::globe(c, L, t, d.voiceLevel); }},
+      {"sensors", Owner::Desk, screens::sensors},
+      {"chess", Owner::Desk, screens::chess},
+      {"memory", Owner::Desk, screens::memory},
+      {"comms", Owner::Desk, screens::comms},
   };
   return list;
 }

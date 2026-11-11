@@ -3,6 +3,7 @@
 // desk HAL on the CoreS3; this file is the Linux glue around them.
 //
 //   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID]
+//   hal9000 --shots DIR --layout cores3      the desk HAL's screens at 320x240, for review
 //
 // Keys: Space = HAL's "finger" (tap / hold), Tab or Up/Down = menu, D = dialogues, Esc = back/quit,
 // F12 = screenshot (Mac). On the Cardputer the arrows are F X Z C (Fn optional).
@@ -528,12 +529,61 @@ struct App {
 
 }  // namespace
 
+// --shots DIR --layout cores3: the desk HAL's screens at 320x240, with sample
+// numbers, so they can be reviewed on the Mac before flashing the CoreS3.
+int deskShots(const std::string& dir) {
+  M5Canvas c;
+  c.setColorDepth(16);
+  c.createSprite(hal::kCoreS3.w, hal::kCoreS3.h);
+  screens::ScreenData d;
+  d.voiceLevel = 140;
+  d.lineMs = 4000;
+  d.sensors = {true, 62, 35, 3, 1.2f, 87, true, 41, -58, 109388, 7340032};
+  d.link = {true, true, true, "172.16.0.14", "SAY introduction 7", 214, 209, -58};
+  int failures = 0;
+  auto shot = [&](const std::string& name) {
+    std::string path = dir + "/cores3-" + name + ".png";
+    bool ok = savePng(c, path);
+    failures += !ok;
+    halLog("%s %s", ok ? "wrote" : "FAILED", path.c_str());
+  };
+  for (const ScreenDef& def : screenCatalogue()) {
+    if (def.owner == screens::Owner::Zero) continue;
+    def.draw(c, hal::kCoreS3, 2600, d);
+    shot(def.id);
+  }
+  for (uint32_t seed = 0; seed < 4; ++seed)
+    for (uint32_t t : {1000u, 9000u}) {
+      screens::ScreenData g = d;
+      g.seed = seed;
+      screens::chess(c, hal::kCoreS3, t, g);
+      shot("chess-" + std::to_string(seed) + (t < 5000 ? "-start" : "-mate"));
+    }
+  screens::ScreenData daisy = d;
+  daisy.daisyProgress = 0.5f;
+  screens::memory(c, hal::kCoreS3, 2600, daisy);
+  shot("memory-daisy");
+  screens::ScreenData off = d;
+  off.link.connected = false;
+  screens::comms(c, hal::kCoreS3, 2600, off);
+  shot("comms-no-carrier");
+  off.link.enabled = false;
+  off.link.rssi = 0;
+  screens::comms(c, hal::kCoreS3, 3200, off);
+  shot("comms-disabled");
+  screens::ScreenData none = d;
+  none.sensors = screens::DeskSensors();
+  screens::sensors(c, hal::kCoreS3, 2600, none);
+  shot("sensors-no-data");
+  return failures ? 1 : 0;
+}
+
 int main(int argc, char** argv) {
   const char* shotsDir = nullptr;
   const char* root = std::getenv("HAL_ROOT");
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg;
+  std::string linkArg, dialogueArg, layoutArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -542,7 +592,9 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) scale = std::max(1, std::atoi(argv[++i]));
     else if (!std::strcmp(argv[i], "--link") && i + 1 < argc) linkArg = argv[++i];
     else if (!std::strcmp(argv[i], "--dialogue") && i + 1 < argc) dialogueArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--layout") && i + 1 < argc) layoutArg = argv[++i];
   }
+  if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
 
   App app(rootDir);
