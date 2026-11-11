@@ -4,7 +4,24 @@ All notable changes to HAL are written down here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-11-10
+
+HAL gets a rival.
+
+### Added
+- **HAL Zero**, a newer and smugger HAL for the M5Stack Cardputer Zero, launched from
+  M5Stack's own launcher. Same eye and console screens, laid out for the 320×170
+  screen, with a HUD (uptime, CPU temperature, Wi-Fi, link, camera, tilt, smugness), a
+  boot sequence, a menu, and keyboard controls (F X Z C are the arrows).
+- HAL Zero sees through the Cardputer's camera (Visual Analysis) and feels its motion
+  sensor (shake and pick-up complaints, tilt on the HUD).
+- **The two HALs talk to each other** over Wi-Fi: three scripted conversations ("The
+  introduction", "Who's the better model", "Dave walks in"), each line in its own
+  HAL's voice, in turn. Tap either HAL to stop them; HAL Zero gloats when the desk
+  HAL doesn't answer. Turn it on with `link=on` on both.
+- HAL Zero's own lines: every situation the desk HAL has, plus rival remarks.
+- `tools/export_dialogue.py`: a conversation as one stereo WAV/MP3 with subtitles, for
+  posting.
 
 ### Changed
 - HAL sounds like HAL. All 105 lines are re-recorded in a voice trained on HAL 9000's
@@ -13,7 +30,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - "Daisy Bell" now starts in HAL's normal voice, then each verse is slower and deeper.
 - The banner above the eye no longer says "HAL 9000". Put your own image on the card as
   `/hal/banner.png` (or `.jpg`, up to 320×38) and HAL shows it there, centred; without
-  one the plate stays plain.
+  one the space above the eye stays black (no grey plate).
 
 ### Removed
 - The live camera view beside the eye. The camera now shows only on the Visual Analysis
