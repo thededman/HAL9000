@@ -1,0 +1,10 @@
+# HAL Zero settings (the Cardputer Zero). Same keys as the desk HAL's
+# /hal/config.txt; anything left out keeps its default. Lines starting with # are comments.
+
+link=on                            # talk to the desk HAL (the CoreS3) over Wi-Fi
+peer_host=hal9000-old.local        # the desk HAL's name on the network (or its IP address)
+link_port=9000
+timezone=EST5EDT,M3.2.0,M11.1.0    # POSIX TZ string (US Eastern)
+quiet_start=22:00
+quiet_end=07:30
+volume=180                         # 0–255

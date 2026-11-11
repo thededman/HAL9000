@@ -22,6 +22,8 @@ case "${1:-}" in
     ssh "$HOST" 'mkdir -p ~/hal-zero ~/hal/shots'
     scp -q .pio/build/cardputer/program "$HOST":hal-zero/hal9000
     scp -q tools/cardputer/hal-zero tools/cardputer/hal-zero.desktop tools/cardputer/hal-zero.png "$HOST":hal-zero/
+    # HAL Zero's settings: only if there are none yet (never overwrites yours).
+    ssh "$HOST" 'test -f ~/hal/config.txt' || { scp -q tools/cardputer/config.txt "$HOST":hal/config.txt && echo "settings: ~/hal/config.txt"; }
     echo "deployed to $HOST:~/hal-zero/"
     ;;
   run)

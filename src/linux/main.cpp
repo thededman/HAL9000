@@ -4,8 +4,9 @@
 //
 //   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID]
 //
-// Keys: Space = HAL's "finger" (tap / hold), Tab = menu, D = dialogues, Esc = back/quit,
-// F12 = screenshot. Testing: C = someone walks past the camera, P = wave, K = shake.
+// Keys: Space = HAL's "finger" (tap / hold), Tab or Up/Down = menu, D = dialogues, Esc = back/quit,
+// F12 = screenshot (Mac). On the Cardputer the arrows are F X Z C (Fn optional).
+// Testing on the Mac: C = someone walks past the camera, P = wave, K = shake.
 #include <M5GFX.h>
 #include <SDL.h>
 
@@ -121,6 +122,7 @@ struct App {
   // Inputs that come from keys/menu for one tick (or until done).
   uint32_t tapUntil = 0;
   bool holdForDaisy = false, wantVisual = false, fakeWave = false, fakeShake = false;
+  bool cardKeys = false;  // the Cardputer's keyboard: arrows are F X Z C
   int pendingSay = -1;
   bool pendingGloat = false;
   std::string gloatText;
@@ -249,10 +251,10 @@ struct App {
     uint32_t now = nowMs();
     for (SDL_Keycode k : keys.pressed) {
       if (overlay != Overlay::None) {
-        if (k == SDLK_ESCAPE || k == SDLK_TAB) overlay = Overlay::None;
+        if (k == SDLK_ESCAPE || k == SDLK_TAB || k == SDLK_LEFT) overlay = Overlay::None;
         else if (k == SDLK_UP) menu.up();
         else if (k == SDLK_DOWN) menu.down();
-        else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+        else if (k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_RIGHT) {
           std::string id = menu.selectedId();
           bool dialogueList = overlay == Overlay::Dialogues;
           overlay = Overlay::None;
@@ -272,7 +274,9 @@ struct App {
         case SDLK_ESCAPE:
           halLog("quit (Esc)");
           return false;
-        case SDLK_TAB: openMenu(); break;
+        case SDLK_TAB:
+        case SDLK_UP:
+        case SDLK_DOWN: openMenu(); break;
         case SDLK_d: openDialogues(); break;
         case SDLK_c: if (auto* f = dynamic_cast<FakeCamera*>(camera.get())) f->walkIn(now); break;
         case SDLK_p: fakeWave = true; break;
@@ -394,7 +398,7 @@ struct App {
     h.uptimeS = (now - startMs) / 1000;
     h.cpuTempC = cpuTempC();
     h.wifi = wifiUp();
-    h.link = !cfg.link ? "OFF" : conductor.active() ? "TALKING" : link.connected() ? "READY" : "SEARCHING";
+    h.link = !cfg.link ? "OFF" : conductor.active() ? "TALKING" : link.connected() ? "READY" : "SEEKING";
     h.linkBusy = conductor.active();
     h.level = audio.level();
     h.motion = camera ? camera->score() : 0;
@@ -419,8 +423,11 @@ struct App {
     drawEye(lens, L, p);
     lens.pushSprite(&frame, lensX(L), lensY(L), eyeTransparentKey());
     drawHud(frame, hudInfo(now), now);
-    drawCommandStrip(frame, conductor.active() ? "SPACE interrupt   ESC quit"
-                                               : "SPACE talk   TAB menu   D dialogues   ESC quit");
+    const char* strip = overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
+                                                             : "UP DOWN move   ENTER pick   ESC back")
+                        : conductor.active()    ? "SPACE interrupt   ESC quit"
+                                                : "SPACE talk   TAB menu   D dialogues   ESC quit";
+    drawCommandStrip(frame, strip);
   }
 
   void render(uint32_t now) {
@@ -540,6 +547,7 @@ int main(int argc, char** argv) {
   FbIo fbio;
   const bool useFb = FbIo::available() && !forceWindow;
   if (useFb ? !fbio.open() : !io.open(L.w, L.h, fullscreen, scale)) return 1;
+  app.cardKeys = useFb;
   std::signal(SIGINT, onSignal);
   std::signal(SIGTERM, onSignal);
   std::signal(SIGHUP, onSignal);

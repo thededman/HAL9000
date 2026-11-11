@@ -38,6 +38,12 @@ std::string findKeyboard() {
   return found;
 }
 
+// Fn (389), Sym (383) and the other modifiers: nothing on their own.
+bool isModifier(int code) {
+  return code == 389 || code == 383 || code == KEY_LEFTSHIFT || code == KEY_RIGHTSHIFT || code == KEY_LEFTCTRL ||
+         code == KEY_RIGHTCTRL || code == KEY_LEFTALT || code == KEY_RIGHTALT;
+}
+
 SDL_Keycode toSdl(int code) {
   switch (code) {
     case KEY_SPACE: return SDLK_SPACE;
@@ -45,12 +51,13 @@ SDL_Keycode toSdl(int code) {
     case KEY_ESC: return SDLK_ESCAPE;
     case KEY_GRAVE: return SDLK_ESCAPE;  // ` sits where Esc would be on small keyboards
     case KEY_ENTER: return SDLK_RETURN;
-    case KEY_UP: return SDLK_UP;
-    case KEY_DOWN: return SDLK_DOWN;
-    case KEY_SEMICOLON: return SDLK_UP;  // Cardputer-style arrows: ; . , /
-    case KEY_DOT: return SDLK_DOWN;
+    // Arrows: Fn+F/X/Z/C. The keyboard sends Fn and the letter separately (each
+    // app combines them), so here F X Z C are the arrows with or without Fn.
+    case KEY_F: case KEY_UP: return SDLK_UP;
+    case KEY_X: case KEY_DOWN: return SDLK_DOWN;
+    case KEY_Z: case KEY_LEFT: return SDLK_LEFT;
+    case KEY_C: case KEY_RIGHT: return SDLK_RIGHT;
     case KEY_D: return SDLK_d;
-    case KEY_C: return SDLK_c;
     case KEY_P: return SDLK_p;
     case KEY_K: return SDLK_k;
     case KEY_F12: return SDLK_F12;
@@ -124,7 +131,7 @@ void FbIo::poll(KeyInput* keys) {
       if (ev.value == 1) {  // pressed (2 = auto-repeat, ignored)
         SDL_Keycode k = toSdl(ev.code);
         if (k != SDLK_UNKNOWN) keys->pressed.push_back(k);
-        else halLog("key %d", ev.code);  // unmapped: logged so we can add it
+        else if (!isModifier(ev.code)) halLog("key %d", ev.code);  // unmapped: logged so we can add it
       }
     }
   }
