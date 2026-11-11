@@ -11,6 +11,7 @@ Checked read-only over SSH (`david@cardputerzero.local`) on 2026-11-11.
 | Launcher apps | `/usr/share/APPLaunch/applications/*.desktop` (`Exec=`, `Icon=share/images/x.png` relative to `/usr/share/APPLaunch`) | Install `hal-zero.desktop` + icon there (needs sudo) |
 | Launcher process | systemd **user** service `APPLaunch.service` (pi); icons are 100×100 RGBA PNGs; pi's `sudo` asks for a password | `tools/cardputer.sh install` copies the entry with sudo (David types the password), then `systemctl --user restart APPLaunch`. The start script `~/hal-zero/hal-zero` pauses the launcher (SIGSTOP) while HAL Zero has the screen and resumes it when he quits |
 | Camera at run time | `rpicam-vid` 320×240 YUV420 at 15 fps through a pipe: HAL Zero ~15% CPU, ~130 MB RAM still available | Live Visual Analysis confirmed on the LCD; quitting leaves no `rpicam-vid` behind |
+| Keyboard layers | The `tca8418c` driver sends plain keys; Fn (code 389) and Sym (383) arrive as separate keys and each app combines them. M5Stack's arrows are Fn+F/X/Z/C (up/down/left/right) | HAL Zero takes F X Z C as arrows with or without Fn, plus real arrow codes if a future driver sends them |
 | Motion sensor axes | Sitting on the desk, the BMI270 reads gravity on **x** (−1 g), not z | The HUD's TILT is measured from where HAL first settled (`MotionDetector::tiltFromHomeDeg`), so mounting doesn't matter |
 | Audio | card 1 `ES8389` (built-in), card 0 HDMI | SDL audio through the session |
 | Camera | `imx219` via libcamera; `rpicam-vid` 1.13 installed | `rpicam-vid` child process, YUV420 |

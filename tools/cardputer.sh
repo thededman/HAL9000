@@ -37,7 +37,10 @@ case "${1:-}" in
       XDG_RUNTIME_DIR=/run/user/$(id -u) systemctl --user restart APPLaunch &&
       echo "HAL Zero is in the launcher"'
     ;;
-  stop) ssh "$HOST" 'pkill -TERM -x hal9000 || echo "not running"' ;;
+  stop)  # waits (up to 10 s) until he has gone, camera and all
+    ssh "$HOST" 'pkill -TERM -x hal9000 || { echo "not running"; exit 0; }
+      for i in $(seq 50); do pgrep -x hal9000 >/dev/null || exit 0; sleep 0.2; done; echo "still running"'
+    ;;
   log) ssh "$HOST" 'tail -n 40 /tmp/hal-zero.log' ;;
   look) ssh "$HOST" 'pkill -USR2 -x hal9000 || echo "not running"' ;;
   shot)
