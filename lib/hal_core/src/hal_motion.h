@@ -19,6 +19,9 @@ class MotionDetector {
   // Degrees between gravity now and the first rest ("home"), or -1 before
   // HAL has first settled. Works whichever way the sensor is mounted.
   int tiltFromHomeDeg() const;
+  // Smoothed gravity now and in the home pose (in g, sensor axes). False before
+  // HAL has first settled.
+  bool gravity(float now[3], float home[3]) const;
 
  private:
   float g_[3] = {0, 0, 0};

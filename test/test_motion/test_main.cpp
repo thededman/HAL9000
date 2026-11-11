@@ -246,6 +246,22 @@ void test_tilt_from_home() {
   TEST_ASSERT_TRUE(tilt >= 28 && tilt <= 31);
 }
 
+// The unit screen's wireframe needs gravity now and in the home pose.
+void test_gravity_accessor() {
+  Feed f;
+  float now[3], home[3];
+  TEST_ASSERT_FALSE(f.det.gravity(now, home));  // not settled yet
+  f.hold(-1, 0, 0, 2500);
+  TEST_ASSERT_TRUE(f.det.gravity(now, home));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, -1.0f, now[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, -1.0f, home[0]);
+  f.hold(-kCos30, kSin30, 0, 3000);  // tipped 30 degrees: now follows, home stays
+  TEST_ASSERT_TRUE(f.det.gravity(now, home));
+  TEST_ASSERT_FLOAT_WITHIN(0.02f, kSin30, now[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, home[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, -1.0f, home[0]);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_still_is_quiet);
@@ -268,5 +284,6 @@ int main() {
   RUN_TEST(test_motion_score_scale);
   RUN_TEST(test_imu_says_moving);
   RUN_TEST(test_tilt_from_home);
+  RUN_TEST(test_gravity_accessor);
   return UNITY_END();
 }

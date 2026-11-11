@@ -22,6 +22,15 @@ int MotionDetector::tiltFromHomeDeg() const {
   return int(angleDeg(g_, home_) + 0.5f);
 }
 
+bool MotionDetector::gravity(float now[3], float home[3]) const {
+  if (!haveRest_) return false;
+  for (int i = 0; i < 3; ++i) {
+    now[i] = g_[i];
+    home[i] = home_[i];
+  }
+  return true;
+}
+
 MotionEvent MotionDetector::update(float ax, float ay, float az, uint32_t now) {
   const float a[3] = {ax, ay, az};
   if (!gInit_) {
