@@ -41,6 +41,13 @@ class HelperTests(unittest.TestCase):
             names = [f.relative_to(root).as_posix() for f in mv.lines_files(root)]
             self.assertEqual(names, ["boot.txt", "tap.txt", "screens/chess.txt", "screens/comms.txt"])
 
+    def test_player_prefers_what_is_installed(self):
+        # macOS has afplay; Linux has aplay or paplay; with none, playback is skipped.
+        self.assertEqual(mv.player_command(lambda name: "/usr/bin/afplay" if name == "afplay" else None), ["afplay"])
+        self.assertEqual(mv.player_command(lambda name: "/usr/bin/aplay" if name == "aplay" else None), ["aplay", "-q"])
+        self.assertEqual(mv.player_command(lambda name: "/usr/bin/paplay" if name == "paplay" else None), ["paplay"])
+        self.assertIsNone(mv.player_command(lambda name: None))
+
     def test_daisy_filters(self):
         f3 = mv.daisy_filter(3)
         self.assertIn("asetrate=22050*0.79", f3)

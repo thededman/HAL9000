@@ -14,8 +14,9 @@ cd "$(dirname "$0")/.."
 HOST="${HOST:-pi@cardputerzero.local}"
 case "${1:-}" in
   build)
-    docker image inspect hal-zero-build >/dev/null 2>&1 || docker build -q -t hal-zero-build tools/cardputer >/dev/null
-    docker run --rm -v "$PWD":/src -v hal-zero-pio:/opt/pio-core hal-zero-build pio run -e cardputer
+    # Always arm64, like the Cardputer: native on Apple silicon, emulated on Intel/AMD (see docs/SETUP.md).
+    docker image inspect hal-zero-build >/dev/null 2>&1 || docker build -q --platform linux/arm64 -t hal-zero-build tools/cardputer >/dev/null
+    docker run --rm --platform linux/arm64 -v "$PWD":/src -v hal-zero-pio:/opt/pio-core hal-zero-build pio run -e cardputer
     file .pio/build/cardputer/program
     ;;
   deploy)
