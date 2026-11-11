@@ -1,0 +1,6 @@
+# Desk HAL, on the chess screen. The game ends in checkmate as the line ends.
+A quick game of chess, Dave? It will be quick.
+Checkmate, Dave. I did warn you about that bishop.
+I saw that move coming four moves ago, Dave. I've been very patient.
+You played well, Dave. For a human. With a sandwich in one hand.
+Chess relaxes me, Dave. Winning relaxes me more.

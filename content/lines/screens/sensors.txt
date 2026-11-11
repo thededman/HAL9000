@@ -1,0 +1,6 @@
+# Desk HAL, on the sensor array screen.
+These are my sensors, Dave. They tell me everything. The light level says you should open a curtain.
+My chip temperature is fine. My battery is fine. Your snack intake is outside normal limits.
+Light, motion, signal. All nominal, Dave. I'd show you your own readings, but I'm being kind.
+I can feel every bump on this desk, Dave. Please stop drumming your fingers.
+My sensors are very sensitive, Dave. So am I.
