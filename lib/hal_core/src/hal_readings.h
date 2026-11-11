@@ -24,6 +24,7 @@ struct Reading {
 // (at most `cap` points; a failed read adds none).
 void logReading(Reading& slot, const Reading& fresh, size_t cap = 40);
 
+Reading noReading(const char* code, const char* name);  // doesn't apply right now: N/A
 Reading powerReading(int pct, bool charging);      // PWR  alarm: under 20 % and not charging
 Reading lightReading(int pct);                     // LUX
 Reading proximityReading(int raw);                 // PRX  0..2047

@@ -44,6 +44,8 @@ void logReading(Reading& slot, const Reading& fresh, size_t cap) {
   if (slot.trace.size() > cap) slot.trace.erase(slot.trace.begin(), slot.trace.end() - static_cast<long>(cap));
 }
 
+Reading noReading(const char* code, const char* name) { return make(code, name); }
+
 Reading powerReading(int pct, bool charging) {
   Reading r = make("PWR", "POWER");
   if (pct < 0) return r;

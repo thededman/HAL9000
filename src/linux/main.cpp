@@ -226,6 +226,11 @@ struct App {
   int peerVersion = 0;                       // from the desk HAL's HELLO (0 = not seen)
   hal::PeerWatch peerWatch;                  // STATUS sent, STATE received
   hal::LinkLiveness liveness;                // pings, so a powered-off desk HAL is noticed
+  // The film-style screens' readings: HAL Zero's real numbers, updated in place.
+  std::vector<hal::Reading> readings = std::vector<hal::Reading>(11);
+  std::vector<screens::UnitPart> unitParts = {{"CAM", false}, {"SPK", false}, {"IMU", false},
+                                              {"KBD", true},  {"NET", true},  {"LNK", true}};
+  int linesSpoken = 0;
   bool wasConnected = false;
   bool diagGloated = false;                  // said a rival line on this diagnostics screen
 
@@ -436,7 +441,10 @@ struct App {
     if (dropped && conductor.active()) handleConductor(conductor.onDisconnected(now));
     // Diagnostics and benchmark ask the desk HAL how he is: on opening, then every 2 s.
     const std::string& shown = consoles.currentId();
-    if (brain->mode() == hal::Mode::Console && (shown == "diagnostics" || shown == "benchmark")) askStatus(now);
+    // Screens that show the desk HAL's state ask him for it.
+    if (brain->mode() == hal::Mode::Console &&
+        (shown == "diagnostics" || shown == "benchmark" || shown == "cards" || shown == "wall"))
+      askStatus(now);
     // Diagnostics finds the old model isn't answering: HAL Zero gloats, once per screen.
     if (brain->mode() == hal::Mode::Console && shown == "diagnostics" && !diagGloated) {
       hal::PeerState st = peerWatch.state(link.connected(), peerVersion, now);
@@ -445,6 +453,7 @@ struct App {
     if (now - lastSysMs >= 500) {
       lastSysMs = now;
       sysmon.sample();
+      updateReadings(now);
     }
     if (!autoShow.empty() && brain->mode() == hal::Mode::Idle) {
       wantScreen = autoShow;
@@ -529,6 +538,7 @@ struct App {
     if (a.dialogueLine > 0) {
       std::string path = hal::dialogueVoicePath(conductor.dialogue().id, a.dialogueLine, hal::Speaker::New);
       if (!audio.playFile(storage, path)) halLog("no voice for %s", path.c_str());
+      else ++linesSpoken;
     }
     if (a.dialogueDone > 0) handleConductor(conductor.onLocalDone(now));
     if (a.restart) {
@@ -564,7 +574,45 @@ struct App {
   bool startLine(const std::string& path) {
     if (!audio.playFile(storage, path)) return false;
     lineMs = audio.durationMs();
+    ++linesSpoken;
     return true;
+  }
+
+  // HAL Zero's real numbers for the film-style screens (every 500 ms).
+  void updateReadings(uint32_t now) {
+    const screens::SysStats& st = sysmon.stats();
+    auto last = [](const std::vector<float>& v) { return v.empty() ? std::nanf("") : v.back(); };
+    float cpu = 0;
+    int cores = 0;
+    for (int k = 0; k < 4 && k < st.cores; ++k)
+      if (!st.cpu[k].empty()) {
+        cpu += st.cpu[k].back();
+        ++cores;
+      }
+    const float used = last(st.memUsedPct), temp = last(st.tempC), rssi = last(st.rssiDbm);
+    time_t t = std::time(nullptr);
+    struct tm lt;
+    const int clock = localtime_r(&t, &lt) ? lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec : -1;
+    const bool wifi = !std::isnan(rssi);
+    int i = 0;
+    hal::logReading(readings[i++], hal::cpuReading(cores ? int(cpu / cores + 0.5f) : -1));
+    hal::logReading(readings[i++], std::isnan(used) ? hal::memoryReading(0, 0)
+                                                    : hal::memoryReading(int(st.memTotalKb * (100 - used) / 100), int(st.memTotalKb)));
+    hal::logReading(readings[i++], hal::tempReading(std::isnan(temp) ? -999 : int(temp + 0.5f)));
+    hal::logReading(readings[i++], hal::netReading(wifi ? int(rssi) : 0));
+    hal::logReading(readings[i++], hal::linkReading(cfg.link, link.connected()));
+    hal::logReading(readings[i++], hal::cameraReading(camera != nullptr, camera ? std::min(100, camera->score()) : 0));
+    hal::logReading(readings[i++], hal::tiltReading(haveImu ? motion.tiltFromHomeDeg() : -1));
+    hal::logReading(readings[i++], hal::audioReading(audio.level(), linesSpoken));
+    hal::logReading(readings[i++], hal::clockReading(clock));
+    hal::logReading(readings[i++], hal::uptimeReading((now - startMs) / 1000));
+    hal::logReading(readings[i++], cfg.link ? hal::peerReading(peerWatch.state(link.connected(), peerVersion, now), peerStatus.mode)
+                                            : hal::noReading("DSK", "DESK UNIT"));
+    unitParts[0].ok = camera != nullptr;
+    unitParts[1].ok = audioOk;
+    unitParts[2].ok = haveImu;
+    unitParts[4].ok = !st.valid || wifi;  // on the Mac there's no /proc to ask
+    unitParts[5].ok = !cfg.link || link.connected();
   }
 
   // What the console screens draw from.
@@ -575,6 +623,18 @@ struct App {
     d.lineMs = lineMs;
     const std::string& id = consoles.currentId();
     if (id == "sysmon" || id == "benchmark") d.sys = sysmon.stats();
+    d.readings = &readings;
+    d.parts = &unitParts;
+    d.unitModel = screens::UnitModel::Cardputer;
+    float g[3], home[3];
+    if (haveImu && motion.gravity(g, home)) {  // sitting flat, the Cardputer's IMU reads gravity on -x: that's the model's -y
+      const float gm[3] = {g[1], g[0], g[2]}, hm[3] = {home[1], home[0], home[2]};
+      for (int k = 0; k < 3; ++k) {
+        d.gravity[k] = gm[k];
+        d.gravityHome[k] = hm[k];
+      }
+      d.gravityValid = true;
+    }
     d.peer.state = peerWatch.state(link.connected(), peerVersion, now);
     d.peer.status = peerStatus;
     time_t t = std::time(nullptr);

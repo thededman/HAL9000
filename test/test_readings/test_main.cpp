@@ -127,6 +127,13 @@ void test_log_caps_trace() {
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.10f, slot.trace.front());  // the oldest ten are gone
 }
 
+// A reading that doesn't apply right now (the desk unit with the link switched off).
+void test_no_reading() {
+  Reading r = hal::noReading("DSK", "DESK UNIT");
+  expectInvalid(r, "DSK");
+  TEST_ASSERT_EQUAL_STRING("N/A", r.value.c_str());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_power);
@@ -141,5 +148,6 @@ int main() {
   RUN_TEST(test_peer);
   RUN_TEST(test_log_copies_fields);
   RUN_TEST(test_log_caps_trace);
+  RUN_TEST(test_no_reading);
   return UNITY_END();
 }

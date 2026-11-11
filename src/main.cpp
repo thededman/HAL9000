@@ -180,6 +180,45 @@ screens::CameraView cameraView() {
   return v;
 }
 
+// The film-style screens' readings: the desk HAL's real numbers, kept in place
+// (the screens hold a pointer) and refreshed every 500 ms while one is showing.
+std::vector<hal::Reading> readings(12);
+std::vector<screens::UnitPart> unitParts = {{"CAM", false}, {"SPK", true}, {"IMU", true}, {"PRX", false},
+                                            {"SD", false},  {"NET", true}, {"LNK", true}};
+
+bool showsReadings(const std::string& id) { return id == "sensors" || id == "cards" || id == "wall" || id == "unit"; }
+
+void updateReadings() {
+  const screens::DeskSensors& s = deskSensors;
+  const bool wifi = WiFi.status() == WL_CONNECTED;
+  int clock = -1;
+  if (clockIsSet()) {
+    time_t t = time(nullptr);
+    struct tm lt;
+    localtime_r(&t, &lt);
+    clock = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
+  }
+  int i = 0;
+  hal::logReading(readings[i++], hal::powerReading(s.batteryPct, s.charging));
+  hal::logReading(readings[i++], hal::lightReading(s.lightPct));
+  hal::logReading(readings[i++], hal::proximityReading(s.proximity));
+  hal::logReading(readings[i++], hal::motionReading(s.motionDps));
+  hal::logReading(readings[i++], hal::tempReading(s.chipTempC));
+  hal::logReading(readings[i++], hal::netReading(s.rssi));
+  hal::logReading(readings[i++], hal::memoryReading(s.heapFree / 1024, int(ESP.getHeapSize() / 1024)));
+  hal::logReading(readings[i++], hal::linkReading(config.link, linkServer.connected()));
+  hal::logReading(readings[i++], hal::cameraReading(haveCamera, haveCamera ? std::min(100, cameraScore()) : 0));
+  hal::logReading(readings[i++], hal::audioReading(audio.level(), linesSpoken));
+  hal::logReading(readings[i++], hal::clockReading(clock));
+  hal::logReading(readings[i++], hal::uptimeReading(millis() / 1000));
+  // Parts for the unit diagnostic. With the link off, Wi-Fi asleep is by design.
+  unitParts[0].ok = haveCamera;
+  unitParts[3].ok = haveProximity;
+  unitParts[4].ok = haveMemory;
+  unitParts[5].ok = !config.link || wifi;
+  unitParts[6].ok = !config.link || linkServer.connected();
+}
+
 void drawFrame() {
   uint32_t now = millis();
   hal::Mode m = brain ? brain->mode() : hal::Mode::Booting;
@@ -189,6 +228,10 @@ void drawFrame() {
     d.voiceLevel = audio.level();
     d.lineMs = lineMs;
     d.sensors = deskSensors;
+    d.readings = &readings;
+    d.parts = &unitParts;
+    d.unitModel = screens::UnitModel::CoreS3;
+    d.gravityValid = motion.gravity(d.gravity, d.gravityHome);  // the IMU's axes are the model's
     if (consoles.currentId() == "comms") d.link = linkStats();
     if (consoles.draw(screen, M5.Display, L, now - consoleStartMs, d)) screen.pushSprite(0, 0);
     return;
@@ -433,7 +476,7 @@ void loop() {
     }
     consoleStartMs = now;
     lineMs = 0;
-    if (id == "sensors") lastSensorsMs = 0;  // fresh numbers straight away
+    if (showsReadings(id)) lastSensorsMs = 0;  // fresh numbers straight away
     if (a.play) {  // the screen's own line, a camera line for Visual Analysis, or a tap line
       std::string path;
       if (hal::pickConsoleLine(id, screenVoices, voices, &path)) startLine(path);
@@ -475,9 +518,10 @@ void loop() {
     if (m == hal::Mode::Daisy) daisyStartMs = now;
     lastMode = m;
   }
-  if (m == hal::Mode::Console && consoles.currentId() == "sensors" && (lastSensorsMs == 0 || now - lastSensorsMs >= 500)) {
+  if (m == hal::Mode::Console && showsReadings(consoles.currentId()) && (lastSensorsMs == 0 || now - lastSensorsMs >= 500)) {
     lastSensorsMs = now;
     readDeskSensors();
+    updateReadings();
   }
   setBacklight(m == hal::Mode::Dark ? 0 : (a.quiet ? 60 : 160));
 
