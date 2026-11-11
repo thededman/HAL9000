@@ -23,7 +23,7 @@ struct Layout {
   Rect visual;      // where the 160x120 camera frame sits
   // Eye
   int eyeCx, eyeCy, ringR, bezelR, lensR, lensSprite;
-  bool nameplate;  // banner / brushed plate above the eye
+  bool nameplate;  // room for your banner image (/hal/banner.png) above the eye
   int noMemoryY;   // "I can't find my memory" (bottom datum)
 
   int Y(int coreY) const { return contentTop + (coreY - 18) * contentH / 206; }

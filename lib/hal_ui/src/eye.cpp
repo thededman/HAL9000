@@ -66,15 +66,9 @@ void drawEyeBackground(lgfx::LovyanGFX& d, const hal::Layout& L, const hal::Stor
   }
   d.endWrite();
   if (!L.nameplate) return;
-  // The banner is read before drawing (the CoreS3's SD card shares the bus with
-  // the display). No image: a plain brushed plate.
-  if (!noMemory && storage && drawBanner(d, L, *storage)) return;
-  d.startWrite();
-  for (int y = 6; y < 32; ++y) {
-    int v = 70 + (y < 19 ? (y - 6) * 4 : (32 - y) * 3);
-    d.drawFastHLine(64, y, 192, d.color565(v, v, v + 6));
-  }
-  d.endWrite();
+  // Your banner image, if the card has one (read before drawing: the CoreS3's SD
+  // card shares the bus with the display). No image: the strip stays black.
+  if (!noMemory && storage) drawBanner(d, L, *storage);
 }
 
 // Distance from the sprite centre for every pixel, computed once per size.

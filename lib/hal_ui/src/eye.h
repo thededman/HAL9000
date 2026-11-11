@@ -1,5 +1,5 @@
 #pragma once
-// HAL's eye. The ring (and on the CoreS3 the nameplate) is drawn once; the lens
+// HAL's eye. The ring (and on the CoreS3 any banner image) is drawn once; the lens
 // is redrawn every frame into a small square sprite so it can breathe and follow
 // his voice. Geometry comes from the device's Layout.
 #include <M5GFX.h>
@@ -14,7 +14,7 @@ struct EyeParams {
   float brightness = 1.0f;  // 0..1, overall (fades to 0 during Daisy Bell)
 };
 
-// Ring, bezel, banner/nameplate (if the layout has one) and the no-memory line.
+// Ring, bezel, banner image (if the layout has room and the card has one) and the no-memory line.
 // `storage` may be null (no banner). Draws on a display or a full-screen sprite.
 void drawEyeBackground(lgfx::LovyanGFX& d, const hal::Layout& L, const hal::Storage* storage, bool noMemory);
 
