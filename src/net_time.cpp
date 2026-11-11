@@ -57,8 +57,10 @@ bool syncTime(const hal::Config& cfg, uint32_t timeoutMs, const std::function<vo
     return false;
   }
   uint32_t t0 = millis();
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str());
+  if (WiFi.status() != WL_CONNECTED) {  // with link=on Wi-Fi may already be up
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPassword.c_str());
+  }
   while (WiFi.status() != WL_CONNECTED && millis() - t0 < timeoutMs) waitMs(100, whileWaiting);
   bool ok = false;
   if (WiFi.status() == WL_CONNECTED) {
@@ -79,8 +81,12 @@ bool syncTime(const hal::Config& cfg, uint32_t timeoutMs, const std::function<vo
   } else {
     Serial.printf("  wifi '%s' didn't connect (status %d)\n", cfg.wifiSsid.c_str(), int(WiFi.status()));
   }
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+  if (cfg.link) {
+    WiFi.setSleep(false);  // the HAL Zero link wants quick replies
+  } else {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+  }
   applyTz(cfg);
   return ok;
 }

@@ -13,6 +13,7 @@
 #include "audio.h"
 #include "camera.h"
 #include "consoles.h"
+#include "hal_dialogue.h"
 #include "hal_layout.h"
 #include "debug_shot.h"
 #include "eye.h"
@@ -23,6 +24,7 @@
 #include "net_time.h"
 #include "proximity.h"
 #include "hal_loader.h"
+#include "link_server.h"
 #include "sd_storage.h"
 
 namespace {
@@ -46,6 +48,13 @@ M5Canvas screen(&M5.Display);
 bool haveMemory = false;
 bool haveProximity = false;
 bool haveCamera = false;
+// The HAL Zero link (link=on): who's talking and which dialogue line is due.
+LinkServer linkServer;
+bool linkConversing = false;
+std::string linkDialogue;
+int linkSayN = -1;
+uint32_t linkLastMsgMs = 0;
+std::vector<hal::Message> linkInbox;
 int camFrames = 0;
 int camPeak = 0;  // highest motion score since the last log line
 float gyroPeak = 0;  // highest gyro rate (deg/s) since the last log line
@@ -211,7 +220,7 @@ void setup() {
   lens.setPsram(false);
   lens.setColorDepth(16);
   lens.createSprite(L.lensSprite, L.lensSprite);
-  screen.setPsram(false);   // 75 KB in internal RAM
+  screen.setPsram(config.link);  // internal RAM (75 KB) unless Wi-Fi stays on for the link
   screen.setColorDepth(8);  // RGB332 is plenty for the console readouts
   screen.createSprite(L.w, L.h);
   if (config.camera) haveCamera = cameraBegin();
@@ -251,7 +260,49 @@ void loop() {
   }
   hal::Inputs in = readInputs(now);
   if (camArrival) in.proximityEdge = true;  // a walk-in greets like a wave
+
+  // HAL Zero, if he's talking to us.
+  if (config.link && !linkServer.started() && WiFi.status() == WL_CONNECTED) linkServer.begin(config.linkPort);
+  bool linkDropped = false;
+  linkServer.poll(&linkInbox, &linkDropped);
+  for (const hal::Message& m : linkInbox) {
+    linkLastMsgMs = now;
+    hal::Message r;
+    if (m.type == hal::MsgType::Ping) {
+      r.type = hal::MsgType::Pong;
+    } else if (m.type == hal::MsgType::Say) {
+      r.n = m.n;
+      if (!brain->canConverse()) {
+        r.type = hal::MsgType::Busy;
+      } else if (!haveMemory || !storage.exists(hal::dialogueVoicePath(m.id, m.n, hal::Speaker::Old))) {
+        r.type = hal::MsgType::Missing;
+      } else {
+        linkConversing = true;
+        linkDialogue = m.id;
+        linkSayN = m.n;
+        continue;
+      }
+    } else if (m.type == hal::MsgType::End) {
+      linkConversing = false;
+      continue;
+    } else {
+      continue;
+    }
+    linkServer.send(r);
+  }
+  if (linkDropped || (linkConversing && now - linkLastMsgMs > 30000)) linkConversing = false;
+  in.conversing = linkConversing;
+  in.sayLine = linkSayN;
+  linkSayN = -1;
+
   hal::Actions a = brain->tick(in);
+  if (a.endConversation && linkConversing) {  // Dave tapped the desk HAL mid-dialogue
+    hal::Message end;
+    end.type = hal::MsgType::End;
+    end.reason = "interrupted";
+    linkServer.send(end);
+    linkConversing = false;
+  }
 
   audio.setVolume(static_cast<uint8_t>(a.volume));
   lastQuiet = a.quiet;
@@ -263,6 +314,24 @@ void loop() {
     if (visual && a.play && voices.count(hal::Folder::Camera) > 0) a.folder = hal::Folder::Camera;
   }
   if (a.play) play(a);
+  if (a.dialogueLine > 0) {
+    std::string path = hal::dialogueVoicePath(linkDialogue, a.dialogueLine, hal::Speaker::Old);
+    hal::Message r;
+    r.n = a.dialogueLine;
+    if (audio.playFile(path.c_str())) {
+      r.type = hal::MsgType::Playing;
+      r.ms = int(audio.durationMs());
+    } else {
+      r.type = hal::MsgType::Missing;
+    }
+    linkServer.send(r);
+  }
+  if (a.dialogueDone > 0) {
+    hal::Message done;
+    done.type = hal::MsgType::Done;
+    done.n = a.dialogueDone;
+    linkServer.send(done);
+  }
   if (a.restart) {
     shutdownFlag = kShutdownMagic;
     Serial.println("restarting");

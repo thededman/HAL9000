@@ -15,6 +15,7 @@ class Audio {
   bool isPlaying() const;
   uint8_t level() const;  // 0..255, follows the voice
   void setVolume(uint8_t v);
+  uint32_t durationMs() const { return info_.durationMs; }  // of the clip last started
 
  private:
   void release();

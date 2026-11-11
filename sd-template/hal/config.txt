@@ -18,3 +18,5 @@ proximity_threshold=120            # wave sensitivity: lower if waves don't get 
 hold_seconds=3
 camera=on                          # off: HAL never starts his camera
 camera_motion_threshold=20         # walk-in: share of the picture that must change (20 = 4%); lower notices smaller movements
+link=off                           # on: stay on Wi-Fi so HAL Zero (the Cardputer) can talk to this HAL
+link_port=9000
