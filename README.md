@@ -65,6 +65,17 @@ From 22:00 to 07:30 he dims, stops greeting and talking on his own, and answers
 taps and shakes at half volume. The proximity sensor sits behind the glass and only
 sees a hand a few centimetres away, which is why greetings need a wave or the camera.
 
+**Live status screens.** Three of the console screens are built the way the film's computer
+displays work, and show HAL's real readings. Both HALs have them, each with his own lines:
+
+- **Status cards:** one full-screen colour card per subsystem (power, light, motion,
+  temperature, Wi-Fi, memory, link, camera and more) with a big three-letter code, the live
+  value and a trace of recent values. A subsystem in alarm (battery under 20 % and not
+  charging, chip over 70 °C, the link down, memory nearly full) gets a red, blinking card.
+- **Monitor wall:** twelve live tiles at once; one at a time opens its graph.
+- **Unit diagnostic:** a wireframe of the device itself that tilts when you tilt him, with
+  each part (camera, speaker, motion sensor and so on) ticked or flagged.
+
 **The camera.** HAL watches through it, and it shows on the Visual Analysis screen. Frames stay in HAL's memory:
 nothing is saved or sent anywhere. Point him at the room, upright or leaning back a
 little; lying flat he only sees the ceiling. Moving HAL never counts as someone
@@ -93,7 +104,9 @@ five of his own, each with its own lines: **diagnostics** of the desk HAL over t
 verdict; also in the menu as "Diagnose the old model"), a **benchmark** of the two,
 a **system monitor** of the Cardputer itself, a **retirement countdown** for the old
 model, and an **upgrade log**. `tools/cardputer.sh run --show diagnostics` opens one
-straight after booting.
+straight after booting. His status cards and monitor wall show the Cardputer's own
+readings (processor, memory, temperature, tilt) plus one for the desk HAL: whether the
+old model is answering.
 
 **His files** live in `~/hal` on the Cardputer, laid out like `/hal` on the card:
 `config.txt`, `voice/`, `dialogues/`. Render his voice with

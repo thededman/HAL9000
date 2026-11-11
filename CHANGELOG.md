@@ -7,6 +7,14 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- Three film-style screens on both HALs, showing each HAL's real readings, each with its
+  own lines:
+  - **status cards:** one full-screen colour card per subsystem with its live value and
+    a trace of recent values; a subsystem in alarm gets a red, blinking card;
+  - a **monitor wall** of twelve live tiles;
+  - a **unit diagnostic:** a wireframe of the device itself that tilts when you tilt
+    him, with each part ticked or flagged.
+- 30 new spoken lines (15 for each HAL).
 - `docs/SETUP.md`: a step-by-step guide to setting everything up from scratch, for macOS
   and Linux.
 - An MIT licence, and a note that this is an unofficial fan project.
@@ -15,6 +23,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `tools/cardputer.sh build` always builds for the Cardputer's arm64 chip, so it also
   works from Intel and AMD computers (emulated).
 - The voice tool's audition plays through `aplay` or `paplay` on Linux.
+
+### Fixed
+- The desk HAL's uptime (also shown in HAL Zero's diagnostics) no longer starts again
+  from zero after 49.7 days; the same for HAL Zero's own.
 
 ## [0.4.1] - 2026-11-10
 
