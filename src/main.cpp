@@ -113,7 +113,10 @@ void drawFrame() {
   uint32_t now = millis();
   hal::Mode m = brain ? brain->mode() : hal::Mode::Booting;
   if (m == hal::Mode::Console) {
-    if (consoles.draw(screen, M5.Display, L, now - consoleStartMs, audio.level(), cameraView())) screen.pushSprite(0, 0);
+    screens::ScreenData d;
+    d.cam = cameraView();
+    d.voiceLevel = audio.level();
+    if (consoles.draw(screen, M5.Display, L, now - consoleStartMs, d)) screen.pushSprite(0, 0);
     return;
   }
   float daisy = brain ? brain->daisyProgress() : 0;
@@ -225,7 +228,7 @@ void setup() {
   screen.createSprite(L.w, L.h);
   if (config.camera) haveCamera = cameraBegin();
   else Serial.println("  camera off in config.txt");
-  consoles.begin(esp_random(), haveCamera, haveMemory ? &storage : nullptr);
+  consoles.begin(esp_random(), screens::Owner::Desk, haveCamera, haveMemory ? &storage : nullptr);
 
   brain.reset(new hal::Brain(config, esp_random(), afterShutdown));
   brain->setSequenceLengths(voices.count(hal::Folder::Plea), voices.count(hal::Folder::Daisy));
@@ -308,7 +311,7 @@ void loop() {
   lastQuiet = a.quiet;
   if (a.stopAudio) audio.stop();
   if (a.newConsole) {
-    bool visual = consoles.next();
+    bool visual = consoles.next() == "visual";
     consoleStartMs = now;
     // Visual Analysis gets a camera line, if there are any on the card.
     if (visual && a.play && voices.count(hal::Folder::Camera) > 0) a.folder = hal::Folder::Camera;

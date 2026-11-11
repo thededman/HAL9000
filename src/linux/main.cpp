@@ -121,7 +121,8 @@ struct App {
 
   // Inputs that come from keys/menu for one tick (or until done).
   uint32_t tapUntil = 0;
-  bool holdForDaisy = false, wantVisual = false, fakeWave = false, fakeShake = false;
+  bool holdForDaisy = false, fakeWave = false, fakeShake = false;
+  std::string wantScreen;  // a screen to show on the next tap instead of a random one
   bool cardKeys = false;  // the Cardputer's keyboard: arrows are F X Z C
   int pendingSay = -1;
   bool pendingGloat = false;
@@ -182,7 +183,7 @@ struct App {
     }
     arrival.reset(new hal::ArrivalDetector(cfg.cameraMotionThreshold));
     haveImu = imu.begin();
-    consoles.begin(uint32_t(std::time(nullptr)), camera != nullptr, haveMemory ? &storage : nullptr);
+    consoles.begin(uint32_t(std::time(nullptr)), screens::Owner::Zero, camera != nullptr, haveMemory ? &storage : nullptr);
     frame.setColorDepth(16);
     frame.createSprite(L.w, L.h);
     background.setColorDepth(16);
@@ -260,7 +261,7 @@ struct App {
           overlay = Overlay::None;
           if (dialogueList) startDialogue(id);
           else if (id == "say") tapUntil = now + 100;
-          else if (id == "look") { wantVisual = true; tapUntil = now + 100; }
+          else if (id == "look") { wantScreen = "visual"; tapUntil = now + 100; }
           else if (id == "talk") openDialogues();
           else if (id == "daisy") holdForDaisy = true;
           else if (id == "quit") {
@@ -362,8 +363,9 @@ struct App {
     if (a.endConversation) handleConductor(conductor.interrupt(now));
     if (a.stopAudio) audio.stop();
     if (a.newConsole) {
-      bool visual = wantVisual ? consoles.showVisual() : consoles.next();
-      wantVisual = false;
+      std::string id = !wantScreen.empty() && consoles.show(wantScreen) ? wantScreen : consoles.next();
+      wantScreen.clear();
+      bool visual = id == "visual";
       consoleStart = now;
       if (visual && a.play && voices.count(hal::Folder::Camera) > 0) a.folder = hal::Folder::Camera;
     }
@@ -390,6 +392,15 @@ struct App {
     }
     if (m != lastMode) halLog("mode %s -> %s", modeName(lastMode), modeName(m));
     lastMode = m;
+  }
+
+  // What the console screens draw from.
+  screens::ScreenData screenData(uint32_t now) const {
+    (void)now;
+    screens::ScreenData d;
+    d.cam = camera ? camera->view() : screens::CameraView();
+    d.voiceLevel = audio.level();
+    return d;
   }
 
   HudInfo hudInfo(uint32_t now) const {
@@ -450,7 +461,7 @@ struct App {
       return;
     }
     if (m == hal::Mode::Console) {
-      consoles.draw(frame, frame, L, now - consoleStart, audio.level(), camera ? camera->view() : screens::CameraView());
+      consoles.draw(frame, frame, L, now - consoleStart, screenData(now));
     } else {
       drawEyeScreen(now, 1.0f);
     }
@@ -501,11 +512,15 @@ struct App {
       f->walkIn(0);
       for (uint32_t t = 0; t <= 1300; t += 70) f->poll(t);
     }
-    const char* names[] = {"07-vitals", "08-readout", "09-trajectory", "10-analyser", "11-globe", "12-visual"};
-    for (int i = 0; i < consoles.screenCount() && i < 6; ++i) {
-      consoles.show(i);
-      consoles.draw(frame, frame, L, 2600, 140, camera ? camera->view() : screens::CameraView());
-      shot(names[i]);
+    int n = 7;
+    for (const std::string& id : consoles.ids()) {
+      consoles.show(id);
+      screens::ScreenData d = screenData(2600);
+      d.voiceLevel = 140;
+      consoles.draw(frame, frame, L, 2600, d);
+      char name[64];
+      std::snprintf(name, sizeof name, "%02d-%s", n++, id.c_str());
+      shot(name);
     }
     return failures ? 1 : 0;
   }
@@ -570,7 +585,7 @@ int main(int argc, char** argv) {
       else io.present(app.frame);
     }
     if (lookSignal.exchange(false)) {
-      app.wantVisual = true;
+      app.wantScreen = "visual";
       app.tapUntil = nowMs() + 100;
     }
     if (shotSignal.exchange(false)) {
