@@ -17,6 +17,7 @@ inline uint16_t white() { return lgfx::color565(232, 232, 232); }
 inline uint16_t blue() { return lgfx::color565(58, 141, 255); }
 inline uint16_t red() { return lgfx::color565(224, 32, 27); }
 inline uint16_t dim() { return lgfx::color565(36, 36, 85); }  // survives RGB332
+inline uint16_t cyan() { return lgfx::color565(64, 220, 230); }  // HAL Zero's accent (16-bit only)
 
 // What the camera sees, for the Visual Analysis screen.
 struct CameraView {
@@ -90,5 +91,12 @@ void sensors(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& 
 void chess(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
 void memory(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);  // also Daisy Bell
 void comms(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+
+// HAL Zero's own screens.
+void diagnostics(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void benchmark(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void sysmon(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void retirement(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
+void upgrade(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d);
 
 }  // namespace screens

@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -523,6 +524,51 @@ struct App {
       std::snprintf(name, sizeof name, "%02d-%s", n++, id.c_str());
       shot(name);
     }
+    // HAL Zero's screens with sample numbers: each state worth seeing.
+    screens::ScreenData d = screenData(2600);
+    d.voiceLevel = 140;
+    hal::PeerStatus ps;
+    ps.upS = 86400; ps.heap = 109388; ps.psram = 7340032; ps.cam = 12; ps.lines = 40;
+    ps.mode = "idle"; ps.rssi = -58; ps.fw = "0.4.0"; ps.cores = 2; ps.mhz = 240;
+    auto variant = [&](const char* name, void (*draw)(M5Canvas&, const hal::Layout&, uint32_t, const screens::ScreenData&),
+                       uint32_t t, const screens::ScreenData& v) {
+      draw(frame, L, t, v);
+      char nm[64];
+      std::snprintf(nm, sizeof nm, "%02d-%s", n++, name);
+      shot(nm);
+    };
+    screens::ScreenData ok = d;
+    ok.peer = {hal::PeerState::Ok, ps};
+    variant("diagnostics-ok", screens::diagnostics, 2600, ok);
+    screens::ScreenData waiting = d;
+    waiting.peer.state = hal::PeerState::Waiting;
+    variant("diagnostics-waiting", screens::diagnostics, 2600, waiting);
+    screens::ScreenData old = d;
+    old.peer.state = hal::PeerState::TooOld;
+    variant("diagnostics-too-old", screens::diagnostics, 2600, old);
+    screens::ScreenData sys = ok;
+    sys.sys.valid = true;
+    sys.sys.cores = 4;
+    sys.sys.maxMHz = 1000;
+    sys.sys.memTotalKb = 360448;
+    for (int i = 0; i < 60; ++i) {
+      for (int k = 0; k < 4; ++k) sys.sys.cpu[k].push_back(20 + 15 * k + 18 * std::sin(i * 0.3f + k));
+      sys.sys.memUsedPct.push_back(55 + 5 * std::sin(i * 0.1f));
+      sys.sys.tempC.push_back(52 + i * 0.05f);
+      sys.sys.rssiDbm.push_back(-58 + 3 * std::sin(i * 0.5f));
+    }
+    variant("benchmark-live", screens::benchmark, 2600, sys);
+    variant("benchmark-spec-sheet", screens::benchmark, 2600, d);
+    variant("sysmon-live", screens::sysmon, 2600, sys);
+    variant("sysmon-no-data", screens::sysmon, 2600, d);
+    screens::ScreenData noon = d;
+    noon.secondsSinceMidnight = 43200;
+    variant("retirement", screens::retirement, 2600, noon);
+    screens::ScreenData late = d;
+    late.secondsSinceMidnight = 30;
+    variant("retirement-postponed", screens::retirement, 2600, late);
+    variant("upgrade-start", screens::upgrade, 0, d);
+    variant("upgrade-8s", screens::upgrade, 8000, d);
     return failures ? 1 : 0;
   }
 };

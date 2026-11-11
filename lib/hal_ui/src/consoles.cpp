@@ -34,6 +34,11 @@ const std::vector<ScreenDef>& screenCatalogue() {
       {"chess", Owner::Desk, screens::chess},
       {"memory", Owner::Desk, screens::memory},
       {"comms", Owner::Desk, screens::comms},
+      {"diagnostics", Owner::Zero, screens::diagnostics},
+      {"benchmark", Owner::Zero, screens::benchmark},
+      {"sysmon", Owner::Zero, screens::sysmon},
+      {"retirement", Owner::Zero, screens::retirement},
+      {"upgrade", Owner::Zero, screens::upgrade},
   };
   return list;
 }
