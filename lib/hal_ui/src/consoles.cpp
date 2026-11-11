@@ -43,6 +43,19 @@ bool Consoles::next() {
   return withCamera_ && current_ == kBuiltInCount;
 }
 
+void Consoles::show(int index) {
+  current_ = index;
+  jpgDrawn_ = false;
+}
+
+int Consoles::screenCount() const { return kBuiltInCount + (withCamera_ ? 1 : 0) + int(jpgs_.size()); }
+
+bool Consoles::showVisual() {
+  if (!withCamera_) return false;
+  show(kBuiltInCount);
+  return true;
+}
+
 bool Consoles::draw(M5Canvas& c, lgfx::LovyanGFX& display, const hal::Layout& L, uint32_t tMs, uint8_t voiceLevel,
                     const screens::CameraView& cam) {
   if (current_ < kBuiltInCount) {

@@ -17,6 +17,10 @@ class Consoles {
   // Lists /hal/screens/*.jpg from `storage` (may be null: built-in screens only).
   void begin(uint32_t seed, bool withCamera, const hal::Storage* storage);
   bool next();  // moves to another screen; true if it's Visual Analysis
+  // Jumps to screen `index` (0..4 built-in, 5 Visual Analysis when there's a camera).
+  void show(int index);
+  int screenCount() const;
+  bool showVisual();  // false without a camera
   // Draws the current screen into the canvas and returns true if it should be pushed.
   // Image screens go straight to `display` at full colour, once, and return false.
   bool draw(M5Canvas& c, lgfx::LovyanGFX& display, const hal::Layout& L, uint32_t tMs, uint8_t voiceLevel,

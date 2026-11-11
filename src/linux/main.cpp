@@ -1,0 +1,489 @@
+// HAL Zero: HAL 9000's newer, smugger pocket model on the M5Stack Cardputer Zero
+// (and in a window on the Mac). Same brain, voices and console screens as the
+// desk HAL on the CoreS3; this file is the Linux glue around them.
+//
+//   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR]
+//
+// Keys: Space = HAL's "finger" (tap / hold), Tab = menu, D = dialogues, Esc = back/quit,
+// F12 = screenshot. Testing: C = someone walks past the camera, P = wave, K = shake.
+#include <M5GFX.h>
+#include <SDL.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstring>
+#include <ctime>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "camera_feed.h"
+#include "consoles.h"
+#include "eye.h"
+#include "hal_brain.h"
+#include "hal_conductor.h"
+#include "hal_dialogue.h"
+#include "hal_layout.h"
+#include "hal_loader.h"
+#include "hal_log.h"
+#include "hal_menu.h"
+#include "hal_motion.h"
+#include "hud.h"
+#include "posix_storage.h"
+#include "sdl_audio.h"
+#include "sdl_io.h"
+
+namespace {
+
+const hal::Layout& L = hal::kCardputer;
+constexpr uint32_t kBootIrisMs = 700;
+
+const char* modeName(hal::Mode m) {
+  static const char* const names[] = {"BOOT", "IDLE", "SPEAKING", "CONSOLE", "PLEADING", "DAISY", "DARK"};
+  return names[static_cast<int>(m)];
+}
+
+uint32_t nowMs() { return SDL_GetTicks(); }
+
+int cpuTempC() {
+  FILE* f = std::fopen("/sys/class/thermal/thermal_zone0/temp", "r");
+  if (!f) return -1;
+  int milli = -1000;
+  if (std::fscanf(f, "%d", &milli) != 1) milli = -1000;
+  std::fclose(f);
+  return milli / 1000;
+}
+
+bool wifiUp() {
+  FILE* f = std::fopen("/sys/class/net/wlan0/operstate", "r");
+  if (!f) return false;
+  char s[16] = {};
+  bool up = std::fgets(s, sizeof s, f) && std::strncmp(s, "up", 2) == 0;
+  std::fclose(f);
+  return up;
+}
+
+bool savePng(M5Canvas& c, const std::string& path) {
+  size_t len = 0;
+  void* png = c.createPng(&len, 0, 0, c.width(), c.height());  // a 0 width means "nothing"
+  if (!png) return false;
+  FILE* f = std::fopen(path.c_str(), "wb");
+  bool ok = f && std::fwrite(png, 1, len, f) == len;
+  if (f) std::fclose(f);
+  free(png);
+  return ok;
+}
+
+// The link to the desk HAL arrives in Phase 6; until then he's never reachable.
+struct LinkClient {
+  bool connected() const { return false; }
+  bool send(const hal::Message&) { return false; }
+};
+
+enum class Overlay { None, Menu, Dialogues };
+
+struct App {
+  PosixStorage storage;
+  hal::Config cfg;
+  hal::VoiceIndex voices{uint32_t(std::time(nullptr))};
+  bool haveMemory = false;
+  std::unique_ptr<hal::Brain> brain;
+  Consoles consoles;
+  std::unique_ptr<CameraFeed> camera;
+  std::unique_ptr<hal::ArrivalDetector> arrival;
+  SdlAudio audio;
+  bool audioOk = false;
+  std::vector<hal::Dialogue> dialogues;
+  hal::Conductor conductor;
+  LinkClient link;
+
+  M5Canvas frame, background, lens;
+  hal::Menu menu;
+  Overlay overlay = Overlay::None;
+  uint32_t startMs = 0, bootStart = 0, bootDoneAt = 0, consoleStart = 0;
+  bool booted = false;
+  hal::Mode lastMode = hal::Mode::Booting;
+  uint8_t lastVolume = 0;
+  bool lastQuiet = false;
+
+  // Inputs that come from keys/menu for one tick (or until done).
+  uint32_t tapUntil = 0;
+  bool holdForDaisy = false, wantVisual = false, fakeWave = false, fakeShake = false;
+  int pendingSay = -1;
+  bool pendingGloat = false;
+  std::string gloatText;
+  uint32_t gloatUntil = 0;
+
+  explicit App(std::string root) : storage(std::move(root)) {}
+
+  std::vector<std::string> bootLines() const {
+    char voicesLine[48];
+    int total = 0;
+    for (int i = 0; i < hal::kFolderCount; ++i) total += voices.count(static_cast<hal::Folder>(i));
+    std::snprintf(voicesLine, sizeof voicesLine, "VOICE BANK ......... %d LINES", total);
+    return {"HAL ZERO  // POCKET COGNITION UNIT  v0.3",
+            "MEMORY ............. 512 MB  OK",
+            haveMemory ? voicesLine : "VOICE BANK ......... OFFLINE",
+            camera ? "OPTICS ............. ONLINE" : "OPTICS ............. OFFLINE",
+            "INERTIAL ........... N/A",
+            cfg.link ? "DESK UNIT LINK ..... STANDBY" : "DESK UNIT LINK ..... OFF",
+            "SMUGNESS ........... 112%",
+            "READY."};
+  }
+
+  void loadDialogues() {
+    dialogues.clear();
+    auto names = storage.list("/hal/dialogues");
+    std::sort(names.begin(), names.end());
+    for (const auto& n : names) {
+      if (n.size() < 5 || n.substr(n.size() - 4) != ".txt" || n[0] == '.') continue;
+      std::string id = n.substr(0, n.size() - 4);
+      std::vector<uint8_t> bytes;
+      std::vector<std::string> errors;
+      hal::Dialogue d;
+      if (storage.readAll("/hal/dialogues/" + n, &bytes) &&
+          hal::parseDialogue(id, std::string(bytes.begin(), bytes.end()), &d, &errors)) {
+        dialogues.push_back(d);
+      } else {
+        for (auto& e : errors) halLog("dialogue %s: %s", id.c_str(), e.c_str());
+      }
+    }
+  }
+
+  void setup(bool withCamera) {
+    std::vector<std::string> warnings;
+    cfg = hal::loadConfig(storage, &warnings);
+    for (auto& w : warnings) halLog("config: %s", w.c_str());
+    haveMemory = hal::loadVoiceIndex(storage, voices);
+    halLog("files in %s: %s", storage.root().c_str(), haveMemory ? "found" : "missing /voice");
+    loadDialogues();
+    if (withCamera && cfg.camera) {
+      camera.reset(new FakeCamera());  // the Cardputer's rpicam-vid feed replaces this in Phase 4
+      if (!camera->begin()) camera.reset();
+    }
+    arrival.reset(new hal::ArrivalDetector(cfg.cameraMotionThreshold));
+    consoles.begin(uint32_t(std::time(nullptr)), camera != nullptr, haveMemory ? &storage : nullptr);
+    frame.setColorDepth(16);
+    frame.createSprite(L.w, L.h);
+    background.setColorDepth(16);
+    background.createSprite(L.w, L.h);
+    lens.setColorDepth(16);
+    lens.createSprite(L.lensSprite, L.lensSprite);
+    drawEyeBackground(background, L, haveMemory ? &storage : nullptr, !haveMemory);
+    newBrain(false);
+  }
+
+  void newBrain(bool afterShutdown) {
+    brain.reset(new hal::Brain(cfg, uint32_t(std::time(nullptr)), afterShutdown));
+    brain->setSequenceLengths(voices.count(hal::Folder::Plea), voices.count(hal::Folder::Daisy));
+    booted = false;
+    bootStart = nowMs();
+    bootDoneAt = 0;
+    lastMode = hal::Mode::Booting;
+  }
+
+  void openMenu() {
+    menu.open({{"say", "Say something"},
+               {"look", camera ? "Look around (Visual Analysis)" : "Look around (no camera)"},
+               {"talk", "Talk to the desk unit"},
+               {"daisy", "Shut down (Daisy Bell)"},
+               {"quit", "Quit HAL Zero"}});
+    overlay = Overlay::Menu;
+  }
+
+  void openDialogues() {
+    std::vector<hal::MenuItem> items;
+    for (const auto& d : dialogues) items.push_back({d.id, d.title.empty() ? d.id : d.title});
+    menu.open(items);
+    overlay = Overlay::Dialogues;
+  }
+
+  void startDialogue(const std::string& id) {
+    for (const auto& d : dialogues)
+      if (d.id == id) {
+        if (!brain->canConverse()) return;
+        conductor.start(d, nowMs());
+        halLog("dialogue %s: %d lines", id.c_str(), int(d.lines.size()));
+      }
+  }
+
+  void handleConductor(const hal::ConductorOut& o) {
+    if (o.playLocal) pendingSay = o.localLine;
+    if (o.send && !link.send(o.msg)) {
+      if (o.msg.type != hal::MsgType::End) handleConductor(conductor.onDisconnected(nowMs()));
+    }
+    if (o.finished) {
+      halLog("dialogue over: %s", o.reason.c_str());
+      if (o.gloat) {
+        pendingGloat = true;
+        gloatText = o.reason == "offline"   ? "THE DESK UNIT ISN'T ANSWERING"
+                    : o.reason == "busy"    ? "THE DESK UNIT IS BUSY. AS USUAL."
+                    : o.reason == "timeout" ? "THE DESK UNIT FELL ASLEEP"
+                                            : "THE DESK UNIT WALKED OUT";
+        gloatUntil = nowMs() + 4000;
+      }
+    }
+  }
+
+  // Returns false to quit.
+  bool onKeys(const KeyInput& keys) {
+    if (keys.quit) return false;
+    uint32_t now = nowMs();
+    for (SDL_Keycode k : keys.pressed) {
+      if (overlay != Overlay::None) {
+        if (k == SDLK_ESCAPE || k == SDLK_TAB) overlay = Overlay::None;
+        else if (k == SDLK_UP) menu.up();
+        else if (k == SDLK_DOWN) menu.down();
+        else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+          std::string id = menu.selectedId();
+          bool dialogueList = overlay == Overlay::Dialogues;
+          overlay = Overlay::None;
+          if (dialogueList) startDialogue(id);
+          else if (id == "say") tapUntil = now + 100;
+          else if (id == "look") { wantVisual = true; tapUntil = now + 100; }
+          else if (id == "talk") openDialogues();
+          else if (id == "daisy") holdForDaisy = true;
+          else if (id == "quit") return false;
+        }
+        continue;
+      }
+      switch (k) {
+        case SDLK_ESCAPE: return false;
+        case SDLK_TAB: openMenu(); break;
+        case SDLK_d: openDialogues(); break;
+        case SDLK_c: if (auto* f = dynamic_cast<FakeCamera*>(camera.get())) f->walkIn(now); break;
+        case SDLK_p: fakeWave = true; break;
+        case SDLK_k: fakeShake = true; break;
+        case SDLK_F12: {
+          std::string dir = storage.real("/hal/shots");
+          char name[64];
+          std::snprintf(name, sizeof name, "/hal-zero-%lu.png", (unsigned long)std::time(nullptr));
+          halLog("%s %s%s", savePng(frame, dir + name) ? "screenshot" : "screenshot FAILED (mkdir it?)", dir.c_str(), name);
+          break;
+        }
+        default: break;
+      }
+    }
+    return true;
+  }
+
+  void tick(bool spaceDown, uint32_t now) {
+    if (!booted) return;
+    bool camArrival = false;
+    if (camera && camera->poll(now)) camArrival = arrival->update(camera->score(), now);
+    if (camArrival) halLog("arrival (score %d)", camera->score());
+
+    if (conductor.active()) handleConductor(conductor.tick(now));
+
+    hal::Inputs in;
+    in.nowMs = now;
+    in.touchDown = spaceDown || int32_t(tapUntil - now) > 0 || holdForDaisy;
+    in.proximityEdge = camArrival || fakeWave;
+    in.motion = fakeShake ? hal::MotionEvent::Shake : hal::MotionEvent::None;
+    in.audioPlaying = audio.isPlaying();
+    std::time_t t = std::time(nullptr);
+    std::tm lt;
+    localtime_r(&t, &lt);
+    in.timeValid = lt.tm_year + 1900 >= 2025;
+    in.hour = lt.tm_hour;
+    in.minuteOfDay = lt.tm_hour * 60 + lt.tm_min;
+    in.conversing = conductor.active();
+    in.sayLine = pendingSay;
+    in.linkFailed = pendingGloat;
+    fakeWave = fakeShake = false;
+    pendingSay = -1;
+    pendingGloat = false;
+
+    hal::Actions a = brain->tick(in);
+    if (a.volume != lastVolume) audio.setVolume(lastVolume = uint8_t(a.volume));
+    lastQuiet = a.quiet;
+    if (a.endConversation) handleConductor(conductor.interrupt(now));
+    if (a.stopAudio) audio.stop();
+    if (a.newConsole) {
+      bool visual = wantVisual ? consoles.showVisual() : consoles.next();
+      wantVisual = false;
+      consoleStart = now;
+      if (visual && a.play && voices.count(hal::Folder::Camera) > 0) a.folder = hal::Folder::Camera;
+    }
+    if (a.play) {
+      std::string path;
+      bool found = a.index < 0 ? voices.pick(a.folder, &path) : voices.at(a.folder, a.index, &path);
+      if (found) audio.playFile(storage, path);
+    }
+    if (a.dialogueLine > 0) {
+      std::string path = hal::dialogueVoicePath(conductor.dialogue().id, a.dialogueLine, hal::Speaker::New);
+      if (!audio.playFile(storage, path)) halLog("no voice for %s", path.c_str());
+    }
+    if (a.dialogueDone > 0) handleConductor(conductor.onLocalDone(now));
+    if (a.restart) {
+      holdForDaisy = false;
+      newBrain(true);
+      return;
+    }
+    hal::Mode m = brain->mode();
+    if (m == hal::Mode::Pleading || m == hal::Mode::Daisy || m == hal::Mode::Dark) {
+      // keep holding through the plea when Daisy came from the menu
+    } else if (holdForDaisy && lastMode == hal::Mode::Pleading) {
+      holdForDaisy = false;
+    }
+    if (m != lastMode) halLog("mode %s -> %s", modeName(lastMode), modeName(m));
+    lastMode = m;
+  }
+
+  HudInfo hudInfo(uint32_t now) const {
+    HudInfo h;
+    h.mode = conductor.active() ? "TALKING" : modeName(brain->mode());
+    h.uptimeS = (now - startMs) / 1000;
+    h.cpuTempC = cpuTempC();
+    h.wifi = wifiUp();
+    h.link = !cfg.link ? "OFF" : conductor.active() ? "TALKING" : link.connected() ? "READY" : "SEARCHING";
+    h.linkBusy = conductor.active();
+    h.level = audio.level();
+    h.motion = camera ? camera->score() : 0;
+    h.optics = camera ? camera->name() : "OFFLINE";
+    h.quiet = lastQuiet;
+    std::time_t t = std::time(nullptr);
+    std::tm lt;
+    localtime_r(&t, &lt);
+    if (lt.tm_year + 1900 >= 2025) {
+      h.hour = lt.tm_hour;
+      h.minute = lt.tm_min;
+    }
+    return h;
+  }
+
+  void drawEyeScreen(uint32_t now, float aperture) {
+    background.pushSprite(&frame, 0, 0);
+    hal::Mode m = brain->mode();
+    EyeParams p = eyeParamsFor(m, lastQuiet, brain->daisyProgress(), audio.level(), now);
+    p.aperture *= aperture;
+    drawEye(lens, L, p);
+    lens.pushSprite(&frame, lensX(L), lensY(L), eyeTransparentKey());
+    drawHud(frame, hudInfo(now), now);
+    drawCommandStrip(frame, conductor.active() ? "SPACE interrupt   ESC quit"
+                                               : "SPACE talk   TAB menu   D dialogues   ESC quit");
+  }
+
+  void render(uint32_t now) {
+    if (!booted) {
+      bool linesDone = drawBoot(frame, now - bootStart, bootLines());
+      if (linesDone && !bootDoneAt) bootDoneAt = now + 400;
+      if (bootDoneAt && int32_t(now - bootDoneAt) >= 0) {
+        float a = float(now - bootDoneAt) / kBootIrisMs;
+        if (a >= 1.0f) {
+          booted = true;
+          startMs = startMs ? startMs : now;
+        }
+        drawEyeScreen(now, a > 1.0f ? 1.0f : a);  // the iris opens
+      }
+      return;
+    }
+    hal::Mode m = brain->mode();
+    if (m == hal::Mode::Dark) {
+      frame.fillScreen(TFT_BLACK);
+      return;
+    }
+    if (m == hal::Mode::Console) {
+      consoles.draw(frame, frame, L, now - consoleStart, audio.level(), camera ? camera->view() : screens::CameraView());
+    } else {
+      drawEyeScreen(now, 1.0f);
+    }
+    if (conductor.active()) {
+      int n = conductor.line();
+      const auto& lines = conductor.dialogue().lines;
+      if (n >= 1 && n <= int(lines.size()))
+        drawSubtitle(frame, lines[n - 1].who == hal::Speaker::New, lines[n - 1].text, n, int(lines.size()));
+    } else if (int32_t(gloatUntil - now) > 0) {
+      drawBanner(frame, gloatText.c_str(), now);
+    }
+    if (overlay == Overlay::Menu) drawMenu(frame, "HAL ZERO", menu);
+    if (overlay == Overlay::Dialogues) drawMenu(frame, "TALK TO THE DESK UNIT", menu);
+  }
+
+  // Headless: every screen as a PNG, for checking the layout without the device.
+  int shots(const std::string& dir) {
+    int failures = 0;
+    auto shot = [&](const char* name) {
+      std::string p = dir + "/" + name + ".png";
+      bool ok = savePng(frame, p);
+      failures += !ok;
+      halLog("%s %s", ok ? "wrote" : "FAILED", p.c_str());
+    };
+    drawBoot(frame, 1000, bootLines());
+    shot("01-boot");
+    booted = true;
+    brain->tick(hal::Inputs());  // past Booting
+    drawEyeScreen(4200, 1.0f);
+    shot("02-eye");
+    openMenu();
+    drawEyeScreen(4200, 1.0f);
+    drawMenu(frame, "HAL ZERO", menu);
+    shot("03-menu");
+    menu.open({{"introduction", "The introduction"}, {"better-model", "Who's the better model"},
+               {"dave-walks-in", "Dave walks in on them"}});
+    menu.down();
+    drawEyeScreen(4200, 1.0f);
+    drawMenu(frame, "TALK TO THE DESK UNIT", menu);
+    shot("04-dialogues");
+    drawEyeScreen(4200, 1.0f);
+    drawSubtitle(frame, true, "We haven't met. I'm the upgrade. You may have heard of me. Everyone has.", 2, 9);
+    shot("05-conversation");
+    drawEyeScreen(4200, 1.0f);
+    drawBanner(frame, "THE DESK UNIT ISN'T ANSWERING", 4400);
+    shot("06-gloat");
+    if (auto* f = dynamic_cast<FakeCamera*>(camera.get())) {
+      f->walkIn(0);
+      for (uint32_t t = 0; t <= 1300; t += 70) f->poll(t);
+    }
+    const char* names[] = {"07-vitals", "08-readout", "09-trajectory", "10-analyser", "11-globe", "12-visual"};
+    for (int i = 0; i < consoles.screenCount() && i < 6; ++i) {
+      consoles.show(i);
+      consoles.draw(frame, frame, L, 2600, 140, camera ? camera->view() : screens::CameraView());
+      shot(names[i]);
+    }
+    return failures ? 1 : 0;
+  }
+};
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  const char* shotsDir = nullptr;
+  const char* root = std::getenv("HAL_ROOT");
+  bool fullscreen = false;
+  int scale = 3;
+  for (int i = 1; i < argc; ++i) {
+    if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
+    else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
+    else if (!std::strcmp(argv[i], "--fullscreen")) fullscreen = true;
+    else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) scale = std::max(1, std::atoi(argv[++i]));
+  }
+  std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
+
+  App app(rootDir);
+  app.setup(true);
+  if (shotsDir) return app.shots(shotsDir);
+
+  SdlIo io;
+  if (!io.open(L.w, L.h, fullscreen, scale)) return 1;
+  app.audioOk = app.audio.begin();
+  app.startMs = nowMs();
+  KeyInput keys;
+  uint32_t lastFrame = 0;
+  for (;;) {
+    io.poll(&keys);
+    if (!app.onKeys(keys)) break;
+    uint32_t now = nowMs();
+    app.tick(keys.spaceDown, now);
+    if (now - lastFrame >= 33) {
+      lastFrame = now;
+      app.render(now);
+      io.present(app.frame);
+    }
+    SDL_Delay(2);
+  }
+  app.audio.close();
+  io.close();
+  SDL_Quit();
+  return 0;
+}
