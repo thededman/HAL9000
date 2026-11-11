@@ -4,7 +4,9 @@ All notable changes to HAL are written down here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.4.1] - 2026-11-10
+
+Small fixes from the v0.4.0 review.
 
 ### Fixed
 - HAL Zero's system monitor shows Wi-Fi as OFF (and a gap in the graph) when Wi-Fi
