@@ -24,6 +24,9 @@ the screen catalogue; each HAL's glue owns a persistent list of readings updated
   `pio test -e native` (163 existing stay green), `tools/.venv/bin/python -m unittest tools/test_make_voice.py`.
 - CoreS3 card: only `/hal/`; never print `wifi_password`. Never type passwords.
 - Commits end with `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`; push after each task.
+- The repo is public and other people follow `docs/SETUP.md`: anything that changes set-up (a
+  tool, download, config key, script or device step) updates that guide in the same commit.
+  Supported: macOS (tested) and Linux; Windows isn't covered. No private details in the repo.
 
 ## Review Focus
 

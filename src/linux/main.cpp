@@ -832,7 +832,7 @@ int deskShots(const std::string& dir) {
   d.voiceLevel = 140;
   d.lineMs = 4000;
   d.sensors = {true, 62, 35, 3, 1.2f, 87, true, 41, -58, 109388, 7340032};
-  d.link = {true, true, true, "172.16.0.14", "SAY introduction 7", 214, 209, -58};
+  d.link = {true, true, true, "192.168.1.20", "SAY introduction 7", 214, 209, -58};
   int failures = 0;
   auto shot = [&](const std::string& name) {
     std::string path = dir + "/cores3-" + name + ".png";

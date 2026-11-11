@@ -609,7 +609,7 @@ class Consoles {
   - It renders the `Owner::Desk` rotation into a 320×240 canvas with `hal::kCoreS3`.
   - Sample data:
     - sensors `{valid, 62, 35, 3, 1.2, 87, true, 41, -58, 109388, 7340032}`;
-    - link `{valid, enabled, connected, "172.16.0.14", "SAY introduction 7", 214, 209, -58}`;
+    - link `{valid, enabled, connected, "192.168.1.20", "SAY introduction 7", 214, 209, -58}`;
     - `lineMs` 4000.
   - Files, written to `DIR/cores3-<id>[-variant].png`:
     - one image per desk screen;
