@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdio>
@@ -141,15 +142,23 @@ void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenDa
   d.unitModel = desk ? screens::UnitModel::CoreS3 : screens::UnitModel::Cardputer;
   d.gravityValid = true;
   d.gravity[1] = d.gravityHome[1] = -1;
-  const uint32_t alarmAt = desk ? 100 : 10 * 1600 + 100;  // PWR is first on the desk, DSK last on HAL Zero
+  // One opening lasts 8 s, about five cards: the first in alarm (PWR on the desk, LNK
+  // on HAL Zero), then the round from wherever the opening's seed starts it.
+  d.seed = 1;
+  screens::cards(c, lay, 100, d);
+  shot("cards-alarm");
   screens::cards(c, lay, 1700, d);
   shot("cards");
-  screens::cards(c, lay, alarmAt, d);
-  shot("cards-alarm");
+  d.seed = 10;  // late in the list: CLK on the desk, DSK and its long value on HAL Zero
+  screens::cards(c, lay, 1700, d);
+  shot("cards-late");
+  d.seed = 0;
   screens::wall(c, lay, 2600, d);
   shot("wall");
-  screens::wall(c, lay, 4300 + (desk ? 0 : 16000), d);
+  d.seed = 9;  // another opening: the selected tile is in the bottom row
+  screens::wall(c, lay, 2600, d);
   shot("wall-other-tile");
+  d.seed = 0;
   screens::unit(c, lay, 2600, d);
   shot("unit");
   screens::ScreenData tilted = d;
@@ -171,6 +180,14 @@ void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenDa
   shot("wall-no-data");
   screens::unit(c, lay, 2600, none);
   shot("unit-settling");
+  // A motion sensor that failed never settles: the fault has to show all the same.
+  std::vector<screens::UnitPart> broken = parts;
+  broken[2].ok = false;
+  screens::ScreenData noImu = d;
+  noImu.parts = &broken;
+  noImu.gravityValid = false;
+  screens::unit(c, lay, 2600, noImu);
+  shot("unit-imu-fault");
 }
 
 enum class Overlay { None, Menu, Dialogues };
@@ -200,6 +217,7 @@ struct App {
   hal::Menu menu;
   Overlay overlay = Overlay::None;
   uint32_t startMs = 0, bootStart = 0, bootDoneAt = 0, consoleStart = 0;
+  const std::chrono::steady_clock::time_point bornAt = std::chrono::steady_clock::now();
   bool booted = false;
   hal::Mode lastMode = hal::Mode::Booting;
   uint8_t lastVolume = 0;
@@ -519,7 +537,10 @@ struct App {
       lineMs = 0;
       diagGloated = false;
       // Ask straight away, so the first frame already says "contacting" (or has numbers).
-      if (id == "diagnostics" || id == "benchmark") askStatus(now);
+      if (id == "diagnostics" || id == "benchmark" || id == "cards" || id == "wall") {
+        askStatus(now);
+        updateReadings(now);  // the desk unit's card says WAITING until he answers
+      }
       if (a.play) {
         if (id == "diagnostics" && (!link.connected() || peerVersion == 1)) {
           gloatNow();  // nobody to diagnose (or too old to): gloat instead
@@ -578,6 +599,11 @@ struct App {
     return true;
   }
 
+  // Seconds since HAL Zero started. Not the 32-bit millisecond clock: that wraps after 49.7 days.
+  uint32_t upSeconds() const {
+    return uint32_t(std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - bornAt).count());
+  }
+
   // HAL Zero's real numbers for the film-style screens (every 500 ms).
   void updateReadings(uint32_t now) {
     const screens::SysStats& st = sysmon.stats();
@@ -592,21 +618,26 @@ struct App {
     const float used = last(st.memUsedPct), temp = last(st.tempC), rssi = last(st.rssiDbm);
     time_t t = std::time(nullptr);
     struct tm lt;
-    const int clock = localtime_r(&t, &lt) ? lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec : -1;
+    // Before the network has set the clock (there is no battery-backed one), it isn't a time.
+    const bool clockSet = localtime_r(&t, &lt) && lt.tm_year + 1900 >= 2025;
+    const int clock = clockSet ? lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec : -1;
     const bool wifi = !std::isnan(rssi);
-    int i = 0;
-    hal::logReading(readings[i++], hal::cpuReading(cores ? int(cpu / cores + 0.5f) : -1));
-    hal::logReading(readings[i++], std::isnan(used) ? hal::memoryReading(0, 0)
+    size_t i = 0;
+    auto put = [&](const hal::Reading& r) {  // in the order the screens show them
+      if (i < readings.size()) hal::logReading(readings[i++], r);
+    };
+    put(hal::cpuReading(cores ? int(cpu / cores + 0.5f) : -1));
+    put(std::isnan(used) ? hal::memoryReading(0, 0)
                                                     : hal::memoryReading(int(st.memTotalKb * (100 - used) / 100), int(st.memTotalKb)));
-    hal::logReading(readings[i++], hal::tempReading(std::isnan(temp) ? -999 : int(temp + 0.5f)));
-    hal::logReading(readings[i++], hal::netReading(wifi ? int(rssi) : 0));
-    hal::logReading(readings[i++], hal::linkReading(cfg.link, link.connected()));
-    hal::logReading(readings[i++], hal::cameraReading(camera != nullptr, camera ? std::min(100, camera->score()) : 0));
-    hal::logReading(readings[i++], hal::tiltReading(haveImu ? motion.tiltFromHomeDeg() : -1));
-    hal::logReading(readings[i++], hal::audioReading(audio.level(), linesSpoken));
-    hal::logReading(readings[i++], hal::clockReading(clock));
-    hal::logReading(readings[i++], hal::uptimeReading((now - startMs) / 1000));
-    hal::logReading(readings[i++], cfg.link ? hal::peerReading(peerWatch.state(link.connected(), peerVersion, now), peerStatus.mode)
+    put(hal::tempReading(std::isnan(temp) ? -999 : int(temp + 0.5f)));
+    put(st.valid ? hal::netReading(wifi ? int(rssi) : 0) : hal::noReading("NET", "NETWORK"));  // no /proc on the Mac
+    put(hal::linkReading(cfg.link, link.connected()));
+    put(hal::cameraReading(camera != nullptr, camera ? std::min(100, camera->score()) : 0));
+    put(hal::tiltReading(haveImu ? motion.tiltFromHomeDeg() : -1));
+    put(hal::audioReading(audio.level(), linesSpoken));
+    put(hal::clockReading(clock));
+    put(hal::uptimeReading(upSeconds()));
+    put(cfg.link ? hal::peerReading(peerWatch.state(link.connected(), peerVersion, now), peerStatus.mode)
                                             : hal::noReading("DSK", "DESK UNIT"));
     unitParts[0].ok = camera != nullptr;
     unitParts[1].ok = audioOk;
@@ -646,7 +677,7 @@ struct App {
   HudInfo hudInfo(uint32_t now) const {
     HudInfo h;
     h.mode = conductor.active() ? "TALKING" : modeName(brain->mode());
-    h.uptimeS = (now - startMs) / 1000;
+    h.uptimeS = upSeconds();
     h.cpuTempC = cpuTempC();
     h.wifi = wifiUp();
     h.link = !cfg.link ? "OFF" : conductor.active() ? "TALKING" : link.connected() ? "READY" : "SEEKING";
@@ -753,6 +784,8 @@ struct App {
       for (uint32_t t = 0; t <= 1300; t += 70) f->poll(t);
     }
     int n = 7;
+    sysmon.sample();
+    updateReadings(2600);  // the film-style screens show this machine's numbers
     for (const std::string& id : consoles.ids()) {
       consoles.show(id);
       screens::ScreenData d = screenData(2600);
@@ -826,7 +859,7 @@ struct App {
 // numbers, so they can be reviewed on the Mac before flashing the CoreS3.
 int deskShots(const std::string& dir) {
   M5Canvas c;
-  c.setColorDepth(16);
+  c.setColorDepth(8);  // as on the CoreS3, so the previews show the colours the device will
   c.createSprite(hal::kCoreS3.w, hal::kCoreS3.h);
   screens::ScreenData d;
   d.voiceLevel = 140;

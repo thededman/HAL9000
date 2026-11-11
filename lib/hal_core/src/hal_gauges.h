@@ -21,6 +21,13 @@ int lightPercent(int raw);
 
 int rotatingIndex(uint32_t tMs, uint32_t periodMs, int count);  // which item, changing every periodMs
 
+// Which of `count` items a screen shows `tMs` after it opened, a new one every
+// periodMs. Each opening starts at `start` (the screen's per-open seed), so over
+// several openings every item has its turn: a screen is only up for a few periods.
+// `first` (when in range) is shown before the round begins: an item that mustn't
+// be missed, like the first reading in alarm.
+int showingIndex(uint32_t tMs, uint32_t periodMs, int count, uint32_t start, int first = -1);
+
 enum class Metric { Uptime, FreeMemory, Camera, Lines, Wifi };
 const char* verdict(Metric m, int value);
 const char* modeVerdict(const std::string& mode);

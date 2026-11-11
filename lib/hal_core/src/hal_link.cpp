@@ -165,8 +165,8 @@ PeerState peerState(bool connected, int peerVersion, uint32_t requestMs, uint32_
   if (peerVersion == 1) return PeerState::TooOld;
   if (requestMs && nowMs - requestMs >= 2000) return PeerState::NotResponding;  // asked, no STATE within 2 s
   if (lastStateMs && nowMs - lastStateMs <= 5000) return PeerState::Ok;
-  if (requestMs) return PeerState::Waiting;
-  return PeerState::NotResponding;
+  // Asked and still in time, or nobody has asked lately: not known either way.
+  return PeerState::Waiting;
 }
 
 void PeerWatch::sent(uint32_t now) {

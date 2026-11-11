@@ -17,7 +17,7 @@ void wall(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d) 
   const int top = L.contentTop + 4, bottom = L.footerLineY - 4;
   const int tw = (L.w - 8 - kGap * (kCols - 1)) / kCols, th = (bottom - top - kGap * (kRows - 1)) / kRows;
   const int n = d.readings ? std::min<int>(tiles, static_cast<int>(d.readings->size())) : 0;
-  const int selected = n > 0 ? hal::rotatingIndex(tMs, 2000, n) : -1;
+  const int selected = n > 0 ? hal::showingIndex(tMs, 2000, n, d.seed) : -1;  // a different run of tiles each opening
   for (int t = 0; t < tiles; ++t) {
     const int x = 4 + (t % kCols) * (tw + kGap), y = top + (t / kCols) * (th + kGap);
     if (t >= n) {  // nothing to show here

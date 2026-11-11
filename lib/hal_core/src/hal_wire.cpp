@@ -16,7 +16,7 @@ float dot(Vec3 a, Vec3 b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
 
 Mat3 rotationBetween(Vec3 from, Vec3 to) {
   const float nf = length(from), nt = length(to);
-  if (nf < 1e-6f || nt < 1e-6f) return kIdentity;
+  if (!std::isfinite(nf) || !std::isfinite(nt) || nf < 1e-6f || nt < 1e-6f) return kIdentity;  // no direction (or not a number)
   const Vec3 a = scaled(from, 1 / nf), b = scaled(to, 1 / nt);
   const float c = dot(a, b);
   if (c > 1 - 1e-6f) return kIdentity;
@@ -30,8 +30,10 @@ Mat3 rotationBetween(Vec3 from, Vec3 to) {
     return r;
   }
   // Rodrigues: R = I + [v]x + [v]x^2 / (1 + c), with v = a x b.
+  // Past a right angle 1 + c loses its digits (near upside down it is almost all
+  // rounding error), so use the same factor written as (1 - c) / |v|^2.
   const Vec3 v = cross(a, b);
-  const float k = 1 / (1 + c);
+  const float k = c > 0 ? 1 / (1 + c) : (1 - c) / dot(v, v);
   const float vx[3][3] = {{0, -v.z, v.y}, {v.z, 0, -v.x}, {-v.y, v.x, 0}};
   Mat3 r = kIdentity;
   for (int i = 0; i < 3; ++i)

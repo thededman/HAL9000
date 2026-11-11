@@ -1,6 +1,8 @@
 #include <unity.h>
 
+#include <cmath>
 #include <string>
+#include <vector>
 
 #include "hal_readings.h"
 
@@ -127,6 +129,56 @@ void test_log_caps_trace() {
   TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.10f, slot.trace.front());  // the oldest ten are gone
 }
 
+// The trace's memory is taken once: no reallocation as it fills and rolls (the CoreS3's heap).
+void test_log_reserves_once() {
+  Reading slot;
+  hal::logReading(slot, hal::lightReading(1), 40);
+  const float* where = slot.trace.data();
+  for (int i = 0; i < 200; ++i) hal::logReading(slot, hal::lightReading(i % 100), 40);
+  TEST_ASSERT_EQUAL_PTR(where, slot.trace.data());
+  TEST_ASSERT_EQUAL(40, int(slot.trace.size()));
+}
+
+// After a long gap the old points would be stitched onto the new ones: start again.
+void test_clear_traces() {
+  std::vector<Reading> rs(2);
+  for (int i = 0; i < 5; ++i) {
+    hal::logReading(rs[0], hal::lightReading(i));
+    hal::logReading(rs[1], hal::tempReading(40));
+  }
+  hal::clearTraces(rs);
+  TEST_ASSERT_EQUAL(0, int(rs[0].trace.size()));
+  TEST_ASSERT_EQUAL(0, int(rs[1].trace.size()));
+  TEST_ASSERT_EQUAL_STRING("LUX", rs[0].code.c_str());  // the readings themselves stay
+  TEST_ASSERT_TRUE(rs[0].valid);
+}
+
+// The status cards open on the first reading in alarm.
+void test_first_alarm() {
+  std::vector<Reading> rs = {hal::powerReading(80, false), hal::tempReading(40), hal::linkReading(true, false),
+                             hal::tempReading(90)};
+  TEST_ASSERT_EQUAL(2, hal::firstAlarm(rs));
+  rs[2] = hal::linkReading(true, true);
+  TEST_ASSERT_EQUAL(3, hal::firstAlarm(rs));
+  rs[3] = hal::tempReading(40);
+  TEST_ASSERT_EQUAL(-1, hal::firstAlarm(rs));
+  TEST_ASSERT_EQUAL(-1, hal::firstAlarm({}));
+  Reading stale = hal::tempReading(90);
+  stale.valid = false;  // an alarm left on a reading that failed since doesn't count
+  TEST_ASSERT_EQUAL(-1, hal::firstAlarm({stale}));
+}
+
+void test_edges() {
+  expectInvalid(hal::motionReading(std::nanf("")), "MOT");                      // a failed read
+  expect(hal::memoryReading(300000000, 400000000), "MEM", "292968 MB", false);  // a big machine: no overflow
+  expect(hal::memoryReading(500, 320), "MEM", "500 KB", false);                 // more free than total
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, hal::memoryReading(500, 320).level);
+  expect(hal::tempReading(-5), "TMP", "-5 C", false);
+  expect(hal::clockReading(86400), "CLK", "00:00", false);
+  expect(hal::uptimeReading(4294967), "UPT", "49D 17:02", false);  // where a 32-bit millisecond count wraps
+  expect(hal::peerReading(hal::PeerState::Ok, ""), "DSK", "OK", false);
+}
+
 // A reading that doesn't apply right now (the desk unit with the link switched off).
 void test_no_reading() {
   Reading r = hal::noReading("DSK", "DESK UNIT");
@@ -148,6 +200,10 @@ int main() {
   RUN_TEST(test_peer);
   RUN_TEST(test_log_copies_fields);
   RUN_TEST(test_log_caps_trace);
+  RUN_TEST(test_log_reserves_once);
+  RUN_TEST(test_clear_traces);
+  RUN_TEST(test_first_alarm);
+  RUN_TEST(test_edges);
   RUN_TEST(test_no_reading);
   return UNITY_END();
 }

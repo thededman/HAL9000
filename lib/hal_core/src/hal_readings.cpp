@@ -1,6 +1,7 @@
 #include "hal_readings.h"
 
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 
 namespace hal {
@@ -39,9 +40,20 @@ void logReading(Reading& slot, const Reading& fresh, size_t cap) {
   slot.level = fresh.level;
   slot.alarm = fresh.alarm;
   slot.valid = fresh.valid;
-  if (!fresh.valid || fresh.level < 0) return;
+  if (!fresh.valid || !(fresh.level >= 0)) return;  // (also keeps a NaN out of the trace)
+  if (slot.trace.capacity() <= cap) slot.trace.reserve(cap + 1);  // once: no regrowing as it fills and rolls
   slot.trace.push_back(fresh.level);
   if (slot.trace.size() > cap) slot.trace.erase(slot.trace.begin(), slot.trace.end() - static_cast<long>(cap));
+}
+
+void clearTraces(std::vector<Reading>& readings) {
+  for (Reading& r : readings) r.trace.clear();
+}
+
+int firstAlarm(const std::vector<Reading>& readings) {
+  for (size_t i = 0; i < readings.size(); ++i)
+    if (readings[i].valid && readings[i].alarm) return static_cast<int>(i);
+  return -1;
 }
 
 Reading noReading(const char* code, const char* name) { return make(code, name); }
@@ -66,6 +78,7 @@ Reading proximityReading(int raw) {
 
 Reading motionReading(float dps) {
   Reading r = make("MOT", "MOTION");
+  if (!std::isfinite(dps)) return r;  // a failed read
   if (dps < 0) dps = -dps;
   return ok(r, fmt("%d DEG/S", static_cast<int>(dps + 0.5f)), clamp01(dps / 250.0f), dps > 120.0f);
 }
@@ -92,7 +105,7 @@ Reading memoryReading(int freeKb, int totalKb) {
   Reading r = make("MEM", "MEMORY");
   if (totalKb <= 0 || freeKb < 0) return r;
   std::string v = freeKb < 1024 ? fmt("%d KB", freeKb) : fmt("%d MB", freeKb / 1024);
-  return ok(r, v, clamp01(1.0f - float(freeKb) / float(totalKb)), freeKb * 10 < totalKb);
+  return ok(r, v, clamp01(1.0f - float(freeKb) / float(totalKb)), static_cast<long long>(freeKb) * 10 < totalKb);
 }
 
 Reading linkReading(bool enabled, bool connected) {

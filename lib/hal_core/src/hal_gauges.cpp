@@ -34,6 +34,18 @@ int rotatingIndex(uint32_t tMs, uint32_t periodMs, int count) {
   return static_cast<int>((tMs / periodMs) % static_cast<uint32_t>(count));
 }
 
+int showingIndex(uint32_t tMs, uint32_t periodMs, int count, uint32_t start, int first) {
+  if (count <= 0 || periodMs == 0) return 0;
+  const uint32_t n = static_cast<uint32_t>(count);
+  uint32_t step = tMs / periodMs, from = start % n;
+  if (first >= 0 && first < count) {
+    if (step == 0) return first;
+    --step;
+    if (from == static_cast<uint32_t>(first)) from = (from + 1) % n;  // not the same item twice running
+  }
+  return static_cast<int>((from + step % n) % n);
+}
+
 const char* verdict(Metric m, int v) {
   switch (m) {
     case Metric::Uptime: return v < 3600 ? "UNSTABLE" : v < 86400 ? "ADEQUATE" : "VINTAGE";

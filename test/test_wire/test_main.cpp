@@ -56,6 +56,43 @@ void test_rotation_degenerate() {
   }
 }
 
+// Nearly upside down (within a degree of exactly opposite): still a rigid rotation
+// that takes `from` onto `to`, not a stretched one.
+void test_rotation_near_opposite_is_rigid() {
+  const Vec3 froms[] = {{0, 1, 0}, {-1, 0, 0}, unit({0.3f, -0.4f, 0.5f})};
+  const float degrees[] = {179.0f, 179.5f, 179.7f, 179.8f, 179.9f, 179.95f, 179.99f};
+  for (float deg : degrees)
+    for (const Vec3& f : froms) {
+      // `to` is `from` turned by `deg` about an axis at right angles to it.
+      const Vec3 other = std::fabs(f.x) < 0.9f ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
+      const Vec3 p = unit({f.y * other.z - f.z * other.y, f.z * other.x - f.x * other.z, f.x * other.y - f.y * other.x});
+      const Vec3 side = {p.y * f.z - p.z * f.y, p.z * f.x - p.x * f.z, p.x * f.y - p.y * f.x};
+      const double a = deg * 0.017453292519943295;
+      const Vec3 to = {float(f.x * std::cos(a) + side.x * std::sin(a)), float(f.y * std::cos(a) + side.y * std::sin(a)),
+                       float(f.z * std::cos(a) + side.z * std::sin(a))};
+      const Mat3 r = hal::rotationBetween(f, to);
+      TEST_ASSERT_TRUE(finite(r));
+      near(hal::apply(r, f), unit(to), 2e-3f);
+      const Vec3 x = hal::apply(r, {1, 0, 0}), y = hal::apply(r, {0, 1, 0}), z = hal::apply(r, {0, 0, 1});
+      TEST_ASSERT_FLOAT_WITHIN(2e-3f, 1.0f, x.x * x.x + x.y * x.y + x.z * x.z);
+      TEST_ASSERT_FLOAT_WITHIN(2e-3f, 1.0f, y.x * y.x + y.y * y.y + y.z * y.z);
+      TEST_ASSERT_FLOAT_WITHIN(2e-3f, 1.0f, z.x * z.x + z.y * z.y + z.z * z.z);
+      TEST_ASSERT_FLOAT_WITHIN(2e-3f, 0.0f, x.x * y.x + x.y * y.y + x.z * y.z);
+      TEST_ASSERT_FLOAT_WITHIN(2e-3f, 0.0f, y.x * z.x + y.y * z.y + y.z * z.z);
+    }
+}
+
+// A sensor read that isn't a number must not reach the drawing code as NaN geometry.
+void test_rotation_ignores_nonsense() {
+  const float nan = std::nanf(""), inf = INFINITY;
+  const Vec3 bad[] = {{nan, 0, 0}, {0, inf, 0}, {nan, nan, nan}, {-inf, inf, 1}};
+  for (const Vec3& b : bad) {
+    TEST_ASSERT_TRUE(finite(hal::rotationBetween(b, {0, 1, 0})));
+    near(hal::apply(hal::rotationBetween(b, {0, 1, 0}), {1, 2, 3}), {1, 2, 3});
+    near(hal::apply(hal::rotationBetween({0, 1, 0}, b), {1, 2, 3}), {1, 2, 3});
+  }
+}
+
 void test_yaw_pitch() {
   near(hal::apply(hal::rotationYawPitch(90, 0), {1, 0, 0}), {0, 0, -1});
   near(hal::apply(hal::rotationYawPitch(0, 90), {0, 0, 1}), {0, -1, 0});
@@ -79,6 +116,8 @@ int main() {
   RUN_TEST(test_rotation_maps_from_to_to);
   RUN_TEST(test_rotation_is_orthonormal);
   RUN_TEST(test_rotation_degenerate);
+  RUN_TEST(test_rotation_near_opposite_is_rigid);
+  RUN_TEST(test_rotation_ignores_nonsense);
   RUN_TEST(test_yaw_pitch);
   RUN_TEST(test_project);
   return UNITY_END();

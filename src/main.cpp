@@ -7,6 +7,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <esp_system.h>
+#include <esp_timer.h>
 
 #include <memory>
 
@@ -75,6 +76,7 @@ float gyroNow = 0;    // deg/s, for the sensor array
 hal::ScreenVoices screenVoices(1);
 screens::DeskSensors deskSensors;
 uint32_t lastSensorsMs = 0;
+uint32_t readingsAtMs = 0;  // when the film-style screens' readings were last refreshed (0 = never)
 size_t debugScreen = 0;  // debug 'N': the next screen in catalogue order
 bool debugNext = false;
 uint32_t lastFrameMs = 0, lastProxMs = 0, lastImuMs = 0, lastLogMs = 0;
@@ -148,10 +150,13 @@ screens::LinkStats linkStats() {
   return k;
 }
 
+// Seconds since boot. Not millis(): that wraps to zero after 49.7 days.
+uint32_t uptimeSeconds() { return static_cast<uint32_t>(esp_timer_get_time() / 1000000); }
+
 // The answer to HAL Zero's STATUS: our real numbers.
 hal::PeerStatus deskStatus() {
   hal::PeerStatus s;
-  s.upS = static_cast<int>(millis() / 1000);
+  s.upS = static_cast<int>(std::min<uint32_t>(uptimeSeconds(), 999999999));
   s.heap = static_cast<int>(std::min<uint32_t>(ESP.getFreeHeap(), 9999999));
   s.psram = static_cast<int>(std::min<uint32_t>(ESP.getFreePsram(), 99999999));
   s.cam = haveCamera ? std::max(0, std::min(100, cameraScore())) : 0;
@@ -198,21 +203,25 @@ void updateReadings() {
     localtime_r(&t, &lt);
     clock = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
   }
-  int i = 0;
-  hal::logReading(readings[i++], hal::powerReading(s.batteryPct, s.charging));
-  hal::logReading(readings[i++], hal::lightReading(s.lightPct));
-  hal::logReading(readings[i++], hal::proximityReading(s.proximity));
-  hal::logReading(readings[i++], hal::motionReading(s.motionDps));
-  hal::logReading(readings[i++], hal::tempReading(s.chipTempC));
-  hal::logReading(readings[i++], hal::netReading(s.rssi));
-  hal::logReading(readings[i++], hal::memoryReading(s.heapFree / 1024, int(ESP.getHeapSize() / 1024)));
-  hal::logReading(readings[i++], hal::linkReading(config.link, linkServer.connected()));
-  hal::logReading(readings[i++], hal::cameraReading(haveCamera, haveCamera ? std::min(100, cameraScore()) : 0));
-  hal::logReading(readings[i++], hal::audioReading(audio.level(), linesSpoken));
-  hal::logReading(readings[i++], hal::clockReading(clock));
-  hal::logReading(readings[i++], hal::uptimeReading(millis() / 1000));
+  size_t i = 0;
+  auto put = [&](const hal::Reading& r) {  // in the order the screens show them
+    if (i < readings.size()) hal::logReading(readings[i++], r);
+  };
+  put(hal::powerReading(s.batteryPct, s.charging));
+  put(hal::lightReading(s.lightPct));
+  put(hal::proximityReading(s.proximity));
+  put(hal::motionReading(s.motionDps));
+  put(hal::tempReading(s.chipTempC));
+  put(hal::netReading(s.rssi));
+  put(hal::memoryReading(s.heapFree / 1024, int(ESP.getHeapSize() / 1024)));
+  put(hal::linkReading(config.link, linkServer.connected()));
+  put(hal::cameraReading(haveCamera, haveCamera ? std::min(100, cameraScore()) : 0));
+  put(hal::audioReading(audio.level(), linesSpoken));
+  put(hal::clockReading(clock));
+  put(hal::uptimeReading(uptimeSeconds()));
   // Parts for the unit diagnostic. With the link off, Wi-Fi asleep is by design.
   unitParts[0].ok = haveCamera;
+  unitParts[2].ok = M5.Imu.isEnabled();
   unitParts[3].ok = haveProximity;
   unitParts[4].ok = haveMemory;
   unitParts[5].ok = !config.link || wifi;
@@ -521,6 +530,10 @@ void loop() {
   if (m == hal::Mode::Console && showsReadings(consoles.currentId()) && (lastSensorsMs == 0 || now - lastSensorsMs >= 500)) {
     lastSensorsMs = now;
     readDeskSensors();
+    // Sensors are only read while one of these screens is up. After a break, start the
+    // traces again rather than joining points that may be hours apart.
+    if (readingsAtMs && now - readingsAtMs > 60000) hal::clearTraces(readings);
+    readingsAtMs = now ? now : 1;
     updateReadings();
   }
   setBacklight(m == hal::Mode::Dark ? 0 : (a.quiet ? 60 : 160));

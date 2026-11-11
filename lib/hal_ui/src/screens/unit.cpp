@@ -123,13 +123,13 @@ void unit(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d) 
   else snprintf(label, sizeof label, "ATTITUDE --");
   c.drawString(label, 6, L.footerLineY - 2, &fonts::Font0);
   c.setTextDatum(bottom_right);
-  if (!d.gravityValid) {
-    c.setTextColor(dim());
-    c.drawString("SETTLING", L.w - 6, L.footerLineY - 2, &fonts::Font0);
-  } else if (faults) {
+  if (faults) {  // said first: a motion sensor that failed never settles
     snprintf(label, sizeof label, faults == 1 ? "%d FAULT" : "%d FAULTS", faults);
     c.setTextColor(red());
     c.drawString(label, L.w - 6, L.footerLineY - 2, &fonts::Font0);
+  } else if (!d.gravityValid) {
+    c.setTextColor(dim());
+    c.drawString("SETTLING", L.w - 6, L.footerLineY - 2, &fonts::Font0);
   } else {
     c.setTextColor(white());
     c.drawString("ALL SYSTEMS NOMINAL", L.w - 6, L.footerLineY - 2, &fonts::Font0);

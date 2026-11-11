@@ -156,6 +156,9 @@ void test_peer_state() {
   TEST_ASSERT(hal::peerState(true, 2, 9500, 4000, 9600) == PeerState::Waiting);        // stale STATE, fresh STATUS
   TEST_ASSERT(hal::peerState(true, 2, 9500, 4000, 11500) == PeerState::NotResponding); // stale and no reply
   TEST_ASSERT(hal::peerState(true, 0, 1000, 1200, 1300) == PeerState::Ok);             // HELLO not seen yet
+  // Connected, but nobody has asked lately: not known, which isn't the same as not responding.
+  TEST_ASSERT(hal::peerState(true, 2, 0, 4000, 20000) == PeerState::Waiting);
+  TEST_ASSERT(hal::peerState(true, 2, 0, 0, 20000) == PeerState::Waiting);
 }
 
 // HAL Zero re-asks every 2 s; a desk HAL that never answers must still read as
@@ -194,9 +197,26 @@ void test_peer_watch_forget() {
   w.received(1050);
   w.forget();  // link dropped
   TEST_ASSERT_TRUE(w.due(1100));
-  TEST_ASSERT(w.state(true, 2, 1100) == hal::PeerState::NotResponding);
+  TEST_ASSERT(w.state(false, 2, 1100) == hal::PeerState::NotResponding);
+  TEST_ASSERT(w.state(true, 2, 1100) == hal::PeerState::Waiting);  // back, not asked yet: the old answer is gone
   w.sent(1100);
   TEST_ASSERT(w.state(true, 2, 1200) == hal::PeerState::Waiting);
+}
+
+// The film-style screens read the watch all the time but only ask while they're showing:
+// an idle watch on a healthy link must not look like an alarm.
+void test_peer_watch_idle_is_not_an_alarm() {
+  hal::PeerWatch w;
+  TEST_ASSERT(w.state(true, 2, 500) == hal::PeerState::Waiting);  // never asked
+  w.sent(1000);
+  w.received(1050);
+  TEST_ASSERT(w.state(true, 2, 6000) == hal::PeerState::Ok);
+  TEST_ASSERT(w.state(true, 2, 60000) == hal::PeerState::Waiting);  // the answer is old and nobody asked again
+  w.sent(60000);
+  TEST_ASSERT(w.state(true, 2, 60100) == hal::PeerState::Waiting);
+  w.received(60150);
+  TEST_ASSERT(w.state(true, 2, 60200) == hal::PeerState::Ok);
+  TEST_ASSERT(w.state(false, 2, 60200) == hal::PeerState::NotResponding);  // the link itself is down
 }
 
 // A desk HAL that loses power never closes the connection: HAL Zero pings every
@@ -244,6 +264,7 @@ int main() {
   RUN_TEST(test_peer_watch_silent);
   RUN_TEST(test_peer_watch_answers_then_goes_quiet);
   RUN_TEST(test_peer_watch_forget);
+  RUN_TEST(test_peer_watch_idle_is_not_an_alarm);
   RUN_TEST(test_liveness_pings_every_two_seconds);
   RUN_TEST(test_liveness_silent_after_five_seconds);
   RUN_TEST(test_liveness_idle_before_connecting);

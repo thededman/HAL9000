@@ -1,8 +1,11 @@
 // Status cards: one full-screen flat-colour card per subsystem, with a big
-// three-letter code and its real reading, cutting to the next every 1.6 s.
+// three-letter code and its real reading, cutting to the next every 1.6 s. A
+// screen is only up for about five cards, so each opening starts somewhere else
+// in the round, after the first card in alarm (if there is one).
 #include <stdio.h>
 
 #include "hal_gauges.h"
+#include "hal_readings.h"
 #include "palette.h"
 #include "screens.h"
 
@@ -18,7 +21,7 @@ void cards(M5Canvas& c, const hal::Layout& L, uint32_t tMs, const ScreenData& d)
   }
   const std::vector<hal::Reading>& rs = *d.readings;
   const int n = static_cast<int>(rs.size());
-  const int i = hal::rotatingIndex(tMs, 1600, n);
+  const int i = hal::showingIndex(tMs, 1600, n, d.seed, hal::firstAlarm(rs));
   const hal::Reading& r = rs[i];
   const bool alarm = r.valid && r.alarm;
   const CardColour col = !r.valid ? deadColour() : alarm ? alarmColour() : cardColour(i);
