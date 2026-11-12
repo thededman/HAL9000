@@ -177,7 +177,8 @@ hex). `bool brainReady(const Config&)` — on, with a host and a valid key.
 
 **Files:** create `src/linux/brain_client.{h,cpp}`; modify `src/linux/main.cpp`,
 `src/linux/sdl_io.{h,cpp}`, `src/linux/fb_io.{h,cpp}`, `src/linux/sdl_audio.{h,cpp}`,
-`src/linux/hud.{h,cpp}`; create `content/new/lines/brain_offline.txt` (drafts for David).
+`src/linux/hud.{h,cpp}`; create `content/new/lines/screens/brain.txt` (drafts for David; the
+`screens/` loader lists the folder, so no new voice code is needed).
 
 **Interfaces — consumes** Tasks 1–4. **Produces:**
 - `KeyInput` gains `std::string typed` (characters typed since the last poll) from SDL text
@@ -188,7 +189,9 @@ hex). `bool brainReady(const Config&)` — on, with a host and a valid key.
   brain's IPv4 once resolved). `BrainEvent { enum Kind { Reply, Clip, Failed } kind; BrainReply reply; std::vector<uint8_t> wav; std::string error; }`.
 - Ask box: Enter (eye showing, `brainReady`) opens `> _` in place of the command strip; typing
   edits; Enter sends; Esc cancels. While it is open Space is a character, not HAL's finger.
-- HUD: `BRAIN THINKING` while waiting; `BRAIN OFFLINE` for 5 s after a failure.
+- While waiting: `THINKING` in the HUD's mode row and `BRAIN THINKING` in the command strip (Esc
+  cancels the question). After a failure: a `MY HIGHER FUNCTIONS ARE OFFLINE` banner for 5 s and a
+  line from `/hal/voice/screens/brain/`. `--ask "QUESTION"` puts a question once booted.
 - An answer plays as a live conversation of one line (`startLive`, `append(New, text)`, `close`),
   with the subtitle and, when the reply has `show`, that screen once he starts speaking.
 

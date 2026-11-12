@@ -21,5 +21,5 @@ class FbIo {
   uint8_t* fb_ = nullptr;
   size_t fbSize_ = 0;
   int xres_ = 0, yres_ = 0, bpp_ = 0, stride_ = 0;
-  bool space_ = false;
+  bool space_ = false, shift_ = false;
 };

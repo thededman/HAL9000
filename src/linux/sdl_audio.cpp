@@ -29,12 +29,20 @@ bool SdlAudio::begin() {
 uint32_t SdlAudio::durationMs() const { return static_cast<uint32_t>(env_.size()) * kFrameMs; }
 
 bool SdlAudio::playFile(const hal::Storage& storage, const std::string& halPath) {
+  std::vector<uint8_t> file;
+  if (!dev_ || !storage.readAll(halPath, &file)) {
+    if (dev_) halLog("skip %s: can't read it", halPath.c_str());
+    return false;
+  }
+  return playBytes(file, halPath);
+}
+
+bool SdlAudio::playBytes(const std::vector<uint8_t>& file, const std::string& label) {
   if (!dev_) return false;
   stop();
-  std::vector<uint8_t> file;
   hal::WavInfo info;
-  if (!storage.readAll(halPath, &file) || !hal::parseWav(file.data(), file.size(), &info)) {
-    halLog("skip %s: can't read it as a 16-bit PCM WAV", halPath.c_str());
+  if (!hal::parseWav(file.data(), file.size(), &info)) {
+    halLog("skip %s: can't read it as a 16-bit PCM WAV", label.c_str());
     return false;
   }
   env_ = hal::loudnessEnvelope(file.data(), info, kFrameMs);
@@ -53,7 +61,7 @@ bool SdlAudio::playFile(const hal::Storage& storage, const std::string& halPath)
   if (got <= 0) return false;
   SDL_QueueAudio(dev_, out.data(), Uint32(got));
   queuedBytes_ = Uint32(got);
-  halLog("play %s (%u ms)", halPath.c_str(), unsigned(info.durationMs));
+  halLog("play %s (%u ms)", label.c_str(), unsigned(info.durationMs));
   return true;
 }
 

@@ -1,5 +1,7 @@
 #include "fb_io.h"
 
+#include "hal_keymap.h"
+
 #include <algorithm>
 
 #ifdef __linux__
@@ -51,6 +53,7 @@ SDL_Keycode toSdl(int code) {
     case KEY_ESC: return SDLK_ESCAPE;
     case KEY_GRAVE: return SDLK_ESCAPE;  // ` sits where Esc would be on small keyboards
     case KEY_ENTER: return SDLK_RETURN;
+    case KEY_BACKSPACE: return SDLK_BACKSPACE;
     // Arrows: Fn+F/X/Z/C. The keyboard sends Fn and the letter separately (each
     // app combines them), so here F X Z C are the arrows with or without Fn.
     case KEY_F: case KEY_UP: return SDLK_UP;
@@ -123,15 +126,19 @@ void FbIo::present(M5Canvas& frame) {
 
 void FbIo::poll(KeyInput* keys) {
   keys->pressed.clear();
+  keys->typed.clear();
   if (keyFd_ >= 0) {
     input_event ev;
     while (read(keyFd_, &ev, sizeof ev) == ssize_t(sizeof ev)) {
       if (ev.type != EV_KEY) continue;
       if (ev.code == KEY_SPACE) space_ = ev.value != 0;
+      if (ev.code == KEY_LEFTSHIFT || ev.code == KEY_RIGHTSHIFT) shift_ = ev.value != 0;
       if (ev.value == 1) {  // pressed (2 = auto-repeat, ignored)
+        const char c = hal::keyToChar(ev.code, shift_);
+        if (c) keys->typed.push_back(c);  // for the ask box
         SDL_Keycode k = toSdl(ev.code);
         if (k != SDLK_UNKNOWN) keys->pressed.push_back(k);
-        else if (!isModifier(ev.code)) halLog("key %d", ev.code);  // unmapped: logged so we can add it
+        else if (!c && !isModifier(ev.code)) halLog("key %d", ev.code);  // does nothing yet: logged so we can add it
       }
     }
   }
@@ -156,6 +163,9 @@ void FbIo::close() {
 bool FbIo::available() { return false; }
 bool FbIo::open() { return false; }
 void FbIo::present(M5Canvas&) {}
-void FbIo::poll(KeyInput* keys) { keys->pressed.clear(); }
+void FbIo::poll(KeyInput* keys) {
+  keys->pressed.clear();
+  keys->typed.clear();
+}
 void FbIo::close() {}
 #endif

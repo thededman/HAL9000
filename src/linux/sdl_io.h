@@ -5,12 +5,15 @@
 #include <M5GFX.h>
 #include <SDL.h>
 
+#include <string>
+
 #include <vector>
 
 struct KeyInput {
   bool quit = false;                // window closed
   bool spaceDown = false;           // Space is held right now (HAL Zero's "finger")
   std::vector<SDL_Keycode> pressed;  // keys pressed since the last poll (no auto-repeat)
+  std::string typed;                // characters typed since the last poll (for the ask box)
 };
 
 class SdlIo {

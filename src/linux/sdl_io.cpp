@@ -25,6 +25,7 @@ bool SdlIo::open(int w, int h, bool fullscreen, int scale) {
   texture_ = SDL_CreateTexture(renderer_, SDL_PIXELFORMAT_RGB565, SDL_TEXTUREACCESS_STREAMING, w, h);
   pixels_.resize(size_t(w) * h);
   if (fullscreen) SDL_ShowCursor(SDL_DISABLE);
+  SDL_StartTextInput();  // typed characters arrive as text, whatever the keyboard layout
   return texture_ != nullptr;
 }
 
@@ -39,9 +40,13 @@ void SdlIo::present(M5Canvas& frame) {
 
 void SdlIo::poll(KeyInput* keys) {
   keys->pressed.clear();
+  keys->typed.clear();
   SDL_Event e;
   while (SDL_PollEvent(&e)) {
     if (e.type == SDL_QUIT) keys->quit = true;
+    if (e.type == SDL_TEXTINPUT)
+      for (const char* c = e.text.text; *c; ++c)
+        if (*c >= 32 && *c <= 126) keys->typed.push_back(*c);  // plain ASCII is all HAL can show
     if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
       bool down = e.type == SDL_KEYDOWN;
       if (e.key.keysym.sym == SDLK_SPACE) space_ = down;

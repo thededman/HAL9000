@@ -31,5 +31,7 @@ bool drawBoot(M5Canvas& f, uint32_t t, const std::vector<std::string>& lines);
 void drawMenu(M5Canvas& f, const char* title, hal::Menu& menu);
 // Who's speaking in a conversation, their line, and line n of total.
 void drawSubtitle(M5Canvas& f, bool halZero, const std::string& text, int n, int total);
+// The question being typed to the AI brain: a box where the subtitles go.
+void drawAskBox(M5Canvas& f, const std::string& text, size_t max, uint32_t nowMs);
 // A short status message across the bottom (e.g. "THE DESK UNIT ISN'T ANSWERING").
 void drawBanner(M5Canvas& f, const char* text, uint32_t nowMs);

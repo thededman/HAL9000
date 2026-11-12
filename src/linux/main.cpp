@@ -20,10 +20,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "brain_client.h"
 #include "camera_feed.h"
 #include "fb_io.h"
 #include "consoles.h"
@@ -31,11 +33,13 @@
 #include "hal_brain.h"
 #include "hal_conductor.h"
 #include "hal_dialogue.h"
+#include "hal_facts.h"
 #include "hal_layout.h"
 #include "hal_loader.h"
 #include "hal_log.h"
 #include "hal_menu.h"
 #include "hal_motion.h"
+#include "hal_textbox.h"
 #include "hal_wire.h"
 #include "hud.h"
 #include "iio_imu.h"
@@ -198,7 +202,7 @@ void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenDa
   shot("unit-imu-fault");
 }
 
-enum class Overlay { None, Menu, Dialogues };
+enum class Overlay { None, Menu, Dialogues, Ask };
 
 struct App {
   PosixStorage storage;
@@ -220,6 +224,13 @@ struct App {
   std::vector<hal::Dialogue> dialogues;
   hal::Conductor conductor;
   LinkClient link;
+  // The AI brain: a question typed in the ask box; its answer plays as a live conversation of one line.
+  BrainClient brainClient;
+  hal::TextBox askBox;
+  bool thinking = false;                          // a question is with the brain
+  std::map<int, std::vector<uint8_t>> liveClips;  // live line number -> its audio
+  std::string showAfter;                          // a screen the answer asked for, opened once he has spoken
+  std::string autoAsk;                            // --ask: put this question once booted
 
   M5Canvas frame, background, lens;
   hal::Menu menu;
@@ -313,7 +324,9 @@ struct App {
     arrival.reset(new hal::ArrivalDetector(cfg.cameraMotionThreshold));
     haveImu = imu.begin();
     consoles.begin(uint32_t(std::time(nullptr)), screens::Owner::Zero, camera != nullptr, haveMemory ? &storage : nullptr);
-    if (haveMemory) screenVoices.load(storage, consoles.ids());
+    std::vector<std::string> voiceFolders = consoles.ids();
+    voiceFolders.push_back("brain");  // what he says when the AI brain doesn't answer
+    if (haveMemory) screenVoices.load(storage, voiceFolders);
     for (const std::string& id : consoles.ids())
       if (screenVoices.count(id) > 0) halLog("  /hal/voice/screens/%s: %d", id.c_str(), screenVoices.count(id));
     frame.setColorDepth(16);
@@ -361,6 +374,26 @@ struct App {
       }
   }
 
+  // Can a question go to the AI brain right now?
+  bool canAsk() const {
+    return booted && brainClient.started() && !thinking && !conductor.active() && brain->mode() == hal::Mode::Idle;
+  }
+
+  void submitQuestion(const std::string& question) {
+    brainClient.ask("zero", hal::askBody(hal::factsFromReadings(readings), question));
+    thinking = true;
+    halLog("ask: %s", question.c_str());
+  }
+
+  // The brain didn't answer (computer asleep, not started, wrong key...): he says so.
+  void brainOffline(const std::string& why, uint32_t now) {
+    halLog("brain: %s", why.c_str());
+    gloatText = "MY HIGHER FUNCTIONS ARE OFFLINE";
+    gloatUntil = now + 5000;
+    std::string path;
+    if (brain->mode() == hal::Mode::Idle && screenVoices.pick("brain", &path)) startLine(path);
+  }
+
   void handleConductor(const hal::ConductorOut& o) {
     if (o.playLocal) pendingSay = o.localLine;
     if (o.send && !link.send(o.msg)) {
@@ -368,6 +401,12 @@ struct App {
     }
     if (o.finished) {
       halLog("dialogue over: %s", o.reason.c_str());
+      liveClips.clear();
+      if (o.reason == "done" && !showAfter.empty()) {  // "show me your monitor wall": now that he has answered
+        wantScreen = showAfter;
+        tapUntil = nowMs() + 100;
+      }
+      showAfter.clear();
       if (o.gloat) {
         pendingGloat = true;
         gloatText = o.reason == "offline"   ? "THE DESK UNIT ISN'T ANSWERING"
@@ -383,7 +422,18 @@ struct App {
   bool onKeys(const KeyInput& keys) {
     if (keys.quit) return false;
     uint32_t now = nowMs();
+    if (overlay == Overlay::Ask)
+      for (char c : keys.typed) askBox.insert(c);
     for (SDL_Keycode k : keys.pressed) {
+      if (overlay == Overlay::Ask) {  // typing a question: every other key is just a letter
+        if (k == SDLK_ESCAPE) overlay = Overlay::None;
+        else if (k == SDLK_BACKSPACE) askBox.backspace();
+        else if ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && !askBox.empty()) {
+          overlay = Overlay::None;
+          if (canAsk()) submitQuestion(askBox.text());
+        }
+        continue;
+      }
       if (overlay != Overlay::None) {
         if (k == SDLK_ESCAPE || k == SDLK_TAB || k == SDLK_LEFT) overlay = Overlay::None;
         else if (k == SDLK_UP) menu.up();
@@ -407,8 +457,20 @@ struct App {
       }
       switch (k) {
         case SDLK_ESCAPE:
+          if (thinking) {  // never mind the question
+            brainClient.cancel();
+            thinking = false;
+            break;
+          }
           halLog("quit (Esc)");
           return false;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+          if (canAsk()) {
+            askBox.clear();
+            overlay = Overlay::Ask;
+          }
+          break;
         case SDLK_TAB:
         case SDLK_UP:
         case SDLK_DOWN: openMenu(); break;
@@ -490,6 +552,27 @@ struct App {
       startDialogue(autoDialogue);
       autoDialogue.clear();
     }
+    if (!autoAsk.empty() && canAsk()) {
+      submitQuestion(autoAsk);
+      autoAsk.clear();
+    }
+    std::vector<BrainEvent> answers;
+    brainClient.poll(&answers);
+    for (BrainEvent& e : answers) {
+      thinking = false;
+      if (e.kind == BrainEvent::Kind::Failed) {
+        brainOffline(e.error, now);
+      } else if (brain->canConverse() && !conductor.active()) {
+        halLog("answer: %s", e.reply.text.c_str());
+        conductor.startLive(now);
+        const int n = conductor.append(hal::Speaker::New, e.reply.text);
+        conductor.close();
+        if (n > 0) liveClips[n] = std::move(e.wav);
+        showAfter = e.reply.show;
+      } else {
+        halLog("answer dropped: he is busy");
+      }
+    }
     bool camArrival = false;
     if (camera && camera->poll(now)) camArrival = arrival->update(camera->score(), now);
     if (camArrival) halLog("arrival (score %d)", camera->score());
@@ -564,7 +647,11 @@ struct App {
       bool found = a.index < 0 ? voices.pick(a.folder, &path) : voices.at(a.folder, a.index, &path);
       if (found) startLine(path);
     }
-    if (a.dialogueLine > 0) {
+    if (a.dialogueLine > 0 && conductor.live()) {  // a line from the AI brain: its audio is in memory
+      auto clip = liveClips.find(a.dialogueLine);
+      if (clip == liveClips.end() || !audio.playBytes(clip->second, "the brain's answer")) halLog("no audio for live line %d", a.dialogueLine);
+      else ++linesSpoken;
+    } else if (a.dialogueLine > 0) {
       std::string path = hal::dialogueVoicePath(conductor.dialogue().id, a.dialogueLine, hal::Speaker::New);
       if (!audio.playFile(storage, path)) halLog("no voice for %s", path.c_str());
       else ++linesSpoken;
@@ -682,7 +769,7 @@ struct App {
 
   HudInfo hudInfo(uint32_t now) const {
     HudInfo h;
-    h.mode = conductor.active() ? "TALKING" : modeName(brain->mode());
+    h.mode = thinking ? "THINKING" : conductor.active() ? "TALKING" : modeName(brain->mode());
     h.uptimeS = upSeconds();
     h.cpuTempC = cpuTempC();
     h.wifi = wifiUp();
@@ -711,10 +798,13 @@ struct App {
     drawEye(lens, L, p);
     lens.pushSprite(&frame, lensX(L), lensY(L), eyeTransparentKey());
     drawHud(frame, hudInfo(now), now);
-    const char* strip = overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
-                                                             : "UP DOWN move   ENTER pick   ESC back")
-                        : conductor.active()    ? "SPACE interrupt   ESC quit"
-                                                : "SPACE talk   TAB menu   D dialogues   ESC quit";
+    const char* strip = overlay == Overlay::Ask    ? "type your question   ENTER ask   ESC cancel"
+                        : overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
+                                                               : "UP DOWN move   ENTER pick   ESC back")
+                        : thinking                 ? ((now / 500) % 2 ? "BRAIN THINKING ...   ESC cancel" : "BRAIN THINKING       ESC cancel")
+                        : conductor.active()       ? "SPACE interrupt   ESC quit"
+                        : brainClient.started()    ? "SPACE talk   ENTER ask   TAB menu   ESC quit"
+                                                   : "SPACE talk   TAB menu   D dialogues   ESC quit";
     drawCommandStrip(frame, strip);
   }
 
@@ -750,6 +840,7 @@ struct App {
     } else if (int32_t(gloatUntil - now) > 0) {
       drawBanner(frame, gloatText.c_str(), now);
     }
+    if (overlay == Overlay::Ask) drawAskBox(frame, askBox.text(), 120, now);
     if (overlay == Overlay::Menu) drawMenu(frame, "HAL ZERO", menu);
     if (overlay == Overlay::Dialogues) drawMenu(frame, "TALK TO THE DESK UNIT", menu);
   }
@@ -789,6 +880,22 @@ struct App {
       f->walkIn(0);
       for (uint32_t t = 0; t <= 1300; t += 70) f->poll(t);
     }
+    drawEyeScreen(4200, 1.0f);
+    overlay = Overlay::Ask;
+    drawEyeScreen(4200, 1.0f);
+    drawAskBox(frame, "What do you think of the old model on the desk?", 120, 400);
+    shot("06a-ask-box");
+    drawEyeScreen(4200, 1.0f);
+    drawAskBox(frame, std::string(120, 'w'), 120, 400);
+    shot("06b-ask-box-full");
+    overlay = Overlay::None;
+    thinking = true;
+    drawEyeScreen(4600, 1.0f);
+    shot("06c-brain-thinking");
+    thinking = false;
+    drawEyeScreen(4200, 1.0f);
+    drawBanner(frame, "MY HIGHER FUNCTIONS ARE OFFLINE", 4400);
+    shot("06d-brain-offline");
     int n = 7;
     sysmon.sample();
     updateReadings(2600);  // the film-style screens show this machine's numbers
@@ -920,7 +1027,7 @@ int main(int argc, char** argv) {
   const char* root = std::getenv("HAL_ROOT");
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg, layoutArg, showArg;
+  std::string linkArg, dialogueArg, layoutArg, showArg, askArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -931,6 +1038,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--dialogue") && i + 1 < argc) dialogueArg = argv[++i];
     else if (!std::strcmp(argv[i], "--layout") && i + 1 < argc) layoutArg = argv[++i];
     else if (!std::strcmp(argv[i], "--show") && i + 1 < argc) showArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--ask") && i + 1 < argc) askArg = argv[++i];
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
@@ -947,6 +1055,11 @@ int main(int argc, char** argv) {
   if (app.cfg.link) app.link.start(app.cfg.peerHost, app.cfg.linkPort);
   app.autoDialogue = dialogueArg;
   app.autoShow = showArg;
+  app.autoAsk = askArg;
+  if (hal::brainReady(app.cfg)) {  // the AI brain on the computer (never log the key)
+    app.brainClient.start(app.cfg.brainHost, app.cfg.brainPort, app.cfg.brainKey);
+    halLog("brain: %s:%d", app.cfg.brainHost.c_str(), app.cfg.brainPort);
+  }
 
   // The Cardputer's own LCD and keyboard when they're here, otherwise a window.
   SdlIo io;
@@ -968,7 +1081,7 @@ int main(int argc, char** argv) {
     else io.poll(&keys);
     if (!app.onKeys(keys)) break;
     uint32_t now = nowMs();
-    app.tick(keys.spaceDown, now);
+    app.tick(keys.spaceDown && app.overlay != Overlay::Ask, now);  // while typing, Space is a space
     if (now - lastFrame >= 33) {
       lastFrame = now;
       app.render(now);
@@ -987,6 +1100,7 @@ int main(int argc, char** argv) {
     SDL_Delay(2);
   }
   if (quitSignal) halLog("quit (signal)");
+  app.brainClient.stop();
   app.link.stop();
   if (app.camera) app.camera->close();  // stops rpicam-vid
   app.audio.close();

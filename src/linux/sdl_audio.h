@@ -14,6 +14,8 @@ class SdlAudio {
  public:
   bool begin();
   bool playFile(const hal::Storage& storage, const std::string& halPath);
+  // A whole WAV held in memory (a line from the AI brain); `label` is for the log.
+  bool playBytes(const std::vector<uint8_t>& wav, const std::string& label);
   void stop();
   bool isPlaying() const;
   uint8_t level() const;  // 0..255

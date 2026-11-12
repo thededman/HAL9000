@@ -187,6 +187,26 @@ void drawSubtitle(M5Canvas& f, bool halZero, const std::string& text, int n, int
   for (size_t i = 0; i < lines.size() && i < 3; ++i) f.drawString(lines[i].c_str(), x + 6, y + 15 + int(i) * 9, &fonts::Font0);
 }
 
+void drawAskBox(M5Canvas& f, const std::string& text, size_t max, uint32_t now) {
+  const int x = 4, y = 112, w = f.width() - 8, h = 44;
+  f.fillRoundRect(x, y, w, h, 4, TFT_BLACK);
+  f.drawRoundRect(x, y, w, h, 4, white());
+  f.setTextDatum(top_left);
+  f.setTextColor(white());
+  f.drawString("ASK HAL ZERO", x + 6, y + 4, &fonts::Font0);
+  char count[16];
+  snprintf(count, sizeof count, "%d/%d", int(text.size()), int(max));
+  f.setTextDatum(top_right);
+  f.setTextColor(text.size() >= max ? red() : dim());
+  f.drawString(count, x + w - 6, y + 4, &fonts::Font0);
+  // "> " and the text, cut every 49 characters (three rows hold all 120), with a blinking cursor.
+  std::string shown = "> " + text + ((now / 400) % 2 ? "_" : " ");
+  f.setTextDatum(top_left);
+  f.setTextColor(white());
+  for (size_t row = 0; row < 3 && row * 49 < shown.size(); ++row)
+    f.drawString(shown.substr(row * 49, 49).c_str(), x + 6, y + 15 + int(row) * 9, &fonts::Font0);
+}
+
 void drawBanner(M5Canvas& f, const char* text, uint32_t now) {
   f.fillRect(0, 140, f.width(), 16, (now / 400) % 2 ? red() : TFT_BLACK);
   f.setTextDatum(middle_center);
