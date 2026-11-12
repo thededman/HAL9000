@@ -2,7 +2,32 @@
 
 namespace hal {
 
+void Conductor::startLive(uint32_t nowMs) {
+  d_ = Dialogue();
+  d_.id = "live";
+  idx_ = 0;
+  live_ = true;
+  closed_ = false;
+  state_ = State::WaitLine;
+  at_ = nowMs;  // the first line may start as soon as it is here
+  giveUpAt_ = nowMs + kWaitLineMs;
+}
+
+int Conductor::append(Speaker who, const std::string& text) {
+  if (!live() || closed_ || d_.lines.size() >= static_cast<size_t>(kMaxDialogueLines)) return 0;
+  DialogueLine line;
+  line.who = who;
+  line.text = text;
+  d_.lines.push_back(line);
+  return static_cast<int>(d_.lines.size());
+}
+
+void Conductor::close() {
+  if (live()) closed_ = true;
+}
+
 void Conductor::start(const Dialogue& d, uint32_t nowMs) {
+  live_ = closed_ = false;
   d_ = d;
   idx_ = 0;
   state_ = d_.lines.empty() ? State::Off : State::Gap;
@@ -24,6 +49,12 @@ void Conductor::finish(const char* reason, bool gloat, bool tellRemote, Conducto
 
 void Conductor::advance(uint32_t nowMs, ConductorOut* out) {
   if (++idx_ >= static_cast<int>(d_.lines.size())) {
+    if (live_ && !closed_) {  // the next line is still being written
+      state_ = State::WaitLine;
+      at_ = nowMs + kGapMs;
+      giveUpAt_ = nowMs + kWaitLineMs;
+      return;
+    }
     finish("done", false, true, out);
     return;
   }
@@ -34,6 +65,15 @@ void Conductor::advance(uint32_t nowMs, ConductorOut* out) {
 
 ConductorOut Conductor::tick(uint32_t nowMs) {
   ConductorOut out;
+  if (state_ == State::WaitLine) {
+    if (idx_ < static_cast<int>(d_.lines.size())) {
+      state_ = State::Gap;  // it arrived: due at at_, which may already have passed
+    } else if (closed_) {
+      finish("done", false, true, &out);
+    } else if (past(nowMs, giveUpAt_)) {
+      finish("timeout", false, true, &out);  // the brain's fault, not the desk HAL's: no gloating
+    }
+  }
   switch (state_) {
     case State::Gap:
       if (!reached(nowMs, at_)) break;
