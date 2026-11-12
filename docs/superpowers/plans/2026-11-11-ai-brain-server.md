@@ -123,7 +123,7 @@ def test_prompts(self):
   non-ASCII and control characters; collapse whitespace; tidy ` ,` → `,`; strip quotes; cut.
   Prompt rules, verbatim in both personas: "Reply in 1 or 2 short sentences, at most 150
   characters. Plain text only: no markdown, no emoji, no stage directions. Never quote a film.
-  Mention one of the things you know only when Dave asks about it."
+  Mention a fact from your list only when Dave asks about it."
 - [ ] **Step 4:** tests pass.
 - [ ] **Step 5:** commit `Brain: personas and the cleaner`.
 
