@@ -178,8 +178,9 @@ ssh pi@cardputerzero.local hostname
 tools/cardputer.sh build
 ```
 
-The first run builds a Docker image (Debian 13, arm64, like the device) and takes a few
-minutes; later builds take seconds.
+Docker has to be running first (on macOS, start Docker Desktop). The first run builds a
+Docker image (Debian 13, arm64, like the device) and takes a few minutes; later builds take
+seconds.
 
 **Intel or AMD computers** have to emulate arm64, which is slower. Enable it once with
 `docker run --privileged --rm tonistiigi/binfmt --install arm64`.
@@ -262,7 +263,9 @@ without opening a window:
 .pio/build/sim/program --shots /tmp/desk --layout cores3
 ```
 
-The Cardputer's Docker build shares the `.pio` folder, so rebuild the simulator after it.
+The simulator and the Cardputer build share the `.pio` folder, and building one clears the
+other's program. Run `pio run -e sim` again after a Cardputer build, and
+`tools/cardputer.sh build` again before the next `deploy`.
 
 ## Updating
 
@@ -282,6 +285,8 @@ Then repeat only what changed: render the voice again if `content/` changed (ste
 | HAL's clock is wrong or greetings come at odd times | `wifi_ssid`, `wifi_password` and `timezone` in `/hal/config.txt` |
 | The upload can't find the CoreS3 | A charge-only cable, or the CoreS3 needs download mode (step 5); on Linux, serial permissions (step 2) |
 | `tools/cardputer.sh` asks for a password or is refused | Key login isn't set up (step 6.1) |
+| `tools/cardputer.sh build` can't connect to Docker | Docker isn't running: start Docker Desktop (macOS) or the Docker service (Linux) |
+| `tools/cardputer.sh deploy` can't find the program | A simulator build cleared it: run `tools/cardputer.sh build` again (step 6.2) |
 | HAL Zero shows `LINK SEEKING` forever | The desk HAL is off, has `link=off`, or is on another network (step 7) |
 | A copy to the Cardputer was interrupted | Run `tools/cardputer.sh deploy` again; the program is only swapped in once fully copied |
 
