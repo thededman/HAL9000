@@ -1027,7 +1027,7 @@ int main(int argc, char** argv) {
   const char* root = std::getenv("HAL_ROOT");
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg, layoutArg, showArg, askArg;
+  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, brainArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -1039,6 +1039,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--layout") && i + 1 < argc) layoutArg = argv[++i];
     else if (!std::strcmp(argv[i], "--show") && i + 1 < argc) showArg = argv[++i];
     else if (!std::strcmp(argv[i], "--ask") && i + 1 < argc) askArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
@@ -1056,6 +1057,15 @@ int main(int argc, char** argv) {
   app.autoDialogue = dialogueArg;
   app.autoShow = showArg;
   app.autoAsk = askArg;
+  if (!brainArg.empty()) {  // --brain host[:port] overrides config.txt, for trying the chat in the simulator
+    app.cfg.brain = true;
+    size_t colon = brainArg.rfind(':');
+    app.cfg.brainHost = colon == std::string::npos ? brainArg : brainArg.substr(0, colon);
+    if (colon != std::string::npos) app.cfg.brainPort = std::atoi(brainArg.c_str() + colon + 1);
+    // With no key in the settings, a placeholder: a brain that isn't paired yet only listens on
+    // its own computer and asks for none.
+    if (app.cfg.brainKey.empty()) app.cfg.brainKey = std::string(32, '0');
+  }
   if (hal::brainReady(app.cfg)) {  // the AI brain on the computer (never log the key)
     app.brainClient.start(app.cfg.brainHost, app.cfg.brainPort, app.cfg.brainKey);
     halLog("brain: %s:%d", app.cfg.brainHost.c_str(), app.cfg.brainPort);

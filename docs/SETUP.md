@@ -319,6 +319,16 @@ Each prints the reply and plays it in that HAL's voice. The first answer after s
 takes 10–15 seconds while the model loads; after that, about a second. `tools/brain.sh stop`
 stops it, `status` says whether it is running, and its log is `brain/.run/brain.log`.
 
+**Chat with HAL Zero in the simulator** (step 8) while the brain is running:
+
+```bash
+.pio/build/sim/program --root build/new/hal --brain 127.0.0.1
+```
+
+Press Enter, type a question, press Enter again. He answers aloud with a subtitle; "show me
+your monitor wall" also brings that screen up. Esc cancels a question he is still thinking
+about, and Space interrupts an answer.
+
 - Until it is paired with HAL Zero the brain only answers requests from this computer.
   `tools/brain.sh pair` (which shares a key with HAL Zero and opens the brain to your
   network) is for the Cardputer chat that comes next; you don't need it yet.
