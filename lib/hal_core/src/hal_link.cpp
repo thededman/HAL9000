@@ -87,11 +87,63 @@ bool parseState(const std::vector<std::string>& w, PeerStatus* st) {
   return seen == 0x3FFu;
 }
 
+bool validToken(const std::string& t) {
+  if (t.size() < 16 || t.size() > 32) return false;
+  for (char c : t)
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+  return true;
+}
+
+bool parseSensors(const std::vector<std::string>& w, PeerSensors* s) {
+  if (w.size() != 7) return false;
+  unsigned seen = 0;
+  for (size_t i = 1; i < w.size(); ++i) {
+    size_t eq = w[i].find('=');
+    if (eq == std::string::npos) return false;
+    std::string k = w[i].substr(0, eq), v = w[i].substr(eq + 1);
+    static const char* const keys[] = {"light", "prox", "tilt", "bat", "chg", "temp"};
+    int idx = -1;
+    for (int j = 0; j < 6; ++j)
+      if (k == keys[j]) idx = j;
+    if (idx < 0 || (seen & (1u << idx))) return false;
+    seen |= 1u << idx;
+    bool ok = false;
+    int chg = 0;
+    switch (idx) {
+      case 0: ok = toSigned(v, -1, 100, 3, &s->light); break;
+      case 1: ok = toSigned(v, 0, 65535, 5, &s->prox) && v[0] != '-'; break;
+      case 2: ok = toSigned(v, 0, 180, 3, &s->tilt) && v[0] != '-'; break;
+      case 3: ok = toSigned(v, -1, 100, 3, &s->bat); break;
+      case 4: ok = (v == "0" || v == "1") && toInt(v, 0, 1, &chg); s->chg = chg == 1; break;
+      case 5: ok = toSigned(v, -40, 125, 3, &s->temp); break;
+    }
+    if (!ok) return false;
+  }
+  return seen == 0x3Fu;
+}
+
 bool validReason(const std::string& r) {
   return r == "done" || r == "interrupted" || r == "timeout" || r == "busy" || r == "offline";
 }
 
 }  // namespace
+
+bool isPrivateIpv4(const std::string& dotted) {
+  int part[4] = {0, 0, 0, 0};
+  size_t start = 0;
+  for (int n = 0; n < 4; ++n) {
+    size_t dot = dotted.find('.', start);
+    if ((dot == std::string::npos) != (n == 3)) return false;  // exactly four parts
+    std::string piece = dotted.substr(start, n == 3 ? std::string::npos : dot - start);
+    if (piece.empty() || piece.size() > 3 || (piece.size() > 1 && piece[0] == '0')) return false;
+    for (char c : piece)
+      if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    part[n] = std::stoi(piece);
+    if (part[n] > 255) return false;
+    start = dot + 1;
+  }
+  return part[0] == 10 || (part[0] == 172 && part[1] >= 16 && part[1] <= 31) || (part[0] == 192 && part[1] == 168);
+}
 
 Message parseMessage(const std::string& line) {
   Message m;
@@ -129,6 +181,25 @@ Message parseMessage(const std::string& line) {
     ok.type = MsgType::State;
     return ok;
   }
+  if (cmd == "FETCH" && w.size() == 5 && toInt(w[1], 1, kMaxDialogueLines, &ok.n) && isPrivateIpv4(w[2]) &&
+      toInt(w[3], 1024, 65535, &ok.port) && validToken(w[4])) {
+    ok.type = MsgType::Fetch;
+    ok.host = w[2];
+    ok.token = w[4];
+    return ok;
+  }
+  if (cmd == "READY" && w.size() == 2 && toInt(w[1], 1, kMaxDialogueLines, &ok.n)) {
+    ok.type = MsgType::Ready;
+    return ok;
+  }
+  if (cmd == "SENSE" && w.size() == 1) {
+    ok.type = MsgType::Sense;
+    return ok;
+  }
+  if (cmd == "SENSORS" && parseSensors(w, &ok.sensors)) {
+    ok.type = MsgType::Sensors;
+    return ok;
+  }
   if (cmd == "END" && w.size() == 2 && validReason(w[1])) {
     ok.type = MsgType::End;
     ok.reason = w[1];
@@ -155,6 +226,15 @@ std::string formatMessage(const Message& m) {
              std::to_string(s.psram) + " cam=" + std::to_string(s.cam) + " lines=" + std::to_string(s.lines) +
              " mode=" + s.mode + " rssi=" + std::to_string(s.rssi) + " fw=" + s.fw + " cores=" +
              std::to_string(s.cores) + " mhz=" + std::to_string(s.mhz);
+    }
+    case MsgType::Fetch: return "FETCH " + std::to_string(m.n) + " " + m.host + " " + std::to_string(m.port) + " " + m.token;
+    case MsgType::Ready: return "READY " + std::to_string(m.n);
+    case MsgType::Sense: return "SENSE";
+    case MsgType::Sensors: {
+      const PeerSensors& s = m.sensors;
+      return "SENSORS light=" + std::to_string(s.light) + " prox=" + std::to_string(s.prox) + " tilt=" +
+             std::to_string(s.tilt) + " bat=" + std::to_string(s.bat) + " chg=" + (s.chg ? "1" : "0") + " temp=" +
+             std::to_string(s.temp);
     }
     default: return "";
   }

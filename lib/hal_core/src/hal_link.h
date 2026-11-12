@@ -10,8 +10,15 @@
 //   STATUS                        (v2, HAL Zero) how are you?
 //   STATE up=<s> heap=<b> psram=<b> cam=<0-100> lines=<n> mode=<name> rssi=<dBm> fw=<x.y.z> cores=<n> mhz=<n>
 //                                 (v2, desk HAL) the answer: all ten keys, any order
+//   FETCH <n> <ipv4> <port> <token>   (v3, HAL Zero) download line n's audio from http://ipv4:port/clip/token
+//   READY <n>                     (v3, desk HAL) line n is downloaded; MISSING <n> if it couldn't be
+//   SAY live <n>                  (v3) play fetched line n (the usual PLAYING / DONE follow)
+//   SENSE                         (v3, HAL Zero) what do your sensors read?
+//   SENSORS light=<%> prox=<n> tilt=<deg> bat=<%> chg=<0|1> temp=<C>
+//                                 (v3, desk HAL) the answer: all six keys, any order
 //
-// Anything else is Invalid: the receiver ignores it.
+// Anything else is Invalid: the receiver ignores it. v3 messages are only sent to a peer
+// whose HELLO said 3 or more.
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -19,10 +26,13 @@
 
 namespace hal {
 
-constexpr int kLinkVersion = 2;
+constexpr int kLinkVersion = 3;
 constexpr int kLinkPort = 9000;
 
-enum class MsgType { Invalid, Hello, Ping, Pong, Say, Playing, Missing, Busy, Done, End, Status, State };
+enum class MsgType {
+  Invalid, Hello, Ping, Pong, Say, Playing, Missing, Busy, Done, End, Status, State,
+  Fetch, Ready, Sense, Sensors  // v3
+};
 enum class Role { Old, New };
 
 struct PeerStatus {            // STATE: the desk HAL's real numbers
@@ -38,6 +48,18 @@ struct PeerStatus {            // STATE: the desk HAL's real numbers
   int mhz = 0;                 // mhz     1..9999
 };
 
+struct PeerSensors {           // SENSORS: what the desk HAL's sensors read right now
+  int light = -1;              // light   room light, 0..100 %, -1 = not read
+  int prox = 0;                // prox    proximity, raw, 0..65535
+  int tilt = 0;                // tilt    degrees from his resting pose, 0..180
+  int bat = -1;                // bat     battery, 0..100 %, -1 = not read
+  bool chg = false;            // chg     charging, 0|1
+  int temp = 0;                // temp    chip temperature, -40..125 C
+};
+
+// A dotted IPv4 address in 10/8, 172.16/12 or 192.168/16: the only places a HAL fetches from.
+bool isPrivateIpv4(const std::string& dotted);
+
 struct Message {
   MsgType type = MsgType::Invalid;
   Role role = Role::Old;  // HELLO
@@ -47,6 +69,10 @@ struct Message {
   int ms = 0;             // PLAYING (0..600000)
   std::string reason;     // END
   PeerStatus status;      // STATE
+  std::string host;       // FETCH: a private IPv4 address
+  int port = 0;           // FETCH (1024..65535)
+  std::string token;      // FETCH: 16..32 lower-case hex characters
+  PeerSensors sensors;    // SENSORS
 };
 
 Message parseMessage(const std::string& line);

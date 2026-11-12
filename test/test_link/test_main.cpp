@@ -142,8 +142,106 @@ void test_longest_state_fits() {
 }
 
 void test_version_two_still_reads_one() {
-  TEST_ASSERT_EQUAL(2, hal::kLinkVersion);
+  TEST_ASSERT_EQUAL(3, hal::kLinkVersion);
+  TEST_ASSERT_EQUAL(3, hal::parseMessage("HELLO NEW 3").version);
   TEST_ASSERT_EQUAL(1, hal::parseMessage("HELLO OLD 1").version);
+}
+
+// Link v3: the AI brain's lines. HAL Zero tells the desk HAL where to download a clip
+// (FETCH), hears when it is ready (READY), and asks for his sensor readings (SENSE).
+void test_v3_round_trip() {
+  const char* const lines[] = {"FETCH 2 192.168.1.20 9100 0123456789abcdef0123456789abcdef",
+                               "FETCH 99 10.0.0.1 1024 0123456789abcdef",
+                               "READY 2",
+                               "SENSE",
+                               "SENSORS light=67 prox=19 tilt=3 bat=37 chg=1 temp=42",
+                               "SENSORS light=-1 prox=0 tilt=0 bat=-1 chg=0 temp=-5"};
+  for (const char* line : lines) {
+    hal::Message m = hal::parseMessage(line);
+    TEST_ASSERT_TRUE_MESSAGE(m.type != MsgType::Invalid, line);
+    TEST_ASSERT_EQUAL_STRING(line, hal::formatMessage(m).c_str());
+  }
+  hal::Message f = hal::parseMessage("FETCH 2 192.168.1.20 9100 0123456789abcdef0123456789abcdef");
+  TEST_ASSERT(f.type == MsgType::Fetch);
+  TEST_ASSERT_EQUAL(2, f.n);
+  TEST_ASSERT_EQUAL_STRING("192.168.1.20", f.host.c_str());
+  TEST_ASSERT_EQUAL(9100, f.port);
+  TEST_ASSERT_EQUAL_STRING("0123456789abcdef0123456789abcdef", f.token.c_str());
+  TEST_ASSERT(hal::parseMessage("READY 7").type == MsgType::Ready);
+  TEST_ASSERT_EQUAL(7, hal::parseMessage("READY 7").n);
+  TEST_ASSERT(hal::parseMessage("SENSE").type == MsgType::Sense);
+  hal::Message s = hal::parseMessage("SENSORS temp=42 chg=1 bat=37 tilt=3 prox=19 light=67");  // any order
+  TEST_ASSERT(s.type == MsgType::Sensors);
+  TEST_ASSERT_EQUAL(67, s.sensors.light);
+  TEST_ASSERT_EQUAL(19, s.sensors.prox);
+  TEST_ASSERT_EQUAL(3, s.sensors.tilt);
+  TEST_ASSERT_EQUAL(37, s.sensors.bat);
+  TEST_ASSERT_TRUE(s.sensors.chg);
+  TEST_ASSERT_EQUAL(42, s.sensors.temp);
+}
+
+void test_private_ipv4() {
+  for (const char* yes : {"10.0.0.1", "10.255.255.255", "172.16.0.14", "172.31.255.254", "192.168.1.20", "192.168.0.0"})
+    TEST_ASSERT_TRUE_MESSAGE(hal::isPrivateIpv4(yes), yes);
+  for (const char* no : {"8.8.8.8", "172.15.0.1", "172.32.0.1", "192.169.1.1", "127.0.0.1", "169.254.1.1", "0.0.0.0",
+                         "10.0.0", "10.0.0.256", "010.0.0.1", "10.0.0.1.5", "10.0.0.", ".10.0.0.1", "10..0.1", "a.b.c.d",
+                         "10.0.0.1 ", "10.0.0.-1", "1000.0.0.1", ""})
+    TEST_ASSERT_FALSE_MESSAGE(hal::isPrivateIpv4(no), no);
+}
+
+void test_fetch_rejects() {
+  const char* const bad[] = {"FETCH 2 8.8.8.8 9100 0123456789abcdef",                      // not a private address
+                             "FETCH 2 example.com 9100 0123456789abcdef",                   // a name
+                             "FETCH 2 192.168.1.20 1023 0123456789abcdef",                  // a system port
+                             "FETCH 2 192.168.1.20 65536 0123456789abcdef",
+                             "FETCH 2 192.168.1.20 9100 0123456789abcde",                   // 15 characters
+                             "FETCH 2 192.168.1.20 9100 0123456789abcdef0123456789abcdef0",  // 33
+                             "FETCH 2 192.168.1.20 9100 0123456789ABCDEF",                  // upper case
+                             "FETCH 2 192.168.1.20 9100 0123456789abcdeg",
+                             "FETCH 2 192.168.1.20 9100 ../../../etc/passwd",
+                             "FETCH 0 192.168.1.20 9100 0123456789abcdef",
+                             "FETCH 100 192.168.1.20 9100 0123456789abcdef",
+                             "FETCH 2 192.168.1.20 9100",
+                             "FETCH 2 192.168.1.20 9100 0123456789abcdef extra",
+                             "FETCH", "READY", "READY 0", "READY 100", "READY 2 3", "SENSE now", "fetch 2 10.0.0.1 9100 0123456789abcdef"};
+  for (const char* line : bad) TEST_ASSERT_TRUE_MESSAGE(hal::parseMessage(line).type == MsgType::Invalid, line);
+}
+
+void test_sensors_rejects() {
+  const char* const bad[] = {"SENSORS light=67 prox=19 tilt=3 bat=37 chg=1",                    // temp missing
+                             "SENSORS light=67 prox=19 tilt=3 bat=37 chg=1 temp=42 temp=42",    // twice
+                             "SENSORS light=67 light=67 tilt=3 bat=37 chg=1 temp=42",
+                             "SENSORS light=67 prox=19 tilt=3 bat=37 chg=1 temp=42 volts=5",    // unknown
+                             "SENSORS light=101 prox=19 tilt=3 bat=37 chg=1 temp=42",
+                             "SENSORS light=-2 prox=19 tilt=3 bat=37 chg=1 temp=42",
+                             "SENSORS light=67 prox=65536 tilt=3 bat=37 chg=1 temp=42",
+                             "SENSORS light=67 prox=-1 tilt=3 bat=37 chg=1 temp=42",
+                             "SENSORS light=67 prox=19 tilt=181 bat=37 chg=1 temp=42",
+                             "SENSORS light=67 prox=19 tilt=3 bat=101 chg=1 temp=42",
+                             "SENSORS light=67 prox=19 tilt=3 bat=37 chg=2 temp=42",
+                             "SENSORS light=67 prox=19 tilt=3 bat=37 chg=yes temp=42",
+                             "SENSORS light=67 prox=19 tilt=3 bat=37 chg=1 temp=126",
+                             "SENSORS light=67 prox=19 tilt=3 bat=37 chg=1 temp=-41",
+                             "SENSORS light= prox=19 tilt=3 bat=37 chg=1 temp=42",
+                             "SENSORS light prox=19 tilt=3 bat=37 chg=1 temp=42",
+                             "SENSORS"};
+  for (const char* line : bad) TEST_ASSERT_TRUE_MESSAGE(hal::parseMessage(line).type == MsgType::Invalid, line);
+}
+
+void test_longest_v3_lines_fit() {
+  hal::Message f;
+  f.type = MsgType::Fetch;
+  f.n = 99;
+  f.host = "192.168.255.255";
+  f.port = 65535;
+  f.token = std::string(32, 'f');
+  TEST_ASSERT_TRUE(hal::formatMessage(f).size() <= 128);
+  TEST_ASSERT(hal::parseMessage(hal::formatMessage(f)).type == MsgType::Fetch);
+  hal::Message s;
+  s.type = MsgType::Sensors;
+  s.sensors = {100, 65535, 180, 100, true, -40};
+  TEST_ASSERT_TRUE(hal::formatMessage(s).size() <= 128);
+  TEST_ASSERT(hal::parseMessage(hal::formatMessage(s)).type == MsgType::Sensors);
 }
 
 void test_peer_state() {
@@ -260,6 +358,11 @@ int main() {
   RUN_TEST(test_state_rejects);
   RUN_TEST(test_longest_state_fits);
   RUN_TEST(test_version_two_still_reads_one);
+  RUN_TEST(test_v3_round_trip);
+  RUN_TEST(test_private_ipv4);
+  RUN_TEST(test_fetch_rejects);
+  RUN_TEST(test_sensors_rejects);
+  RUN_TEST(test_longest_v3_lines_fit);
   RUN_TEST(test_peer_state);
   RUN_TEST(test_peer_watch_silent);
   RUN_TEST(test_peer_watch_answers_then_goes_quiet);
