@@ -4,7 +4,9 @@ All notable changes to HAL are written down here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.5.0] - 2026-11-11
+
+Film-style screens showing each HAL's real readings, and a setup guide for newcomers.
 
 ### Added
 - Three film-style screens on both HALs, showing each HAL's real readings, each with its
