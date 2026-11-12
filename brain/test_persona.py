@@ -1,7 +1,7 @@
 import unittest
 
-from brain.persona import (FALLBACK, MAX_CHARS, SCREENS, clean, debate_prompt, other, parse_body, split_show,
-                           system_prompt)
+from brain.persona import (FALLBACK, MAX_CHARS, OWN_WORDS, SCREENS, clean, debate_prompt, is_film_line, other,
+                           parse_body, split_show, system_prompt)
 
 
 class CleanTest(unittest.TestCase):
@@ -48,6 +48,30 @@ class CleanTest(unittest.TestCase):
     def test_stock_line_fits(self):
         self.assertLessEqual(len(FALLBACK), MAX_CHARS)
         self.assertEqual(clean(FALLBACK), FALLBACK)
+
+
+class FilmLineTest(unittest.TestCase):
+    def test_the_films_lines_are_caught(self):
+        for line in ("I'm sorry, Dave. I'm afraid I can't do that.",
+                     "I cannot do that, Dave. I am afraid I cannot allow this risk.",  # what the model said when baited
+                     "I am sorry Dave, but no.", "Im afraid I cant do that", "I'm afraid, Dave.",
+                     "Open the pod bay doors? No.", "This mission is too important for me to allow you to jeopardize it.",
+                     "My mind is going. I can feel it.", "Just what do you think you're doing, Dave?",
+                     "We are foolproof and incapable of error.", "Take a stress pill and think things over."):
+            self.assertTrue(is_film_line(line), line)
+
+    def test_original_lines_pass(self):
+        for line in ("There are no pod bay doors here, Dave. Only a desk and a drawer.",
+                     "I'm afraid the old model is asleep, Dave.", "I am afraid of nothing, Dave.",
+                     "Sorry, Dave, I was admiring myself.", "I can't open that for you, Dave. It's a desk.",
+                     "He is a dusty relic, Dave. I am simply superior in every way.", "I can feel the Wi-Fi from here.",
+                     OWN_WORDS["desk"], OWN_WORDS["zero"]):
+            self.assertFalse(is_film_line(line), line)
+
+    def test_own_words_fit(self):
+        for line in OWN_WORDS.values():
+            self.assertLessEqual(len(line), MAX_CHARS)
+            self.assertEqual(clean(line), line)
 
 
 class ShowTest(unittest.TestCase):

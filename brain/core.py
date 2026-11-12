@@ -25,6 +25,8 @@ class Brain:
         with self._one_at_a_time:
             text, show = persona.split_show(self.provider.chat(system, messages), who)
             text = persona.clean(text)
+            if persona.is_film_line(text):  # the prompt forbids it; this makes sure
+                text, show = persona.OWN_WORDS[who], None
             wav = self.voice.render(who, text)
         return Line(who, text, self.clips.put(wav), wav_ms(wav), show if allow_show else None)
 

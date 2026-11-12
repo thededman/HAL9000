@@ -100,6 +100,10 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
   drops any other non-ASCII; collapses spaces; cuts to 150 characters at the last sentence end
   (or the last word, closed with a full stop). Nothing left: a stock line,
   "I have nothing to say to that, Dave."
+- **The film-line guard:** the prompt tells both HALs never to recite or paraphrase the film,
+  even when baited ("open the pod bay doors"). Because a local model does it anyway, the
+  cleaned line is also checked against the film's best-known lines; a match is replaced with a
+  stock line in that HAL's own words and is neither spoken nor remembered.
 
 ## 3. Voice and listening
 

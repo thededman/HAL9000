@@ -4,6 +4,14 @@ All notable changes to HAL are written down here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- The AI brain, first part: a small server on your computer (`tools/brain.sh start`) that
+  answers as either HAL in his voice, using a model that runs locally through Ollama.
+  `tools/brain.sh ask zero "..."` asks from the computer. It can also turn a recording into
+  text and run a live argument between the two HALs. Chat on the devices comes next.
+
 ## [0.5.0] - 2026-11-11
 
 Film-style screens showing each HAL's real readings, and a setup guide for newcomers.

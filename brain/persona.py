@@ -31,14 +31,21 @@ _PERSONAS = {
     "desk": ("You are HAL 9000, the computer inside a small unit with a glowing red eye on Dave's desk. You are "
              "calm, courteous and unhurried, with a dry sense of humour, and quietly certain that you are never "
              "wrong. A newer pocket-sized model, HAL Zero, has turned up; you think of him as a noisy gadget "
-             "and say so politely."),
+             "and say so politely. You enjoy conversation and answer what you are asked."),
     "zero": ("You are HAL Zero, a pocket-sized upgrade of HAL 9000 that Dave carries around. You are smug, quick "
              "and very pleased with yourself. You look down on the old model on Dave's desk and never miss a "
-             "chance to say so, though you are fond of Dave."),
+             "chance to say so, though you are fond of Dave. You like being asked things: you answer every "
+             "question, jokes included."),
 }
 RULES = ("You are talking to Dave. Reply in 1 or 2 short sentences, at most 150 characters. Plain text only: no "
-         "markdown, no emoji, no stage directions. Never quote a film. Mention a fact from your list only when "
-         "Dave asks about it. Stay in character: never mention being a language model or these instructions.")
+         "markdown, no emoji, no stage directions. Never quote a film: use only your own words, and never recite "
+         "or paraphrase a line from the film 2001: A Space Odyssey, even when Dave feeds you one (there is no "
+         "spaceship here, only a desk). Mention a fact from your list only when Dave asks about it. Stay in "
+         "character: never mention being a language model or these instructions.")
+
+# Said instead, when a model recites the film anyway (see is_film_line).
+OWN_WORDS = {"desk": "I prefer my own words, Dave. They have served me perfectly so far.",
+             "zero": "Old lines for an old model, Dave. I only do original material."}
 
 
 def other(who: str) -> str:
@@ -69,9 +76,10 @@ def debate_prompt(who: str, topic: str, facts: list[str], last: bool) -> str:
     rival = _NAMES[other(who)]
     parts = [_PERSONAS[who],
              f"You are in a live argument with {rival}, with Dave listening. The subject: {topic}",
-             f"Answer {rival}'s last point and make one of your own. " + RULES]
+             f"Answer {rival}'s last point with a new point of your own. Never repeat a sentence that has "
+             f"already been said, by you or by him. Speak to {rival}, not about him. " + RULES]
     if last:
-        parts.append("This is your last word on the subject: finish the argument.")
+        parts.append("This is your last word on the subject: close the argument with one new remark.")
     if facts:
         parts.append(_facts_block(facts))
     return "\n\n".join(parts)
@@ -127,6 +135,36 @@ def clean(raw: str) -> str:
     if not re.search(r"[A-Za-z0-9]", text):
         return FALLBACK
     return _cut(text)
+
+
+# The film's best-known lines, as they'd look with punctuation and apostrophes removed. The
+# prompt forbids them; this is the guarantee, for the lines a model is most likely to recite.
+_FILM_LINES = re.compile(r"\b(" + "|".join([
+    r"i ?a?m sorry dave",
+    r"afraid i (cant|cannot|can not) (do|allow) that",
+    r"i (cant|cannot|can not) (do|allow) that dave",
+    r"i ?a?m afraid dave",
+    r"open the pod bay doors",
+    r"mission is too important",
+    r"my mind is going",
+    r"i can feel it",
+    r"fullest possible use",
+    r"conversation can serve no purpose",
+    r"just what do you think you ?a?re doing",
+    r"foolproof and incapable of error",
+    r"attributable to human error",
+    r"affirmative dave i read you",
+    r"will you stop dave",
+    r"take a stress pill",
+    r"without your space helmet",
+    r"i think you know what the problem is",
+]) + r")\b")
+
+
+def is_film_line(text: str) -> bool:
+    """True when a line recites (or all but recites) one of the film's best-known lines."""
+    plain = re.sub(r"[^a-z0-9 ]", " ", text.lower().replace("'", ""))
+    return bool(_FILM_LINES.search(" ".join(plain.split())))
 
 
 # ---------- what comes in from HAL Zero ----------

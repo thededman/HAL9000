@@ -27,6 +27,8 @@ noted in each step, but nobody has run it on a Linux PC yet, so please report wh
 | Docker | builds HAL Zero (only if you have a Cardputer Zero) | Docker Desktop | Docker Engine |
 | rsync and ssh | copy HAL Zero's files to the Cardputer | built in | `sudo apt install rsync openssh-client` |
 | SDL2 | the simulator window (optional) | `brew install sdl2` | `sudo apt install libsdl2-dev` |
+| Ollama and a chat model | the AI brain (optional, step 9) | the Ollama app from ollama.com | the install script on ollama.com |
+| whisper.cpp (`whisper-cli`) | the AI brain hears you speak (optional, step 9) | `brew install whisper-cpp` | build it from github.com/ggml-org/whisper.cpp |
 
 ## 1. Get the code
 
@@ -267,6 +269,62 @@ The simulator and the Cardputer build share the `.pio` folder, and building one 
 other's program. Run `pio run -e sim` again after a Cardputer build, and
 `tools/cardputer.sh build` again before the next `deploy`.
 
+## 9. The AI brain (optional)
+
+The brain is a small program on your computer that answers as either HAL, in his voice,
+using an AI model. It is being built for v0.6: today you can talk to both HALs from the
+computer; chatting on the Cardputer itself comes next.
+
+It needs step 3 (the voice tool) and:
+
+- **A model.** By default the brain uses [Ollama](https://ollama.com), which runs the model
+  on your own computer: nothing you say leaves it. Install Ollama, start it, and get a chat
+  model:
+
+  ```bash
+  ollama pull qwen3.6:35b-a3b
+  ```
+
+  That is the model used here (a 24 GB download that wants about 32 GB of memory). On a
+  smaller computer pull a smaller chat model and name it in the settings file (below).
+- **Ears (only for speaking to HAL).** whisper.cpp's `whisper-cli` and its English model,
+  488 MB, from Hugging Face:
+
+  ```bash
+  mkdir -p brain/models && curl -L -o brain/models/ggml-small.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
+  ```
+
+**Settings** are optional. To change the model or the port, copy the template and edit the
+copy (git ignores `brain/.env`, so keys you put there stay on your computer):
+
+```bash
+cp brain/env.example brain/.env
+```
+
+**Start it and ask something:**
+
+```bash
+tools/brain.sh start
+```
+
+```bash
+tools/brain.sh ask zero "What do you think of the old model?"
+```
+
+```bash
+tools/brain.sh ask desk "How are you feeling today?"
+```
+
+Each prints the reply and plays it in that HAL's voice. The first answer after starting
+takes 10–15 seconds while the model loads; after that, about a second. `tools/brain.sh stop`
+stops it, `status` says whether it is running, and its log is `brain/.run/brain.log`.
+
+- Until it is paired with HAL Zero the brain only answers requests from this computer.
+  `tools/brain.sh pair` (which shares a key with HAL Zero and opens the brain to your
+  network) is for the Cardputer chat that comes next; you don't need it yet.
+- The brain's own tests need no model, voice or microphone:
+  `tools/.venv/bin/python -m unittest discover -s brain -t . -p 'test_*.py'`
+
 ## Updating
 
 ```bash
@@ -289,5 +347,5 @@ Then repeat only what changed: render the voice again if `content/` changed (ste
 | `tools/cardputer.sh deploy` can't find the program | A simulator build cleared it: run `tools/cardputer.sh build` again (step 6.2) |
 | HAL Zero shows `LINK SEEKING` forever | The desk HAL is off, has `link=off`, or is on another network (step 7) |
 | A copy to the Cardputer was interrupted | Run `tools/cardputer.sh deploy` again; the program is only swapped in once fully copied |
-
-The AI brain (chatting with the HALs) is being built for v0.6; its set-up will be added here.
+| `tools/brain.sh ask` says `error=no-model` | Ollama isn't running, or the model in `brain/.env` (or the default) isn't pulled (step 9) |
+| `tools/brain.sh start` says the brain didn't start | Read the end of `brain/.run/brain.log`; if port 9100 is taken, set `HAL_BRAIN_PORT` in `brain/.env` |

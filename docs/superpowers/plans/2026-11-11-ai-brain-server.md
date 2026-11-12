@@ -121,9 +121,9 @@ def test_prompts(self):
   end); unwrap `**bold**`; drop `*…*`, `(…)`, `[…]` spans; drop a leading `HAL Zero:` / `HAL 9000:` / `HAL:` label;
   map `’‘` → `'`, `“”` → nothing, `—–` → `, `, `…` → `...`; drop markdown marks `* _ # \``; drop
   non-ASCII and control characters; collapse whitespace; tidy ` ,` → `,`; strip quotes; cut.
-  Prompt rules, verbatim in both personas: "Reply in 1 or 2 short sentences, at most 150
-  characters. Plain text only: no markdown, no emoji, no stage directions. Never quote a film.
-  Mention a fact from your list only when Dave asks about it."
+  Both personas share one rules paragraph (`persona.RULES`): 1 or 2 short sentences, at
+  most 150 characters, plain text, no film lines even when baited, a fact only when Dave asks
+  about it. (Added during the live check: `is_film_line` and `OWN_WORDS`, spec §2.)
 - [ ] **Step 4:** tests pass.
 - [ ] **Step 5:** commit `Brain: personas and the cleaner`.
 

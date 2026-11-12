@@ -194,7 +194,14 @@ def main() -> None:
         server = make_server(brain, Debates(brain), key, port_from(env))
     except OSError as e:
         sys.exit(f"HAL's brain can't start: port {port_from(env)} is in use ({e})")
-    threading.Thread(target=lambda: (provider.warm(), ears.warm()), daemon=True).start()
+
+    def warm_up():
+        if provider.warm() is False:
+            print(f"The model isn't answering yet ({provider.name} {provider.model}): is it running? "
+                  "Questions will get error=no-model until it is.", file=sys.stderr, flush=True)
+        ears.warm()
+
+    threading.Thread(target=warm_up, daemon=True).start()
     where = "the network (paired)" if key else "this computer only (not paired yet)"
     print(f"HAL's brain is listening on port {server.server_address[1]}, {where}; "
           f"model: {provider.name} {provider.model}", file=sys.stderr, flush=True)

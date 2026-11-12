@@ -10,3 +10,4 @@ export/
 build/
 brain/models/
 brain/.env
+brain/.run/

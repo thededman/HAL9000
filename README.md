@@ -45,6 +45,7 @@ but not yet tried on a Linux PC; Windows isn't covered.
 | `tools/export_dialogue.py` | A conversation as one stereo file plus subtitles, for posting |
 | `tools/cardputer.sh` | Builds HAL Zero (Docker) and runs it on the Cardputer over SSH |
 | `tools/fake_old_hal.py` | A stand-in desk HAL for testing HAL Zero without the CoreS3 |
+| `brain/`, `tools/brain.sh` | The AI brain: a small server on your computer that answers as either HAL (in progress) |
 | `sd-template/hal/config.txt` | Settings file template for the SD card |
 | `docs/SETUP.md` | Setting everything up from scratch |
 | `docs/superpowers/` | Design specs and implementation plans |
@@ -125,6 +126,17 @@ To post one: `tools/.venv/bin/python tools/export_dialogue.py introduction --mp3
 writes `export/dialogues/introduction.wav`, `.mp3` and `.srt` (desk HAL on the left,
 HAL Zero on the right, timed like the live run). The voice comes from a model
 trained on the film's audio, so whether to post it publicly is your call.
+
+## The AI brain (in progress)
+
+Coming in v0.6: chat with either HAL, and make the two argue live about anything. A small
+program on your computer does the thinking with an AI model that runs locally
+([Ollama](https://ollama.com)), speaks in each HAL's voice, and hands each HAL his lines.
+Every answer is cleaned down to one short spoken line, and the film's famous lines are
+filtered out: the HALs only do original material.
+
+The brain itself already works from the computer (`tools/brain.sh ask zero "..."`):
+[docs/SETUP.md](docs/SETUP.md#9-the-ai-brain-optional), step 9. Chat on the Cardputer comes next.
 
 ## Licence
 

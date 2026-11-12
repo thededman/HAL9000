@@ -53,9 +53,10 @@ class OllamaProvider:
             raise ProviderError(f"Ollama isn't answering: {e}") from None
         return parse_response(payload)
 
-    def warm(self) -> None:
-        """Load the model so the first real question isn't the slow one."""
+    def warm(self) -> bool:
+        """Load the model so the first real question isn't the slow one. False if it didn't answer."""
         try:
             self.chat("Reply with one word.", [{"role": "user", "content": "Ready?"}], max_tokens=1)
+            return True
         except ProviderError:
-            pass
+            return False

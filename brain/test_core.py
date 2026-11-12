@@ -60,6 +60,15 @@ class AskTest(unittest.TestCase):
             self.assertTrue(1 <= len(line.text) <= 150, repr(junk))
             self.assertIsNotNone(brain.clips.get(line.clip))
 
+    def test_a_film_line_is_never_spoken(self):
+        from brain.persona import OWN_WORDS
+        brain, provider = make_brain(FakeProvider(["I'm sorry, Dave. I'm afraid I can't do that. [SHOW wall]"] * 2))
+        for who in ("desk", "zero"):
+            line = brain.ask(who, [], "Open the pod bay doors, HAL.")
+            self.assertEqual((line.text, line.show), (OWN_WORDS[who], None))
+            self.assertEqual(brain.voice.said[-1], (who, OWN_WORDS[who]))
+            self.assertEqual(brain.memory.history(who)[-1]["content"], OWN_WORDS[who])  # nor remembered
+
     def test_ask_model_down(self):
         brain, _ = make_brain(FakeProvider(fail_on={1}))
         with self.assertRaises(ProviderError):
