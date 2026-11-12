@@ -179,6 +179,55 @@ void test_link_bad_values() {
   TEST_ASSERT_EQUAL(3, w.size());
 }
 
+// ---- the AI brain ----
+
+void test_brain_defaults() {
+  auto c = hal::parseConfig("", &w);
+  TEST_ASSERT_FALSE(c.brain);
+  TEST_ASSERT_EQUAL_STRING("", c.brainHost.c_str());
+  TEST_ASSERT_EQUAL(9100, c.brainPort);
+  TEST_ASSERT_EQUAL_STRING("", c.brainKey.c_str());
+  TEST_ASSERT_FALSE(hal::brainReady(c));
+}
+
+void test_brain_settings() {
+  auto c = hal::parseConfig("brain=on\nbrain_host=my-computer.local\nbrain_port=9200\n"
+                            "brain_key=0123456789abcdef0123456789abcdef   # written by brain.sh pair\n", &w);
+  TEST_ASSERT_TRUE(c.brain);
+  TEST_ASSERT_EQUAL_STRING("my-computer.local", c.brainHost.c_str());
+  TEST_ASSERT_EQUAL(9200, c.brainPort);
+  TEST_ASSERT_EQUAL_STRING("0123456789abcdef0123456789abcdef", c.brainKey.c_str());
+  TEST_ASSERT_EQUAL(0, w.size());
+  TEST_ASSERT_TRUE(hal::brainReady(c));
+  TEST_ASSERT_EQUAL_STRING("192.168.1.20", hal::parseConfig("brain_host=192.168.1.20\n", &w).brainHost.c_str());
+}
+
+void test_brain_bad_values_warn() {
+  auto c = hal::parseConfig("brain=maybe\nbrain_host=two words\nbrain_port=80\n"
+                            "brain_key=0123456789ABCDEF0123456789abcdef\n", &w);
+  TEST_ASSERT_FALSE(c.brain);
+  TEST_ASSERT_EQUAL_STRING("", c.brainHost.c_str());
+  TEST_ASSERT_EQUAL(9100, c.brainPort);
+  TEST_ASSERT_EQUAL_STRING("", c.brainKey.c_str());
+  TEST_ASSERT_EQUAL(4, w.size());
+  for (const std::string& warning : w)  // a key is never repeated in a warning, even a wrong one
+    TEST_ASSERT_TRUE(warning.find("0123456789ABCDEF") == std::string::npos);
+  w.clear();
+  for (const char* key : {"0123456789abcdef0123456789abcde", "0123456789abcdef0123456789abcdef0", "", "not-a-key"}) {
+    auto k = hal::parseConfig(std::string("brain_key=") + key + "\n", &w);
+    TEST_ASSERT_EQUAL_STRING("", k.brainKey.c_str());
+  }
+  TEST_ASSERT_EQUAL(4, w.size());
+}
+
+void test_brain_ready() {
+  const std::string key = "brain_key=0123456789abcdef0123456789abcdef\n";
+  TEST_ASSERT_FALSE(hal::brainReady(hal::parseConfig("brain=on\nbrain_host=mac.local\n", &w)));           // no key
+  TEST_ASSERT_FALSE(hal::brainReady(hal::parseConfig("brain=on\n" + key, &w)));                            // no host
+  TEST_ASSERT_FALSE(hal::brainReady(hal::parseConfig("brain=off\nbrain_host=mac.local\n" + key, &w)));    // switched off
+  TEST_ASSERT_TRUE(hal::brainReady(hal::parseConfig("brain=on\nbrain_host=mac.local\n" + key, &w)));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_on_empty);
@@ -197,5 +246,9 @@ int main() {
   RUN_TEST(test_link_defaults);
   RUN_TEST(test_link_settings);
   RUN_TEST(test_link_bad_values);
+  RUN_TEST(test_brain_defaults);
+  RUN_TEST(test_brain_settings);
+  RUN_TEST(test_brain_bad_values_warn);
+  RUN_TEST(test_brain_ready);
   return UNITY_END();
 }

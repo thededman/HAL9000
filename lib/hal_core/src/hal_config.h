@@ -24,7 +24,15 @@ struct Config {
   bool link = false;  // talk to the other HAL over Wi-Fi
   int linkPort = 9000;
   std::string peerHost = "hal9000-old.local";  // where HAL Zero finds the desk HAL
+  // The AI brain on the computer (HAL Zero only). `tools/brain.sh pair` writes these.
+  bool brain = false;
+  std::string brainHost;  // its name or address on the network
+  int brainPort = 9100;
+  std::string brainKey;   // the shared key: 32 lower-case hex characters. Never logged.
 };
+
+// The brain is switched on and has somewhere to call and a key to call with.
+inline bool brainReady(const Config& c) { return c.brain && !c.brainHost.empty() && !c.brainKey.empty(); }
 
 // key=value lines, '#' comments. Bad values keep their default and add a
 // warning naming the key. `warnings` may be null.

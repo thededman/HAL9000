@@ -8,3 +8,9 @@ timezone=EST5EDT,M3.2.0,M11.1.0    # POSIX TZ string (US Eastern)
 quiet_start=22:00
 quiet_end=07:30
 volume=180                         # 0–255
+
+# The AI brain on your computer (docs/SETUP.md, step 9). `tools/brain.sh pair` fills these in.
+# brain=on
+# brain_host=my-computer.local
+# brain_port=9100
+# brain_key=

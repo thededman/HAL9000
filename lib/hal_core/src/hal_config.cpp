@@ -58,6 +58,7 @@ const IntKey kIntKeys[] = {
     {"hold_seconds", &Config::holdSeconds, 1, 10},
     {"camera_motion_threshold", &Config::cameraMotionThreshold, 1, 255},
     {"link_port", &Config::linkPort, 1024, 65535},
+    {"brain_port", &Config::brainPort, 1024, 65535},
 };
 
 }  // namespace
@@ -103,16 +104,23 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
       continue;
     }
     if (key == "camera_preview") continue;  // retired in 0.3 (the main-screen preview is gone)
-    if (key == "camera" || key == "link") {
-      bool& field = key == "camera" ? c.camera : c.link;
+    if (key == "camera" || key == "link" || key == "brain") {
+      bool& field = key == "camera" ? c.camera : key == "link" ? c.link : c.brain;
       if (!parseBool(value, &field)) warn(key + ": '" + value + "' should be on or off, using default");
       continue;
     }
-    if (key == "peer_host") {  // a host name or IP address
+    if (key == "peer_host" || key == "brain_host") {  // a host name or IP address
       bool ok = !value.empty() && value.size() <= 64;
       for (char ch : value) ok = ok && (std::isalnum(static_cast<unsigned char>(ch)) || ch == '.' || ch == '-');
-      if (ok) c.peerHost = value;
+      if (ok) (key == "peer_host" ? c.peerHost : c.brainHost) = value;
       else warn(key + ": '" + value + "' isn't a host name or IP address, using default");
+      continue;
+    }
+    if (key == "brain_key") {  // 32 lower-case hex characters; a warning never repeats it
+      bool ok = value.size() == 32;
+      for (char ch : value) ok = ok && ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'));
+      if (ok) c.brainKey = value;
+      else warn("brain_key: should be 32 hex characters (tools/brain.sh pair writes it), ignoring it");
       continue;
     }
     if (key == "quiet_start" || key == "quiet_end") {
