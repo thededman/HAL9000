@@ -67,6 +67,8 @@ Vec3 apply(const Mat3& m, Vec3 v) {
           m.m[2][0] * v.x + m.m[2][1] * v.y + m.m[2][2] * v.z};
 }
 
+Vec3 cardputerImuToModel(Vec3 s) { return {-s.y, s.z, -s.x}; }
+
 Point2 project(Vec3 v, float scale, float cx, float cy, float distance) {
   float depth = distance - v.z;
   if (depth < 0.25f) depth = 0.25f;  // at or behind the eye: clamp rather than flip

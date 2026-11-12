@@ -36,6 +36,7 @@
 #include "hal_log.h"
 #include "hal_menu.h"
 #include "hal_motion.h"
+#include "hal_wire.h"
 #include "hud.h"
 #include "iio_imu.h"
 #include "link_client.h"
@@ -141,7 +142,9 @@ void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenDa
   d.parts = &parts;
   d.unitModel = desk ? screens::UnitModel::CoreS3 : screens::UnitModel::Cardputer;
   d.gravityValid = true;
-  d.gravity[1] = d.gravityHome[1] = -1;
+  // Home pose in the model's axes: the desk HAL stands upright, the Cardputer lies flat.
+  const int up = desk ? 1 : 2;
+  d.gravity[up] = d.gravityHome[up] = desk ? -1 : 1;
   // One opening lasts 8 s, about five cards: the first in alarm (PWR on the desk, LNK
   // on HAL Zero), then the round from wherever the opening's seed starts it.
   d.seed = 1;
@@ -162,12 +165,17 @@ void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenDa
   screens::unit(c, lay, 2600, d);
   shot("unit");
   screens::ScreenData tilted = d;
-  tilted.gravity[0] = 0.5f;
-  tilted.gravity[1] = -0.866f;
+  if (desk) {  // leaning 30 degrees to one side
+    tilted.gravity[0] = 0.5f;
+    tilted.gravity[1] = -0.866f;
+  } else {  // its top edge lifted 30 degrees off the desk
+    tilted.gravity[1] = 0.5f;
+    tilted.gravity[2] = 0.866f;
+  }
   screens::unit(c, lay, 2600, tilted);
   shot("unit-tilted-30");
   screens::ScreenData flipped = d;
-  flipped.gravity[1] = 1;  // upside down
+  flipped.gravity[up] = -d.gravityHome[up];  // upside down
   screens::unit(c, lay, 2600, flipped);
   shot("unit-upside-down");
   screens::ScreenData none = d;
@@ -658,12 +666,10 @@ struct App {
     d.parts = &unitParts;
     d.unitModel = screens::UnitModel::Cardputer;
     float g[3], home[3];
-    if (haveImu && motion.gravity(g, home)) {  // sitting flat, the Cardputer's IMU reads gravity on -x: that's the model's -y
-      const float gm[3] = {g[1], g[0], g[2]}, hm[3] = {home[1], home[0], home[2]};
-      for (int k = 0; k < 3; ++k) {
-        d.gravity[k] = gm[k];
-        d.gravityHome[k] = hm[k];
-      }
+    if (haveImu && motion.gravity(g, home)) {  // the sensor's axes aren't the model's: see cardputerImuToModel
+      const hal::Vec3 gm = hal::cardputerImuToModel({g[0], g[1], g[2]}), hm = hal::cardputerImuToModel({home[0], home[1], home[2]});
+      d.gravity[0] = gm.x, d.gravity[1] = gm.y, d.gravity[2] = gm.z;
+      d.gravityHome[0] = hm.x, d.gravityHome[1] = hm.y, d.gravityHome[2] = hm.z;
       d.gravityValid = true;
     }
     d.peer.state = peerWatch.state(link.connected(), peerVersion, now);

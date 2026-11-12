@@ -25,4 +25,10 @@ Vec3 apply(const Mat3& m, Vec3 v);
 // Simple perspective: the eye is `distance` in front of the origin; +y is up on screen.
 Point2 project(Vec3 v, float scale, float cx, float cy, float distance);
 
+// The Cardputer Zero's motion sensor reading in the wireframe model's axes (x right,
+// y to the top edge, z out of the screen). The sensor's x axis points into the board:
+// measured on the device, flat with the screen up reads (-1, 0, 0) and stood on its
+// bottom edge reads +z. A turn, not a mirror image.
+Vec3 cardputerImuToModel(Vec3 sensor);
+
 }  // namespace hal

@@ -93,6 +93,20 @@ void test_rotation_ignores_nonsense() {
   }
 }
 
+// The Cardputer Zero's motion sensor is mounted with its x axis pointing into the
+// board. Measured on the device: lying flat, screen up, it reads (-1, 0, 0); stood
+// on its bottom edge it reads +z. The model's axes are x right, y to the top edge,
+// z out of the screen.
+void test_cardputer_sensor_to_model() {
+  near(hal::cardputerImuToModel({-1, 0, 0}), {0, 0, 1});  // flat: up is out of the screen
+  near(hal::cardputerImuToModel({0, 0, 1}), {0, 1, 0});   // on its bottom edge: up is the top edge
+  near(hal::cardputerImuToModel({0, -1, 0}), {1, 0, 0});  // on its left edge: up is the right edge
+  near(hal::cardputerImuToModel({-0.6f, 0.02f, 0.8f}), {-0.02f, 0.8f, 0.6f});  // leaning back, as recorded
+  // A turn, not a mirror image: x cross y is z after mapping too.
+  const Vec3 x = hal::cardputerImuToModel({1, 0, 0}), y = hal::cardputerImuToModel({0, 1, 0}), z = hal::cardputerImuToModel({0, 0, 1});
+  near({x.y * y.z - x.z * y.y, x.z * y.x - x.x * y.z, x.x * y.y - x.y * y.x}, z);
+}
+
 void test_yaw_pitch() {
   near(hal::apply(hal::rotationYawPitch(90, 0), {1, 0, 0}), {0, 0, -1});
   near(hal::apply(hal::rotationYawPitch(0, 90), {0, 0, 1}), {0, -1, 0});
@@ -118,6 +132,7 @@ int main() {
   RUN_TEST(test_rotation_degenerate);
   RUN_TEST(test_rotation_near_opposite_is_rigid);
   RUN_TEST(test_rotation_ignores_nonsense);
+  RUN_TEST(test_cardputer_sensor_to_model);
   RUN_TEST(test_yaw_pitch);
   RUN_TEST(test_project);
   return UNITY_END();
