@@ -23,6 +23,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   `--brain HOST`, `--ask`, `--ask-desk`, `--argue`, `--hear FILE` and `--listen SECONDS`; `--keys`
   shows the code of every key pressed.
 - A guard that keeps the film's best-known lines out of anything the AI says.
+- Claude or ChatGPT can write the HALs' lines instead of the local model, with your own API
+  key in `brain/.env`. The setup guide lists exactly what is sent when you turn this on
+  (questions and readings; never recordings).
 
 ### Changed
 - The two HALs speak link version 3 (the desk HAL fetches and speaks AI lines, and reports his

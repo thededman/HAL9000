@@ -272,8 +272,8 @@ other's program. Run `pio run -e sim` again after a Cardputer build, and
 ## 9. The AI brain (optional)
 
 The brain is a small program on your computer that answers as either HAL, in his voice,
-using an AI model. It is being built for v0.6: today you can talk to both HALs from the
-computer; chatting on the Cardputer itself comes next.
+using an AI model. With it you can type or speak to HAL Zero on the Cardputer, put questions
+to the desk HAL, and set the two arguing about a subject of your choice.
 
 It needs step 3 (the voice tool) and:
 
@@ -286,7 +286,8 @@ It needs step 3 (the voice tool) and:
   ```
 
   That is the model used here (a 24 GB download that wants about 32 GB of memory). On a
-  smaller computer pull a smaller chat model and name it in the settings file (below).
+  smaller computer pull a smaller chat model and name it in the settings file (below), or
+  use Claude or ChatGPT instead (the end of this step).
 - **Ears (only for speaking to HAL).** whisper.cpp's `whisper-cli` and its English model,
   488 MB, from Hugging Face:
 
@@ -365,8 +366,68 @@ tools/brain.sh pair
 - A keyboard that types the wrong characters: `tools/cardputer.sh run --keys` shows and logs
   the code of every key you press.
 
-- The brain's own tests need no model, voice or microphone:
-  `tools/.venv/bin/python -m unittest discover -s brain -t . -p 'test_*.py'`
+**Claude or ChatGPT instead of the local model (optional).** The brain can have Anthropic's
+Claude or OpenAI's ChatGPT write the HALs' lines. Either needs an account with that company
+and an API key, and is paid for by use: roughly a cent a line with the default Claude model at
+November 2026 prices, so an argument costs eight of those.
+
+With a cloud model, every line sends that company:
+
+- the HAL's instructions (who he is and how he talks),
+- the facts he knows at that moment: the time and his readings, such as temperature, memory,
+  battery, Wi-Fi signal strength, uptime and the state of the link,
+- the last few lines of your chat with him, and
+- your question, or the subject of the argument. A spoken question is turned into text on
+  your computer first, and only the text is sent.
+
+Never sent: recordings of your voice, the HALs' voices (both stay on your computer), Wi-Fi
+names and passwords, and the key shared with HAL Zero.
+
+For **Claude**, install Anthropic's library next to the voice tool:
+
+```bash
+tools/.venv/bin/pip install anthropic
+```
+
+Then put these in `brain/.env` (copy the template first if you have no `brain/.env` yet), with
+a key from the [Claude Console](https://platform.claude.com):
+
+```
+HAL_BRAIN_PROVIDER=claude
+ANTHROPIC_API_KEY=your key
+```
+
+Delete the `HAL_BRAIN_MODEL` line, or name a Claude model on it. Without one the brain uses
+`claude-opus-5-5`; `claude-haiku-5-5` is quicker and far cheaper.
+
+For **ChatGPT** nothing needs installing. Name one of
+[OpenAI's models](https://developers.openai.com/api/docs/models) yourself: the brain doesn't
+assume one.
+
+```
+HAL_BRAIN_PROVIDER=openai
+HAL_BRAIN_MODEL=the model's name
+OPENAI_API_KEY=your key
+```
+
+- Restart the brain (`tools/brain.sh stop`, then `start`). The line it prints names the model
+  in use, and it checks the key and the model's name straight away without asking the model
+  anything.
+- Keys stay in `brain/.env`, which git ignores, and the brain never prints them. Keep the file
+  private: `chmod 600 brain/.env`.
+- The HALs behave as before: the same rules, the same 150-character lines, the same guard
+  against film quotes. If the company's safety filter declines a question, HAL says he has
+  nothing to say to that and `brain/.run/brain.log` notes it. With the default Claude models
+  the brain first asks Anthropic to let another Claude model answer instead.
+- If the internet or the company's service is down, HAL Zero says his higher functions are
+  offline, as he does when the local model isn't running; the log says why.
+- To go back, set `HAL_BRAIN_PROVIDER=ollama` and restore the `HAL_BRAIN_MODEL` line.
+
+The brain's own tests need no model, voice, microphone, key or internet:
+
+```bash
+tools/.venv/bin/python -m unittest discover -s brain -t . -p 'test_*.py'
+```
 
 ## Updating
 
@@ -390,5 +451,5 @@ Then repeat only what changed: render the voice again if `content/` changed (ste
 | `tools/cardputer.sh deploy` can't find the program | A simulator build cleared it: run `tools/cardputer.sh build` again (step 6.2) |
 | HAL Zero shows `LINK SEEKING` forever | The desk HAL is off, has `link=off`, or is on another network (step 7) |
 | A copy to the Cardputer was interrupted | Run `tools/cardputer.sh deploy` again; the program is only swapped in once fully copied |
-| `tools/brain.sh ask` says `error=no-model` | Ollama isn't running, or the model in `brain/.env` (or the default) isn't pulled (step 9) |
+| `tools/brain.sh ask` says `error=no-model` | Ollama isn't running, or the model in `brain/.env` (or the default) isn't pulled. With Claude or ChatGPT: no internet, or a wrong key or model name. The end of `brain/.run/brain.log` says which (step 9) |
 | `tools/brain.sh start` says the brain didn't start | Read the end of `brain/.run/brain.log`; if port 9100 is taken, set `HAL_BRAIN_PORT` in `brain/.env` |

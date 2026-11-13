@@ -137,9 +137,21 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
 - **`ollama`** (default): `qwen3.6:35b-a3b` on `127.0.0.1:11434`, thinking off, at most 80
   tokens, kept loaded for 30 minutes and warmed when the server starts. Measured 2026-11-11:
   0.4–1.0 s per reply warm, about 13 s for the first one after loading.
-- **`claude`**, **`openai`** (optional, v0.6's last step): only when `brain/.env` has that
-  key and names the provider. What leaves the house then is the question and the facts,
-  never audio.
+- **`claude`**, **`openai`** (optional): only when `brain/.env` names the provider and holds
+  its key (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`); otherwise the brain refuses to start and
+  says what is missing. What leaves the house then is the persona prompt, the facts, the chat
+  memory and the question; never audio.
+  - `claude`: Anthropic's `anthropic` library (loaded only when chosen), `claude-opus-5-5`
+    unless `HAL_BRAIN_MODEL` names another Claude model, low effort, 4096 tokens (thinking
+    counts toward them), one try with a 20 s limit, and Anthropic's server-side fallback for
+    the models that have it. A refusal is an empty answer, so the HAL says the stock "nothing
+    to say" line.
+  - `openai`: Chat Completions over plain HTTPS (no library), no assumed model
+    (`HAL_BRAIN_MODEL` is required), only `model`, `messages` and `max_completion_tokens`
+    sent, a 25 s limit, redirects not followed, and the 401 message (which quotes part of
+    the key) never passed on.
+  - Neither is "warmed": at start the brain looks the model up, which checks the key and
+    the name without paying for a line.
 - One generation runs at a time; a second request waits.
 
 ## 6. Settings and tools

@@ -313,7 +313,7 @@ def main() -> None:
 
     def warm_up():
         if provider.warm() is False:
-            print(f"The model isn't answering yet ({provider.name} {provider.model}): is it running? "
+            print(f"The model isn't answering yet ({provider.name} {provider.model}): {provider.hint} "
                   "Questions will get error=no-model until it is.", file=sys.stderr, flush=True)
         ears.warm()
 

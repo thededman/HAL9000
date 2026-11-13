@@ -45,7 +45,7 @@ but not yet tried on a Linux PC; Windows isn't covered.
 | `tools/export_dialogue.py` | A conversation as one stereo file plus subtitles, for posting |
 | `tools/cardputer.sh` | Builds HAL Zero (Docker) and runs it on the Cardputer over SSH |
 | `tools/fake_old_hal.py` | A stand-in desk HAL for testing HAL Zero without the CoreS3 |
-| `brain/`, `tools/brain.sh` | The AI brain: a small server on your computer that answers as either HAL (in progress) |
+| `brain/`, `tools/brain.sh` | The AI brain: a small server on your computer that answers as either HAL |
 | `sd-template/hal/config.txt` | Settings file template for the SD card |
 | `docs/SETUP.md` | Setting everything up from scratch |
 | `docs/superpowers/` | Design specs and implementation plans |
@@ -128,15 +128,15 @@ writes `export/dialogues/introduction.wav`, `.mp3` and `.srt` (desk HAL on the l
 HAL Zero on the right, timed like the live run). The voice comes from a model
 trained on the film's audio, so whether to post it publicly is your call.
 
-## The AI brain (in progress)
+## The AI brain
 
-Coming in v0.6: chat with either HAL, and make the two argue live about anything. A small
-program on your computer does the thinking with an AI model that runs locally
-([Ollama](https://ollama.com)), speaks in each HAL's voice, and hands each HAL his lines.
-Every answer is cleaned down to one short spoken line, and the film's famous lines are
-filtered out: the HALs only do original material.
+Chat with either HAL, and make the two argue live about anything. A small program on your
+computer does the thinking with an AI model that runs locally ([Ollama](https://ollama.com)),
+speaks in each HAL's voice, and hands each HAL his lines. Every answer is cleaned down to one
+short spoken line, and the film's famous lines are filtered out: the HALs only do original
+material.
 
-What works today, from the Cardputer:
+From the Cardputer:
 
 - **Ask HAL Zero:** press **Enter**, type a question, press Enter again. He sends it to the
   brain along with his real readings (time, temperature, Wi-Fi, the link) and answers aloud
@@ -149,8 +149,11 @@ What works today, from the Cardputer:
 - **Make them argue:** "Make them argue..." in the menu takes a subject, and the two go at it
   for eight lines, each written while the one before is being spoken.
 
-From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` ask either HAL. Still
-to come: the optional cloud models.
+From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` ask either HAL.
+
+Nothing you type or say leaves your computer with the local model. Claude or ChatGPT can
+write the lines instead if you add your own API key: the questions and the HALs' readings then
+go to that company, and recordings of your voice still never do.
 
 Set-up is step 9 of [docs/SETUP.md](docs/SETUP.md#9-the-ai-brain-optional).
 

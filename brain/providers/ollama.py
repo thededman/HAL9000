@@ -37,6 +37,7 @@ def parse_response(payload) -> str:
 
 class OllamaProvider:
     name = "ollama"
+    hint = "is Ollama running, and has the model been pulled (ollama pull, then its name)?"
 
     def __init__(self, model: str = DEFAULT_MODEL, host: str = DEFAULT_HOST, timeout_s: float = 25):
         self.model, self._host, self._timeout = model, host.rstrip("/"), timeout_s
