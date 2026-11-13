@@ -41,6 +41,7 @@ void SdlIo::present(M5Canvas& frame) {
 void SdlIo::poll(KeyInput* keys) {
   keys->pressed.clear();
   keys->typed.clear();
+  keys->raw.clear();
   SDL_Event e;
   while (SDL_PollEvent(&e)) {
     if (e.type == SDL_QUIT) keys->quit = true;
@@ -49,6 +50,7 @@ void SdlIo::poll(KeyInput* keys) {
         if (*c >= 32 && *c <= 126) keys->typed.push_back(*c);  // plain ASCII is all HAL can show
     if (e.type == SDL_KEYDOWN || e.type == SDL_KEYUP) {
       bool down = e.type == SDL_KEYDOWN;
+      if (!e.key.repeat) keys->raw.push_back({int(e.key.keysym.scancode), down});
       if (e.key.keysym.sym == SDLK_SPACE) space_ = down;
       if (down && !e.key.repeat) keys->pressed.push_back(e.key.keysym.sym);
     }

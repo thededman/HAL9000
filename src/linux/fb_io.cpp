@@ -127,10 +127,12 @@ void FbIo::present(M5Canvas& frame) {
 void FbIo::poll(KeyInput* keys) {
   keys->pressed.clear();
   keys->typed.clear();
+  keys->raw.clear();
   if (keyFd_ >= 0) {
     input_event ev;
     while (read(keyFd_, &ev, sizeof ev) == ssize_t(sizeof ev)) {
       if (ev.type != EV_KEY) continue;
+      if (ev.value == 0 || ev.value == 1) keys->raw.push_back({int(ev.code), ev.value == 1});
       if (ev.code == KEY_SPACE) space_ = ev.value != 0;
       if (ev.code == KEY_LEFTSHIFT || ev.code == KEY_RIGHTSHIFT) shift_ = ev.value != 0;
       if (ev.value == 1) {  // pressed (2 = auto-repeat, ignored)
@@ -166,6 +168,7 @@ void FbIo::present(M5Canvas&) {}
 void FbIo::poll(KeyInput* keys) {
   keys->pressed.clear();
   keys->typed.clear();
+  keys->raw.clear();
 }
 void FbIo::close() {}
 #endif

@@ -1022,9 +1022,66 @@ int deskShots(const std::string& dir) {
   return failures ? 1 : 0;
 }
 
+// --keys: a screen that shows and logs every key the keyboard sends, to learn a keyboard's
+// codes. It ends 8 seconds after the last key (once one has been pressed) or after 4 minutes.
+template <typename Poll, typename Present>
+int keyCheck(M5Canvas& f, Poll poll, Present present) {
+  KeyInput keys;
+  std::vector<int> recent;
+  int presses = 0;
+  const uint32_t start = nowMs();
+  uint32_t last = start;
+  halLog("keycheck start");
+  while (!quitSignal) {
+    poll(&keys);
+    if (keys.quit) break;
+    const uint32_t now = nowMs();
+    for (const auto& event : keys.raw) {
+      halLog("keycheck %d %s", event.first, event.second ? "down" : "up");
+      last = now;
+      if (!event.second) continue;
+      ++presses;
+      recent.push_back(event.first);
+      if (recent.size() > 12) recent.erase(recent.begin());
+    }
+    const bool done = (presses > 0 && now - last > 8000) || now - start > 240000;
+    f.fillScreen(TFT_BLACK);
+    f.setTextDatum(top_left);
+    f.setTextColor(lgfx::color565(255, 255, 255));
+    f.drawString("KEY CHECK", 8, 6, &fonts::FreeSansBold9pt7b);
+    f.setTextColor(lgfx::color565(120, 180, 255));
+    const char* const lines[] = {"Press every key once, row by row,", "starting at the top-left.",
+                                 "Then hold Aa and press A,", "then hold Fn and press A.",
+                                 "It ends 8 seconds after your last key."};
+    for (int i = 0; i < 5; ++i) f.drawString(lines[i], 8, 30 + i * 12, &fonts::Font0);
+    char buf[96];
+    std::snprintf(buf, sizeof buf, "KEYS PRESSED: %d", presses);
+    f.setTextColor(lgfx::color565(255, 255, 255));
+    f.drawString(done ? "DONE. THANK YOU, DAVE." : buf, 8, 100, &fonts::FreeSansBold9pt7b);
+    std::string codes = "LAST:";
+    for (int code : recent) codes += " " + std::to_string(code);
+    f.setTextColor(lgfx::color565(255, 64, 64));
+    f.drawString(codes.c_str(), 8, 128, &fonts::Font0);
+    if (presses > 0 && !done) {
+      std::snprintf(buf, sizeof buf, "ends in %d s", int(8 - (now - last) / 1000));
+      f.setTextColor(lgfx::color565(120, 120, 120));
+      f.drawString(buf, 8, 148, &fonts::Font0);
+    }
+    present(f);
+    if (done) {
+      SDL_Delay(1500);
+      break;
+    }
+    SDL_Delay(15);
+  }
+  halLog("keycheck done: %d keys", presses);
+  return 0;
+}
+
 int main(int argc, char** argv) {
   const char* shotsDir = nullptr;
   const char* root = std::getenv("HAL_ROOT");
+  bool keysMode = false;
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
   std::string linkArg, dialogueArg, layoutArg, showArg, askArg, brainArg;
@@ -1040,6 +1097,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--show") && i + 1 < argc) showArg = argv[++i];
     else if (!std::strcmp(argv[i], "--ask") && i + 1 < argc) askArg = argv[++i];
     else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--keys")) keysMode = true;
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
@@ -1078,6 +1136,15 @@ int main(int argc, char** argv) {
   if (useFb ? !fbio.open() : !io.open(L.w, L.h, fullscreen, scale)) return 1;
   app.cardKeys = useFb;
   std::signal(SIGINT, onSignal);
+  if (keysMode) {  // learn the keyboard's codes, then quit
+    std::signal(SIGTERM, onSignal);
+    int result = keyCheck(app.frame, [&](KeyInput* k) { useFb ? fbio.poll(k) : io.poll(k); },
+                          [&](M5Canvas& f) { useFb ? fbio.present(f) : io.present(f); });
+    if (useFb) fbio.close();
+    else io.close();
+    SDL_Quit();
+    return result;
+  }
   std::signal(SIGTERM, onSignal);
   std::signal(SIGHUP, onSignal);
   std::signal(SIGUSR1, onSignal);

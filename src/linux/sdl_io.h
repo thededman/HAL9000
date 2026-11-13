@@ -6,6 +6,7 @@
 #include <SDL.h>
 
 #include <string>
+#include <utility>
 
 #include <vector>
 
@@ -14,6 +15,9 @@ struct KeyInput {
   bool spaceDown = false;           // Space is held right now (HAL Zero's "finger")
   std::vector<SDL_Keycode> pressed;  // keys pressed since the last poll (no auto-repeat)
   std::string typed;                // characters typed since the last poll (for the ask box)
+  // Every key event since the last poll, as the keyboard sent it: its code (a Linux input code on
+  // the Cardputer, an SDL scancode in a window) and whether it went down. For --keys.
+  std::vector<std::pair<int, bool>> raw;
 };
 
 class SdlIo {
