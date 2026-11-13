@@ -11,6 +11,9 @@ class Audio {
  public:
   // Reads the whole file into PSRAM, then plays it. False if it can't.
   bool playFile(const char* path);
+  // Plays a WAV already in memory (a line fetched from the AI brain). The buffer must come
+  // from ps_malloc/malloc and is Audio's from now on, whether or not it can be played.
+  bool playBuffer(uint8_t* data, size_t len, const char* label);
   void stop();
   bool isPlaying() const;
   uint8_t level() const;  // 0..255, follows the voice
@@ -19,6 +22,7 @@ class Audio {
 
  private:
   void release();
+  bool start(size_t len, const char* label);  // parse and play buf_
   uint8_t* buf_ = nullptr;
   hal::WavInfo info_;
   std::vector<uint8_t> env_;

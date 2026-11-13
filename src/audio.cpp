@@ -9,10 +9,17 @@ constexpr uint32_t kFrameMs = 20;
 }  // namespace
 
 void Audio::release() {
-  // Never free a buffer the speaker task may still be reading.
-  uint32_t t0 = millis();
-  while (M5.Speaker.isPlaying(kChannel) && millis() - t0 < 300) delay(1);
-  if (buf_) free(buf_);
+  // Never free a buffer the speaker task may still be reading: tell it to stop, give it time,
+  // and if it still hasn't let go, keep the memory rather than risk it.
+  if (buf_ && M5.Speaker.isPlaying(kChannel)) {
+    M5.Speaker.stop(kChannel);
+    uint32_t t0 = millis();
+    while (M5.Speaker.isPlaying(kChannel) && millis() - t0 < 500) delay(1);
+  }
+  if (buf_) {
+    if (!M5.Speaker.isPlaying(kChannel)) free(buf_);
+    else Serial.println("audio: the speaker wouldn't let go of a clip; its memory is left alone");
+  }
   buf_ = nullptr;
   env_.clear();
 }
@@ -35,8 +42,25 @@ bool Audio::playFile(const char* path) {
   }
   size_t got = f.read(buf_, len);
   f.close();
-  if (got != len || !hal::parseWav(buf_, len, &info_)) {
-    Serial.printf("skip %s: not a 16-bit PCM WAV\n", path);
+  if (got != len) {
+    Serial.printf("skip %s: short read\n", path);
+    release();
+    return false;
+  }
+  return start(len, path);
+}
+
+bool Audio::playBuffer(uint8_t* data, size_t len, const char* label) {
+  stop();
+  release();    // the clip that was playing, once the speaker has let go of it
+  buf_ = data;  // ours now, and freed by release() like any other
+  if (!buf_) return false;
+  return start(len, label);
+}
+
+bool Audio::start(size_t len, const char* label) {
+  if (!hal::parseWav(buf_, len, &info_)) {
+    Serial.printf("skip %s: not a 16-bit PCM WAV\n", label);
     release();
     return false;
   }
@@ -44,12 +68,12 @@ bool Audio::playFile(const char* path) {
   const int16_t* pcm = reinterpret_cast<const int16_t*>(buf_ + info_.dataOffset);
   size_t samples = info_.dataBytes / 2;
   if (!M5.Speaker.playRaw(pcm, samples, info_.sampleRate, info_.channels == 2, 1, kChannel, true)) {
-    Serial.printf("skip %s: speaker refused\n", path);
+    Serial.printf("skip %s: speaker refused\n", label);
     release();
     return false;
   }
   startMs_ = millis();
-  Serial.printf("play %s (%u ms)\n", path, unsigned(info_.durationMs));
+  Serial.printf("play %s (%u ms)\n", label, unsigned(info_.durationMs));
   return true;
 }
 

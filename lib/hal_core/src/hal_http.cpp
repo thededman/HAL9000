@@ -77,6 +77,36 @@ std::string httpRequest(const std::string& method, const std::string& host, int 
   return r;
 }
 
+bool parseHttpHead(const std::string& head, int* status, long* contentLength) {
+  HttpResponse r;
+  const size_t headEnd = head.find("\r\n\r\n");
+  if (headEnd == std::string::npos) return false;
+  // Reuse the whole-response parser on the head alone, with the length looked up separately.
+  *contentLength = -1;
+  size_t lineStart = head.find("\r\n") + 2;
+  while (lineStart < headEnd + 2) {
+    size_t lineEnd = head.find("\r\n", lineStart);
+    std::string line = head.substr(lineStart, lineEnd - lineStart);
+    size_t colon = line.find(':');
+    if (colon != std::string::npos && lower(line.substr(0, colon)) == "content-length") {
+      std::string value = line.substr(colon + 1);
+      while (!value.empty() && value[0] == ' ') value.erase(0, 1);
+      if (value.empty() || value.size() > 8) return false;
+      long n = 0;
+      for (char c : value) {
+        if (c < '0' || c > '9') return false;
+        n = n * 10 + (c - '0');
+      }
+      *contentLength = n;
+    }
+    lineStart = lineEnd + 2;
+  }
+  std::string statusLine = head.substr(0, head.find("\r\n")) + "\r\n\r\n";
+  if (!parseHttpResponse(statusLine, &r)) return false;
+  *status = r.status;
+  return true;
+}
+
 bool parseHttpResponse(const std::string& raw, HttpResponse* out) {
   *out = HttpResponse();
   const size_t headEnd = raw.find("\r\n\r\n");

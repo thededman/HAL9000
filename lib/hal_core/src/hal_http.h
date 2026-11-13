@@ -22,6 +22,10 @@ struct HttpResponse {
 // shorter than its Content-Length says.
 bool parseHttpResponse(const std::string& raw, HttpResponse* out);
 
+// The head of a response whose body is still arriving (everything up to and including the
+// blank line): its status and Content-Length (-1 if it gives none). False if it isn't one.
+bool parseHttpHead(const std::string& head, int* status, long* contentLength);
+
 struct BrainReply {
   bool ok = false;      // the brain answered and every field is what the spec promises
   std::string error;    // when !ok: the brain's error code, "http-<status>" or "bad-reply"

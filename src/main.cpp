@@ -13,6 +13,7 @@
 
 #include "audio.h"
 #include "camera.h"
+#include "clip_fetch.h"
 #include "consoles.h"
 #include "hal_dialogue.h"
 #include "hal_layout.h"
@@ -152,6 +153,68 @@ screens::LinkStats linkStats() {
 
 // Seconds since boot. Not millis(): that wraps to zero after 49.7 days.
 uint32_t uptimeSeconds() { return static_cast<uint32_t>(esp_timer_get_time() / 1000000); }
+
+// Lines the AI brain wrote for us (link v3): HAL Zero says where one is (FETCH), we download it
+// ourselves and say READY, and speak it when he says "SAY live n". Two wait at most.
+ClipFetch clipFetch;
+int fetchingLine = 0;  // the live line being downloaded (0: none)
+struct LiveClip {
+  int n = 0;
+  uint8_t* data = nullptr;
+  size_t len = 0;
+};
+LiveClip liveClips[2];
+
+void dropLiveClips() {
+  for (LiveClip& c : liveClips) {
+    if (c.data) free(c.data);
+    c = LiveClip();
+  }
+}
+
+void keepLiveClip(int n, uint8_t* data, size_t len) {
+  LiveClip* slot = !liveClips[0].data ? &liveClips[0] : !liveClips[1].data ? &liveClips[1] : nullptr;
+  if (!slot) {  // both taken: the older line makes room
+    slot = liveClips[0].n < liveClips[1].n ? &liveClips[0] : &liveClips[1];
+    free(slot->data);
+  }
+  *slot = {n, data, len};
+}
+
+bool haveLiveClip(int n) {
+  for (const LiveClip& c : liveClips)
+    if (c.data && c.n == n) return true;
+  return false;
+}
+
+LiveClip takeLiveClip(int n) {
+  for (LiveClip& c : liveClips)
+    if (c.data && c.n == n) {
+      LiveClip out = c;
+      c = LiveClip();
+      return out;
+    }
+  return LiveClip();
+}
+
+void forgetLiveLines() {
+  clipFetch.abort();
+  fetchingLine = 0;
+  dropLiveClips();
+}
+
+// The answer to HAL Zero's SENSE: what our sensors read right now.
+hal::PeerSensors linkSensors() {
+  const screens::DeskSensors& s = deskSensors;
+  hal::PeerSensors p;
+  p.light = std::max(-1, std::min(100, s.lightPct));
+  p.prox = std::max(0, std::min(65535, s.proximity));
+  p.tilt = std::max(0, std::min(180, s.tiltDeg));
+  p.bat = std::max(-1, std::min(100, s.batteryPct));
+  p.chg = s.charging;
+  p.temp = std::max(-40, std::min(125, s.chipTempC));
+  return p;
+}
 
 // The answer to HAL Zero's STATUS: our real numbers.
 hal::PeerStatus deskStatus() {
@@ -431,7 +494,8 @@ void loop() {
       r.n = m.n;
       if (!brain->canConverse()) {
         r.type = hal::MsgType::Busy;
-      } else if (!haveMemory || !storage.exists(hal::dialogueVoicePath(m.id, m.n, hal::Speaker::Old))) {
+      } else if (m.id == "live" ? !haveLiveClip(m.n)
+                                : (!haveMemory || !storage.exists(hal::dialogueVoicePath(m.id, m.n, hal::Speaker::Old)))) {
         r.type = hal::MsgType::Missing;
       } else {
         linkConversing = true;
@@ -440,8 +504,21 @@ void loop() {
         continue;
       }
     } else if (m.type == hal::MsgType::End) {
+      // A live conversation cut short (a tap on HAL Zero, a problem): stop talking and drop what was waiting.
+      if (linkConversing && linkDialogue == "live" && m.reason != "done") audio.stop();
+      forgetLiveLines();
       linkConversing = false;
       continue;
+    } else if (m.type == hal::MsgType::Fetch) {  // a line the AI brain wrote for us: go and get it
+      r.n = m.n;
+      fetchingLine = m.n;
+      if (clipFetch.begin(m.host, m.port, m.token)) continue;  // READY or MISSING follows, from the loop below
+      fetchingLine = 0;
+      r.type = hal::MsgType::Missing;
+    } else if (m.type == hal::MsgType::Sense) {  // HAL Zero wants our readings for a question put to us
+      readDeskSensors();
+      r.type = hal::MsgType::Sensors;
+      r.sensors = linkSensors();
     } else if (m.type == hal::MsgType::Status) {  // HAL Zero diagnosing us; mid-dialogue is fine
       r.type = hal::MsgType::State;
       r.status = deskStatus();
@@ -456,6 +533,26 @@ void loop() {
     Serial.println("link: HAL Zero went quiet");
     linkServer.drop();
   }
+  if (fetchingLine) {  // a few milliseconds of the download per pass, so the eye keeps moving
+    ClipFetch::State fetched = clipFetch.poll();
+    if (fetched == ClipFetch::State::Done || fetched == ClipFetch::State::Failed) {
+      hal::Message r;
+      r.n = fetchingLine;
+      uint8_t* data = nullptr;
+      size_t len = 0;
+      if (fetched == ClipFetch::State::Done && clipFetch.take(&data, &len)) {
+        keepLiveClip(fetchingLine, data, len);
+        r.type = hal::MsgType::Ready;
+        Serial.printf("clip: line %d fetched (%u bytes)\n", fetchingLine, unsigned(len));
+      } else {
+        clipFetch.abort();
+        r.type = hal::MsgType::Missing;
+      }
+      fetchingLine = 0;
+      linkServer.send(r);
+    }
+  }
+  if (linkDropped) forgetLiveLines();
   if (linkDropped || (linkConversing && now - linkLastMsgMs > 30000)) linkConversing = false;
   in.conversing = linkConversing;
   in.sayLine = linkSayN;
@@ -497,7 +594,18 @@ void loop() {
     std::string path = hal::dialogueVoicePath(linkDialogue, a.dialogueLine, hal::Speaker::Old);
     hal::Message r;
     r.n = a.dialogueLine;
-    if (startLine(path)) {
+    bool started = false;
+    if (linkDialogue == "live") {  // the brain's line: it is in memory, not on the card
+      LiveClip clip = takeLiveClip(a.dialogueLine);
+      started = clip.data && audio.playBuffer(clip.data, clip.len, "the brain's line");
+      if (started) {
+        ++linesSpoken;
+        lineMs = audio.durationMs();
+      }
+    } else {
+      started = startLine(path);
+    }
+    if (started) {
       r.type = hal::MsgType::Playing;
       r.ms = int(audio.durationMs());
     } else {

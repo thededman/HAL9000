@@ -184,6 +184,25 @@ void test_http_response_rejects() {
   }
 }
 
+// The desk HAL downloads a clip a piece at a time: he needs the head before the body is all there.
+void test_http_head() {
+  int status = 0;
+  long length = 0;
+  TEST_ASSERT_TRUE(hal::parseHttpHead("HTTP/1.0 200 OK\r\nServer: HALBrain\r\nContent-Type: audio/wav\r\n"
+                                      "Content-Length: 133584\r\nConnection: close\r\n\r\n", &status, &length));
+  TEST_ASSERT_EQUAL(200, status);
+  TEST_ASSERT_EQUAL(133584, length);
+  TEST_ASSERT_TRUE(hal::parseHttpHead("HTTP/1.1 404 Not Found\r\ncontent-length: 16\r\n\r\n", &status, &length));
+  TEST_ASSERT_EQUAL(404, status);
+  TEST_ASSERT_EQUAL(16, length);
+  TEST_ASSERT_TRUE(hal::parseHttpHead("HTTP/1.0 200 OK\r\n\r\n", &status, &length));
+  TEST_ASSERT_EQUAL(-1, length);  // no length given
+  const char* const bad[] = {"", "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n",  // no blank line yet
+                             "HTTP/1.0 2x0 OK\r\n\r\n", "SSH-2.0-OpenSSH\r\n\r\n", "HTTP/1.0 200 OK\r\nContent-Length: lots\r\n\r\n",
+                             "HTTP/1.0 200 OK\r\nContent-Length: 99999999999\r\n\r\n", "HTTP/1.0 200 OK\r\nContent-Length: -5\r\n\r\n"};
+  for (const char* head : bad) TEST_ASSERT_FALSE_MESSAGE(hal::parseHttpHead(head, &status, &length), head);
+}
+
 // ---- the brain's replies ----
 
 void test_reply_ok() {
@@ -325,6 +344,7 @@ int main() {
   RUN_TEST(test_http_request_refuses_injection);
   RUN_TEST(test_http_response);
   RUN_TEST(test_http_response_rejects);
+  RUN_TEST(test_http_head);
   RUN_TEST(test_reply_ok);
   RUN_TEST(test_reply_heard_is_made_safe);
   RUN_TEST(test_reply_wait_and_end);
