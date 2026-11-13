@@ -13,12 +13,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - Typed chat with HAL Zero: press Enter on the Cardputer, type a question, and he answers
   aloud with a subtitle, using his real readings. Asking for a screen brings it up. If the
   brain can't be reached he says so (five new lines). `tools/brain.sh pair` connects the two.
+- Speaking to HAL Zero: hold Fn, ask, let go. What he heard appears in the ask box for a
+  moment before it is sent, so a mishearing can be corrected.
 - Questions for the desk HAL from the Cardputer (Tab in the ask box): he downloads the
   brain's answer himself and speaks it, using his own sensor readings.
 - Live arguments: "Make them argue..." in HAL Zero's menu takes a subject and the two HALs
   argue it out for eight lines. A tap on either stops them.
 - `tools/brain.sh ask zero "..."` (or `ask desk`) asks from the computer; the simulator takes
-  `--brain HOST` and `--ask "QUESTION"`; `--keys` shows the code of every key pressed.
+  `--brain HOST`, `--ask`, `--ask-desk`, `--argue`, `--hear FILE` and `--listen SECONDS`; `--keys`
+  shows the code of every key pressed.
 - A guard that keeps the film's best-known lines out of anything the AI says.
 
 ### Changed

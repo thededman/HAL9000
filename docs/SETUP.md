@@ -345,6 +345,12 @@ tools/brain.sh pair
 - On the Cardputer press **Enter**, type a question (120 characters at most) and press Enter
   again. He thinks for a second and answers aloud with a subtitle. Esc cancels; Space interrupts
   an answer. `tools/cardputer.sh run --ask "How hot are you running?"` asks from your computer.
+- **Or say it.** Hold **Fn** by itself, speak, and let go (15 seconds at most; the strip shows
+  a level meter while he listens). What he heard appears in the box for a moment and is then
+  sent; press any key in that moment to correct it, or Tab to put it to the desk unit instead.
+  This needs the brain's ears (`whisper-cli` and its model, above). The recording goes to the
+  brain on your computer and nowhere else. `tools/cardputer.sh run --listen 5` makes him
+  listen for five seconds without a key, to test the microphone.
 - **Ask the desk HAL, or make them argue.** In the box, Tab switches between HAL Zero and the
   desk unit; the menu (Tab from the eye) has "Ask the desk unit..." and "Make them argue...",
   which takes a subject and runs eight lines between the two. This needs the two HALs linked

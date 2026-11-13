@@ -242,6 +242,8 @@ struct App {
   bool listening = false;
   uint32_t sendHeardAt = 0;                       // what was heard is in the ask box: send it then (0: not waiting)
   std::string hearFile;                           // --hear: a recording from a file instead of the microphone
+  int listenSeconds = 0;                          // --listen N: listen for N seconds once booted (no key needed)
+  uint32_t listenUntil = 0;
   enum class AskMode { Zero, Desk, Topic } askMode = AskMode::Zero;  // what the ask box is for
   std::string debateId;                           // the argument under way, as the brain knows it
   int debateNext = 0;                             // its next line to ask the brain for (from 0)
@@ -867,11 +869,18 @@ struct App {
       hearFromFile(hearFile, now);
       hearFile.clear();
     }
-    if (talkDown && !listening) startListening();
+    if (listenSeconds > 0 && canAsk() && brain->mode() == hal::Mode::Idle) {  // --listen: as if the key were held
+      startListening();
+      if (listening) listenUntil = now + uint32_t(listenSeconds) * 1000;
+      listenSeconds = 0;
+    }
+    const bool held = talkDown || (listenUntil && int32_t(listenUntil - now) > 0);
+    if (held && !listening) startListening();
     if (listening) {
       mic.pump(&recording);
       if (talkDropped) stopListening(false, now);
-      else if (!talkDown || recording.full()) stopListening(true, now);
+      else if (!held || recording.full()) stopListening(true, now);
+      if (!listening) listenUntil = 0;
     }
     if (sendHeardAt && int32_t(now - sendHeardAt) >= 0) {
       if (overlay == Overlay::Ask) submitAskBox(now);
@@ -1410,6 +1419,7 @@ int main(int argc, char** argv) {
   const char* shotsDir = nullptr;
   const char* root = std::getenv("HAL_ROOT");
   bool keysMode = false;
+  int listenArg = 0;
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
   std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, hearArg, brainArg;
@@ -1427,6 +1437,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--ask-desk") && i + 1 < argc) askDeskArg = argv[++i];
     else if (!std::strcmp(argv[i], "--argue") && i + 1 < argc) argueArg = argv[++i];
     else if (!std::strcmp(argv[i], "--hear") && i + 1 < argc) hearArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--listen") && i + 1 < argc) listenArg = std::atoi(argv[++i]);
     else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
     else if (!std::strcmp(argv[i], "--keys")) keysMode = true;
   }
@@ -1449,6 +1460,7 @@ int main(int argc, char** argv) {
   app.autoAskDesk = askDeskArg;
   app.autoArgue = argueArg;
   app.hearFile = hearArg;
+  app.listenSeconds = listenArg > 0 && listenArg <= 15 ? listenArg : 0;
   if (!brainArg.empty()) {  // --brain host[:port] overrides config.txt, for trying the chat in the simulator
     app.cfg.brain = true;
     size_t colon = brainArg.rfind(':');

@@ -97,7 +97,7 @@ when he quits.
 **Keys:** Space is HAL's "finger" (tap or hold, like the CoreS3's screen), Tab or
 up/down opens the menu, D lists the conversations, Enter picks, Esc goes back (and
 quits from the eye). With the AI brain paired, Enter on the eye screen opens a box to
-type him a question. The arrows are F (up), X (down), Z (left) and C (right), with or
+type him a question, and holding Fn lets you say it instead. The arrows are F (up), X (down), Z (left) and C (right), with or
 without Fn.
 
 **His screens.** Besides the shared console screens and Visual Analysis, HAL Zero has
@@ -141,6 +141,8 @@ What works today, from the Cardputer:
 - **Ask HAL Zero:** press **Enter**, type a question, press Enter again. He sends it to the
   brain along with his real readings (time, temperature, Wi-Fi, the link) and answers aloud
   with a subtitle. Ask him to show you a screen and he brings it up.
+- **Or say it:** hold **Fn**, speak, let go. What he heard shows in the box for a moment
+  (any key lets you correct it) and is then sent.
 - **Ask the desk HAL:** press Tab in the box (or pick "Ask the desk unit..." in the menu). HAL
   Zero collects the desk HAL's own sensor readings, and the desk HAL downloads and speaks his
   answer.
@@ -148,7 +150,7 @@ What works today, from the Cardputer:
   for eight lines, each written while the one before is being spoken.
 
 From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` ask either HAL. Still
-to come: talking instead of typing, and the optional cloud models.
+to come: the optional cloud models.
 
 Set-up is step 9 of [docs/SETUP.md](docs/SETUP.md#9-the-ai-brain-optional).
 
