@@ -197,6 +197,27 @@ class PromptTest(unittest.TestCase):
         self.assertIn("first option", debate_prompt("zero", "tea or coffee", [], last=False))  # each keeps a side
         self.assertIn("other option", debate_prompt("desk", "tea or coffee", [], last=False))
 
+    def test_debate_facts_belong_to_someone(self):
+        # In an argument HAL Zero sends both HALs' readings, each line saying whose it is.
+        facts = ["time: 20:24", "zero chip temperature: 54 C", "zero free memory: 131 MB", "desk battery: 53 % and charging",
+                 "desk firmware: 0.6.0"]
+        zero = debate_prompt("zero", "tea or coffee", facts, last=False)
+        desk = debate_prompt("desk", "tea or coffee", facts, last=False)
+        mine, his = zero.split("What you know about HAL 9000")
+        self.assertIn("- time: 20:24", mine)
+        self.assertIn("- chip temperature: 54 C", mine)
+        self.assertIn("- free memory: 131 MB", mine)
+        self.assertNotIn("battery", mine)
+        self.assertIn("- battery: 53 % and charging", his)
+        self.assertNotIn("zero ", zero.split("Things you know")[1])  # the labels themselves aren't shown
+        mine, his = desk.split("What you know about HAL Zero")
+        self.assertIn("- battery: 53 % and charging", mine)
+        self.assertIn("- time: 20:24", mine)
+        self.assertNotIn("131 MB", mine)  # HAL Zero's memory is not the desk HAL's to boast about
+        self.assertIn("- free memory: 131 MB", his)
+        only_mine = debate_prompt("desk", "tea", ["desk battery: 53 %"], last=False)
+        self.assertNotIn("What you know about", only_mine)
+
     def test_unknown_hal(self):
         for f in (lambda: system_prompt("dave", []), lambda: debate_prompt("dave", "x", [], False), lambda: other("dave"),
                   lambda: split_show("x", "dave")):

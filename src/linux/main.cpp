@@ -240,6 +240,7 @@ struct App {
   bool lineAsked = false;                         // that line has been asked for and isn't here yet
   bool allLinesIn = false;                        // the argument's last line has arrived
   std::string deskQuestion;                       // waits for the desk HAL's sensors before it goes to the brain
+  std::string argueTopic;                         // ... and so does the subject of an argument
   uint32_t senseAt = 0;                           // when they were asked for (0: not waiting)
   bool haveSensors = false;
   hal::PeerSensors peerSensors;
@@ -410,43 +411,59 @@ struct App {
     return false;
   }
 
-  // A question for the desk HAL: first ask him what his sensors read, so his answer can use it.
-  void submitDeskQuestion(const std::string& question, uint32_t now) {
-    if (!deskCanThink(now)) return;
-    talk = Talk::Desk;
-    deskQuestion = question;
+  // Ask the desk HAL what his sensors read (and how he is), for a question or an argument.
+  void senseDesk(uint32_t now) {
     haveSensors = false;
     senseAt = now ? now : 1;
-    thinking = true;
     hal::Message sense;
     sense.type = hal::MsgType::Sense;
     link.send(sense);
     askStatus(now);
+  }
+
+  const hal::PeerStatus* freshStatus(uint32_t now) const {
+    return peerWatch.state(link.connected(), peerVersion, now) == hal::PeerState::Ok ? &peerStatus : nullptr;
+  }
+
+  // A question for the desk HAL: first his readings, so his answer can use them.
+  void submitDeskQuestion(const std::string& question, uint32_t now) {
+    if (!deskCanThink(now)) return;
+    talk = Talk::Desk;
+    deskQuestion = question;
+    thinking = true;
+    senseDesk(now);
     halLog("ask the desk unit: %s", question.c_str());
   }
 
-  // ... and once they are in (or a second has passed without them), the question goes to the brain.
-  void sendDeskQuestion(uint32_t now) {
-    std::string facts;
-    for (const hal::Reading& r : readings)
-      if (r.code == "CLK" && r.valid) facts = "time: " + r.value;
-    const bool statusFresh = peerWatch.state(link.connected(), peerVersion, now) == hal::PeerState::Ok;
-    std::string his = hal::deskFacts(statusFresh ? &peerStatus : nullptr, haveSensors ? &peerSensors : nullptr);
-    if (!his.empty()) facts += (facts.empty() ? "" : "\n") + his;
-    brainClient.ask("desk", hal::askBody(facts, deskQuestion));
-    deskQuestion.clear();
-    senseAt = 0;
-  }
-
+  // An argument: both HALs' readings go along, each marked as his own.
   void submitTopic(const std::string& topic, uint32_t now) {
     if (!deskCanThink(now)) return;
     talk = Talk::Argue;
+    argueTopic = topic;
     debateId.clear();
     debateNext = 0;
     lineAsked = allLinesIn = false;
     thinking = true;
-    brainClient.debate(hal::askBody(hal::factsFromReadings(readings), topic), 8);
+    senseDesk(now);
     halLog("argue: %s", topic.c_str());
+  }
+
+  // ... and once they are in (or a second has passed without them), it goes to the brain.
+  void sendAfterSense(uint32_t now) {
+    senseAt = 0;
+    const hal::PeerSensors* sensors = haveSensors ? &peerSensors : nullptr;
+    if (talk == Talk::Argue) {
+      brainClient.debate(hal::askBody(hal::debateFacts(readings, freshStatus(now), sensors), argueTopic), 8);
+      argueTopic.clear();
+      return;
+    }
+    std::string facts;
+    for (const hal::Reading& r : readings)
+      if (r.code == "CLK" && r.valid) facts = "time: " + r.value;
+    std::string his = hal::deskFacts(freshStatus(now), sensors);
+    if (!his.empty()) facts += (facts.empty() ? "" : "\n") + his;
+    brainClient.ask("desk", hal::askBody(facts, deskQuestion));
+    deskQuestion.clear();
   }
 
   // Forget whatever the brain was doing for us (answered, interrupted, failed).
@@ -458,6 +475,7 @@ struct App {
     talk = Talk::None;
     thinking = false;
     deskQuestion.clear();
+    argueTopic.clear();
     senseAt = 0;
     feed.start();
   }
@@ -759,7 +777,7 @@ struct App {
       submitTopic(autoArgue, now);
       autoArgue.clear();
     }
-    if (senseAt && (haveSensors || now - senseAt >= 1000)) sendDeskQuestion(now);
+    if (senseAt && (haveSensors || now - senseAt >= 1000)) sendAfterSense(now);
     std::vector<BrainEvent> events;
     brainClient.poll(&events);
     for (BrainEvent& e : events) handleBrain(e, now);

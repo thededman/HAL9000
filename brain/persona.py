@@ -86,8 +86,21 @@ def debate_prompt(who: str, topic: str, facts: list[str], last: bool) -> str:
              "him. " + RULES]
     if last:
         parts.append("This is your last word on the subject: close the argument with one new remark.")
-    if facts:
-        parts.append(_facts_block(facts))
+    # HAL Zero sends both HALs' readings, each line saying whose it is ("zero ..." / "desk ..."); a
+    # line with no owner (the time) is for both.
+    mine, his = [], []
+    for fact in facts:
+        owner, _, rest = fact.partition(" ")
+        if owner == who and rest:
+            mine.append(rest)
+        elif owner == other(who) and rest:
+            his.append(rest)
+        else:
+            mine.append(fact)
+    if mine:
+        parts.append(_facts_block(mine))
+    if his:
+        parts.append(f"What you know about {rival} right now (his readings, not yours):\n" + "\n".join("- " + f for f in his))
     return "\n\n".join(parts)
 
 

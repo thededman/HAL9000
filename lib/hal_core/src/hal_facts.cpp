@@ -69,4 +69,32 @@ std::string deskFacts(const PeerStatus* status, const PeerSensors* sensors) {
   return out;
 }
 
+std::string debateFacts(const std::vector<Reading>& zero, const PeerStatus* status, const PeerSensors* sensors) {
+  std::string out;
+  std::vector<Reading> mine;
+  for (const Reading& r : zero) {
+    if (r.code == "CLK") {
+      if (r.valid) add(&out, "time", r.value);
+    } else if (r.code != "DSK" && r.code != "LNK" && r.code != "CAM" && r.code != "TLT") {  // not worth arguing over
+      mine.push_back(r);
+    }
+  }
+  const auto addOwned = [&out](const char* owner, const std::string& facts) {
+    size_t start = 0;
+    while (start < facts.size()) {
+      size_t end = facts.find('\n', start);
+      if (end == std::string::npos) end = facts.size();
+      const std::string line = facts.substr(start, end - start);
+      if (line.compare(0, 13, "camera motion") != 0 && line.compare(0, 9, "proximity") != 0) {
+        if (!out.empty()) out.push_back('\n');
+        out += std::string(owner) + " " + line;
+      }
+      start = end + 1;
+    }
+  };
+  addOwned("zero", factsFromReadings(mine));
+  addOwned("desk", deskFacts(status, sensors));
+  return out;
+}
+
 }  // namespace hal

@@ -16,4 +16,9 @@ std::string factsFromReadings(const std::vector<Reading>& readings);
 // What is known about the desk HAL: his status (STATE) and sensors (SENSORS). Either may be null.
 std::string deskFacts(const PeerStatus* status, const PeerSensors* sensors);
 
+// For an argument: both HALs' readings, each line saying whose it is ("zero ...", "desk ..."),
+// so neither quotes the other's numbers as his own. The time, first, belongs to both. Kept
+// well under the brain's 24 lines.
+std::string debateFacts(const std::vector<Reading>& zero, const PeerStatus* status, const PeerSensors* sensors);
+
 }  // namespace hal

@@ -332,6 +332,32 @@ void test_desk_facts() {
   TEST_ASSERT_EQUAL_STRING("", hal::deskFacts(nullptr, nullptr).c_str());
 }
 
+// An argument gets both HALs' readings, each line saying whose it is.
+void test_debate_facts() {
+  std::vector<hal::Reading> rs = {hal::cpuReading(8), hal::memoryReading(134144, 360448), hal::tempReading(54),
+                                  hal::netReading(-42), hal::linkReading(true, true), hal::cameraReading(true, 3),
+                                  hal::tiltReading(2), hal::audioReading(0, 4), hal::clockReading(20 * 3600 + 24 * 60),
+                                  hal::uptimeReading(600), hal::peerReading(hal::PeerState::Ok, "idle")};
+  hal::PeerStatus st;
+  st.upS = 3900; st.heap = 99328; st.cam = 12; st.lines = 16; st.mode = "idle"; st.rssi = -47; st.fw = "0.6.0";
+  hal::PeerSensors se = {67, 19, 3, 53, true, 42};
+  TEST_ASSERT_EQUAL_STRING(
+      "time: 20:24\n"
+      "zero processor load: 8 %\nzero free memory: 131 MB\nzero chip temperature: 54 C\nzero wifi signal: -42 DBM\n"
+      "zero lines spoken: 4 LINES\nzero uptime: 00:10:00\n"
+      "desk uptime: 1 h 5 min\ndesk free memory: 97 KB\ndesk lines spoken: 16\ndesk mode: idle\ndesk wifi signal: -47 dBm\n"
+      "desk firmware: 0.6.0\ndesk room light: 67 %\ndesk battery: 53 % and charging\ndesk tilt: 3 degrees\n"
+      "desk chip temperature: 42 C",
+      hal::debateFacts(rs, &st, &se).c_str());
+  // Without anything from the desk HAL, only HAL Zero's; and never more than the brain accepts (24 lines).
+  std::string alone = hal::debateFacts(rs, nullptr, nullptr);
+  TEST_ASSERT_TRUE(alone.find("desk ") == std::string::npos);
+  int lines = 1;
+  for (char c : hal::debateFacts(rs, &st, &se)) lines += c == '\n';
+  TEST_ASSERT_TRUE(lines <= 24);
+  TEST_ASSERT_EQUAL_STRING("", hal::debateFacts({}, nullptr, nullptr).c_str());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_textbox_types_and_erases);
@@ -353,5 +379,6 @@ int main() {
   RUN_TEST(test_ask_body);
   RUN_TEST(test_facts_from_readings);
   RUN_TEST(test_desk_facts);
+  RUN_TEST(test_debate_facts);
   return UNITY_END();
 }
