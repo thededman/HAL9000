@@ -29,9 +29,10 @@ void drawCommandStrip(M5Canvas& f, const char* text);
 // The boot screen at `t` ms: lines appear one by one. True once all are shown.
 bool drawBoot(M5Canvas& f, uint32_t t, const std::vector<std::string>& lines);
 void drawMenu(M5Canvas& f, const char* title, hal::Menu& menu);
-// Who's speaking in a conversation, their line, and line n of total.
+// Who's speaking in a conversation, their line, and line n of total (total 0: a live
+// conversation, whose length isn't known yet).
 void drawSubtitle(M5Canvas& f, bool halZero, const std::string& text, int n, int total);
 // The question being typed to the AI brain: a box where the subtitles go.
-void drawAskBox(M5Canvas& f, const std::string& text, size_t max, uint32_t nowMs);
+void drawAskBox(M5Canvas& f, const char* title, const std::string& text, size_t max, uint32_t nowMs);
 // A short status message across the bottom (e.g. "THE DESK UNIT ISN'T ANSWERING").
 void drawBanner(M5Canvas& f, const char* text, uint32_t nowMs);

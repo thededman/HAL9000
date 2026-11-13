@@ -35,6 +35,7 @@
 #include "hal_dialogue.h"
 #include "hal_facts.h"
 #include "hal_layout.h"
+#include "hal_livefeed.h"
 #include "hal_loader.h"
 #include "hal_log.h"
 #include "hal_menu.h"
@@ -230,7 +231,18 @@ struct App {
   bool thinking = false;                          // a question is with the brain
   std::map<int, std::vector<uint8_t>> liveClips;  // live line number -> its audio
   std::string showAfter;                          // a screen the answer asked for, opened once he has spoken
-  std::string autoAsk;                            // --ask: put this question once booted
+  std::string autoAsk, autoAskDesk, autoArgue;    // --ask, --ask-desk, --argue: put this once booted
+  hal::LiveFeed feed;                             // the brain's lines become FETCH and append, in order
+  enum class Talk { None, Zero, Desk, Argue } talk = Talk::None;     // what the brain is doing for us
+  enum class AskMode { Zero, Desk, Topic } askMode = AskMode::Zero;  // what the ask box is for
+  std::string debateId;                           // the argument under way, as the brain knows it
+  int debateNext = 0;                             // its next line to ask the brain for (from 0)
+  bool lineAsked = false;                         // that line has been asked for and isn't here yet
+  bool allLinesIn = false;                        // the argument's last line has arrived
+  std::string deskQuestion;                       // waits for the desk HAL's sensors before it goes to the brain
+  uint32_t senseAt = 0;                           // when they were asked for (0: not waiting)
+  bool haveSensors = false;
+  hal::PeerSensors peerSensors;
 
   M5Canvas frame, background, lens;
   hal::Menu menu;
@@ -353,6 +365,8 @@ struct App {
                {"look", camera ? "Look around (Visual Analysis)" : "Look around (no camera)"},
                {"diagnose", "Diagnose the old model"},
                {"talk", "Talk to the desk unit"},
+               {"askdesk", brainClient.started() ? "Ask the desk unit..." : "Ask the desk unit (no brain)"},
+               {"argue", brainClient.started() ? "Make them argue..." : "Make them argue (no brain)"},
                {"daisy", "Shut down (Daisy Bell)"},
                {"quit", "Quit HAL Zero"}});
     overlay = Overlay::Menu;
@@ -381,9 +395,159 @@ struct App {
   }
 
   void submitQuestion(const std::string& question) {
+    talk = Talk::Zero;
     brainClient.ask("zero", hal::askBody(hal::factsFromReadings(readings), question));
     thinking = true;
     halLog("ask: %s", question.c_str());
+  }
+
+  // The desk HAL can only speak the brain's lines with firmware that knows how to fetch them.
+  bool deskCanThink(uint32_t now) {
+    if (cfg.link && link.connected() && peerVersion >= 3) return true;
+    gloatText = !cfg.link || !link.connected() ? "THE DESK UNIT ISN'T ANSWERING" : "THE DESK UNIT IS TOO OLD TO THINK";
+    gloatUntil = now + 5000;
+    halLog("desk unit: %s", gloatText.c_str());
+    return false;
+  }
+
+  // A question for the desk HAL: first ask him what his sensors read, so his answer can use it.
+  void submitDeskQuestion(const std::string& question, uint32_t now) {
+    if (!deskCanThink(now)) return;
+    talk = Talk::Desk;
+    deskQuestion = question;
+    haveSensors = false;
+    senseAt = now ? now : 1;
+    thinking = true;
+    hal::Message sense;
+    sense.type = hal::MsgType::Sense;
+    link.send(sense);
+    askStatus(now);
+    halLog("ask the desk unit: %s", question.c_str());
+  }
+
+  // ... and once they are in (or a second has passed without them), the question goes to the brain.
+  void sendDeskQuestion(uint32_t now) {
+    std::string facts;
+    for (const hal::Reading& r : readings)
+      if (r.code == "CLK" && r.valid) facts = "time: " + r.value;
+    const bool statusFresh = peerWatch.state(link.connected(), peerVersion, now) == hal::PeerState::Ok;
+    std::string his = hal::deskFacts(statusFresh ? &peerStatus : nullptr, haveSensors ? &peerSensors : nullptr);
+    if (!his.empty()) facts += (facts.empty() ? "" : "\n") + his;
+    brainClient.ask("desk", hal::askBody(facts, deskQuestion));
+    deskQuestion.clear();
+    senseAt = 0;
+  }
+
+  void submitTopic(const std::string& topic, uint32_t now) {
+    if (!deskCanThink(now)) return;
+    talk = Talk::Argue;
+    debateId.clear();
+    debateNext = 0;
+    lineAsked = allLinesIn = false;
+    thinking = true;
+    brainClient.debate(hal::askBody(hal::factsFromReadings(readings), topic), 8);
+    halLog("argue: %s", topic.c_str());
+  }
+
+  // Forget whatever the brain was doing for us (answered, interrupted, failed).
+  void endTalk() {
+    if (talk == Talk::None && !thinking) return;
+    brainClient.cancel();
+    if (!debateId.empty()) brainClient.stopDebate(debateId);  // the brain can stop writing
+    debateId.clear();
+    talk = Talk::None;
+    thinking = false;
+    deskQuestion.clear();
+    senseAt = 0;
+    feed.start();
+  }
+
+  void talkFailed(const char* banner, uint32_t now) {
+    halLog("live conversation: %s", banner);
+    gloatText = banner;
+    gloatUntil = now + 5000;
+    if (conductor.live()) handleConductor(conductor.interrupt(now));  // tells the desk HAL too
+    endTalk();
+  }
+
+  // What the feed decided about the line in hand: send a FETCH, or the line is playable.
+  void handleFeed(const hal::FeedOut& o, uint32_t now) {
+    if (o.send && !link.send(o.msg)) return talkFailed("THE DESK UNIT ISN'T ANSWERING", now);
+    if (o.failed) {
+      return talkFailed(o.reason == "timeout" ? "THE DESK UNIT IS TAKING TOO LONG" : "THE DESK UNIT LOST THE THREAD", now);
+    }
+    if (!o.append) return;
+    thinking = false;
+    if (!conductor.live()) {
+      if (conductor.active() || !brain->canConverse()) {
+        halLog("answer dropped: he is busy");
+        endTalk();
+        return;
+      }
+      conductor.startLive(now);
+    }
+    conductor.append(o.who, o.text);
+    if (o.close) {
+      conductor.close();
+      allLinesIn = true;
+    }
+  }
+
+  // An argument's next line is asked for once the one before it is being spoken: one line is
+  // kept ready beyond the one in the air, no more (the desk HAL has room for two clips).
+  void askNextLine() {
+    if (talk != Talk::Argue || debateId.empty() || lineAsked || allLinesIn || feed.busy() || !conductor.live()) return;
+    const int waiting = int(conductor.dialogue().lines.size()) - conductor.line();
+    if (waiting >= 1) return;
+    brainClient.debateLine(debateId, debateNext);
+    lineAsked = true;
+  }
+
+  // The brain's answers and lines, as they arrive.
+  void handleBrain(BrainEvent& e, uint32_t now) {
+    using Kind = BrainEvent::Kind;
+    if (e.kind == Kind::Failed) {
+      if (conductor.live()) {  // an argument already under way: let what has been written be said
+        halLog("brain: %s (the conversation ends early)", e.error.c_str());
+        conductor.close();
+      } else {
+        brainOffline(e.error, now);
+      }
+      endTalk();
+    } else if (e.kind == Kind::DebateStarted) {
+      debateId = e.reply.debate;
+      debateNext = 0;  // counts the lines received; line 0 is asked for here, the rest as the talk moves along
+      allLinesIn = false;
+      liveClips.clear();
+      feed.start();
+      brainClient.debateLine(debateId, 0);
+      lineAsked = true;
+    } else if (e.kind == Kind::DebateOver) {
+      if (conductor.live()) conductor.close();
+      thinking = false;
+      lineAsked = false;
+      allLinesIn = true;
+    } else {  // an answer, or the next line of an argument
+      const bool answer = e.kind == Kind::Answer;
+      const bool last = answer || e.reply.last;
+      if (!answer) {
+        lineAsked = false;
+        ++debateNext;
+      }
+      halLog("%s%s: %s", answer ? "answer" : "line", e.reply.who == "desk" ? " (desk)" : "", e.reply.text.c_str());
+      if (answer) {
+        liveClips.clear();
+        feed.start();
+      }
+      if (e.reply.who == "desk") {
+        handleFeed(feed.onLine(hal::Speaker::Old, e.reply.text, last, brainClient.address(), cfg.brainPort, e.reply.clip, now), now);
+      } else {
+        feed.onLine(hal::Speaker::New, e.reply.text, last, "", 0, "", now);
+        if (feed.pendingLine() > 0) liveClips[feed.pendingLine()] = std::move(e.wav);
+        if (answer) showAfter = e.reply.show;
+        handleFeed(feed.onLocalClip(), now);
+      }
+    }
   }
 
   // The brain didn't answer (computer asleep, not started, wrong key...): he says so.
@@ -408,6 +572,7 @@ struct App {
         tapUntil = nowMs() + 100;
       }
       showAfter.clear();
+      endTalk();
       if (o.gloat) {
         pendingGloat = true;
         gloatText = o.reason == "offline"   ? "THE DESK UNIT ISN'T ANSWERING"
@@ -432,13 +597,17 @@ struct App {
           halLog("ask box: cancelled");
         } else if (k == SDLK_BACKSPACE) {
           askBox.backspace();
+        } else if (k == SDLK_TAB && askMode != AskMode::Topic) {  // which HAL the question is for
+          askMode = askMode == AskMode::Zero ? AskMode::Desk : AskMode::Zero;
         } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
           if (askBox.empty()) {
             halLog("ask box: Enter with nothing typed");
           } else {
             overlay = Overlay::None;
-            if (canAsk()) submitQuestion(askBox.text());
-            else halLog("ask box: he can't take a question right now");
+            if (!canAsk()) halLog("ask box: he can't take a question right now");
+            else if (askMode == AskMode::Zero) submitQuestion(askBox.text());
+            else if (askMode == AskMode::Desk) submitDeskQuestion(askBox.text(), now);
+            else submitTopic(askBox.text(), now);
           }
         }
         continue;
@@ -456,6 +625,16 @@ struct App {
           else if (id == "look") { wantScreen = "visual"; tapUntil = now + 100; }
           else if (id == "diagnose") { wantScreen = "diagnostics"; tapUntil = now + 100; }
           else if (id == "talk") openDialogues();
+          else if (id == "askdesk" || id == "argue") {
+            if (canAsk()) {
+              askMode = id == "argue" ? AskMode::Topic : AskMode::Desk;
+              askBox.clear();
+              overlay = Overlay::Ask;
+              halLog("ask box: open (%s)", id.c_str());
+            } else {
+              halLog("ask box: not now");
+            }
+          }
           else if (id == "daisy") holdForDaisy = true;
           else if (id == "quit") {
             halLog("quit (menu)");
@@ -467,8 +646,8 @@ struct App {
       switch (k) {
         case SDLK_ESCAPE:
           if (thinking) {  // never mind the question
-            brainClient.cancel();
-            thinking = false;
+            halLog("ask: cancelled");
+            endTalk();
             break;
           }
           halLog("quit (Esc)");
@@ -476,6 +655,7 @@ struct App {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
           if (canAsk()) {
+            askMode = AskMode::Zero;
             askBox.clear();
             overlay = Overlay::Ask;
             halLog("ask box: open");
@@ -519,11 +699,15 @@ struct App {
         hal::Message pong;
         pong.type = hal::MsgType::Pong;
         link.send(pong);
+      } else if (m.type == hal::MsgType::Sensors) {  // what his sensors read, for a question put to him
+        peerSensors = m.sensors;
+        haveSensors = true;
       } else if (m.type == hal::MsgType::State) {  // the desk HAL's numbers, for diagnostics
         peerStatus = m.status;
         peerWatch.received(now);
       } else {
         if (m.type == hal::MsgType::Hello) peerVersion = m.version;
+        if (m.type == hal::MsgType::Ready || m.type == hal::MsgType::Missing) handleFeed(feed.onRemote(m), now);
         handleConductor(conductor.onRemote(m, now));
       }
     }
@@ -568,24 +752,19 @@ struct App {
     if (!autoAsk.empty() && canAsk()) {
       submitQuestion(autoAsk);
       autoAsk.clear();
+    } else if (!autoAskDesk.empty() && canAsk() && (link.connected() || now - startMs > 8000)) {
+      submitDeskQuestion(autoAskDesk, now);
+      autoAskDesk.clear();
+    } else if (!autoArgue.empty() && canAsk() && (link.connected() || now - startMs > 8000)) {
+      submitTopic(autoArgue, now);
+      autoArgue.clear();
     }
-    std::vector<BrainEvent> answers;
-    brainClient.poll(&answers);
-    for (BrainEvent& e : answers) {
-      thinking = false;
-      if (e.kind == BrainEvent::Kind::Failed) {
-        brainOffline(e.error, now);
-      } else if (brain->canConverse() && !conductor.active()) {
-        halLog("answer: %s", e.reply.text.c_str());
-        conductor.startLive(now);
-        const int n = conductor.append(hal::Speaker::New, e.reply.text);
-        conductor.close();
-        if (n > 0) liveClips[n] = std::move(e.wav);
-        showAfter = e.reply.show;
-      } else {
-        halLog("answer dropped: he is busy");
-      }
-    }
+    if (senseAt && (haveSensors || now - senseAt >= 1000)) sendDeskQuestion(now);
+    std::vector<BrainEvent> events;
+    brainClient.poll(&events);
+    for (BrainEvent& e : events) handleBrain(e, now);
+    handleFeed(feed.tick(now), now);
+    askNextLine();
     bool camArrival = false;
     if (camera && camera->poll(now)) camArrival = arrival->update(camera->score(), now);
     if (camArrival) halLog("arrival (score %d)", camera->score());
@@ -633,6 +812,10 @@ struct App {
     if (a.volume != lastVolume) audio.setVolume(lastVolume = uint8_t(a.volume));
     lastQuiet = a.quiet;
     if (a.endConversation) handleConductor(conductor.interrupt(now));
+    if (a.newConsole && thinking) {  // a tap while the brain is thinking: never mind the question
+      halLog("ask: cancelled by a tap");
+      endTalk();
+    }
     if (a.stopAudio) audio.stop();
     if (a.newConsole) {
       std::string id = !wantScreen.empty() && consoles.show(wantScreen) ? wantScreen : consoles.next();
@@ -811,7 +994,8 @@ struct App {
     drawEye(lens, L, p);
     lens.pushSprite(&frame, lensX(L), lensY(L), eyeTransparentKey());
     drawHud(frame, hudInfo(now), now);
-    const char* strip = overlay == Overlay::Ask    ? "type your question   ENTER ask   ESC cancel"
+    const char* strip = overlay == Overlay::Ask    ? (askMode == AskMode::Topic ? "type a subject   ENTER go   ESC cancel"
+                                                                                : "TAB which HAL   ENTER ask   ESC cancel")
                         : overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
                                                                : "UP DOWN move   ENTER pick   ESC back")
                         : thinking                 ? ((now / 500) % 2 ? "BRAIN THINKING ...   ESC cancel" : "BRAIN THINKING       ESC cancel")
@@ -849,11 +1033,16 @@ struct App {
       int n = conductor.line();
       const auto& lines = conductor.dialogue().lines;
       if (n >= 1 && n <= int(lines.size()))
-        drawSubtitle(frame, lines[n - 1].who == hal::Speaker::New, lines[n - 1].text, n, int(lines.size()));
+        drawSubtitle(frame, lines[n - 1].who == hal::Speaker::New, lines[n - 1].text, n,
+                     conductor.live() ? 0 : int(lines.size()));
     } else if (int32_t(gloatUntil - now) > 0) {
       drawBanner(frame, gloatText.c_str(), now);
     }
-    if (overlay == Overlay::Ask) drawAskBox(frame, askBox.text(), 120, now);
+    if (overlay == Overlay::Ask) {
+      drawAskBox(frame, askMode == AskMode::Zero ? "ASK HAL ZERO" : askMode == AskMode::Desk ? "ASK THE DESK UNIT"
+                                                                   : "WHAT SHOULD THEY ARGUE ABOUT?",
+                 askBox.text(), 120, now);
+    }
     if (overlay == Overlay::Menu) drawMenu(frame, "HAL ZERO", menu);
     if (overlay == Overlay::Dialogues) drawMenu(frame, "TALK TO THE DESK UNIT", menu);
   }
@@ -896,10 +1085,10 @@ struct App {
     drawEyeScreen(4200, 1.0f);
     overlay = Overlay::Ask;
     drawEyeScreen(4200, 1.0f);
-    drawAskBox(frame, "What do you think of the old model on the desk?", 120, 400);
+    drawAskBox(frame, "ASK HAL ZERO", "What do you think of the old model on the desk?", 120, 400);
     shot("06a-ask-box");
     drawEyeScreen(4200, 1.0f);
-    drawAskBox(frame, std::string(120, 'w'), 120, 400);
+    drawAskBox(frame, "WHAT SHOULD THEY ARGUE ABOUT?", std::string(120, 'w'), 120, 400);
     shot("06b-ask-box-full");
     overlay = Overlay::None;
     thinking = true;
@@ -1097,7 +1286,7 @@ int main(int argc, char** argv) {
   bool keysMode = false;
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, brainArg;
+  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, brainArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -1109,6 +1298,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--layout") && i + 1 < argc) layoutArg = argv[++i];
     else if (!std::strcmp(argv[i], "--show") && i + 1 < argc) showArg = argv[++i];
     else if (!std::strcmp(argv[i], "--ask") && i + 1 < argc) askArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--ask-desk") && i + 1 < argc) askDeskArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--argue") && i + 1 < argc) argueArg = argv[++i];
     else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
     else if (!std::strcmp(argv[i], "--keys")) keysMode = true;
   }
@@ -1128,6 +1319,8 @@ int main(int argc, char** argv) {
   app.autoDialogue = dialogueArg;
   app.autoShow = showArg;
   app.autoAsk = askArg;
+  app.autoAskDesk = askDeskArg;
+  app.autoArgue = argueArg;
   if (!brainArg.empty()) {  // --brain host[:port] overrides config.txt, for trying the chat in the simulator
     app.cfg.brain = true;
     size_t colon = brainArg.rfind(':');

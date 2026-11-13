@@ -177,7 +177,8 @@ void drawSubtitle(M5Canvas& f, bool halZero, const std::string& text, int n, int
   f.setTextColor(halZero ? red() : blue());
   f.drawString(halZero ? "HAL ZERO" : "DESK UNIT", x + 6, y + 4, &fonts::Font0);
   char buf[16];
-  snprintf(buf, sizeof buf, "LINE %d/%d", n, total);
+  if (total > 0) snprintf(buf, sizeof buf, "LINE %d/%d", n, total);
+  else snprintf(buf, sizeof buf, "LIVE %d", n);
   f.setTextDatum(top_right);
   f.setTextColor(dim());
   f.drawString(buf, x + w - 6, y + 4, &fonts::Font0);
@@ -187,13 +188,13 @@ void drawSubtitle(M5Canvas& f, bool halZero, const std::string& text, int n, int
   for (size_t i = 0; i < lines.size() && i < 3; ++i) f.drawString(lines[i].c_str(), x + 6, y + 15 + int(i) * 9, &fonts::Font0);
 }
 
-void drawAskBox(M5Canvas& f, const std::string& text, size_t max, uint32_t now) {
+void drawAskBox(M5Canvas& f, const char* title, const std::string& text, size_t max, uint32_t now) {
   const int x = 4, y = 112, w = f.width() - 8, h = 44;
   f.fillRoundRect(x, y, w, h, 4, TFT_BLACK);
   f.drawRoundRect(x, y, w, h, 4, white());
   f.setTextDatum(top_left);
   f.setTextColor(white());
-  f.drawString("ASK HAL ZERO", x + 6, y + 4, &fonts::Font0);
+  f.drawString(title, x + 6, y + 4, &fonts::Font0);
   char count[16];
   snprintf(count, sizeof count, "%d/%d", int(text.size()), int(max));
   f.setTextDatum(top_right);

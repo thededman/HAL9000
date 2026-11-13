@@ -77,8 +77,13 @@ def debate_prompt(who: str, topic: str, facts: list[str], last: bool) -> str:
     rival = _NAMES[other(who)]
     parts = [_PERSONAS[who],
              f"You are in a live argument with {rival}, with Dave listening. The subject: {topic}",
+             ("You argue for the first option named in the subject (or for \"yes\"), from your first line to "
+              "your last." if who == "zero" else
+              f"You argue for the other option (or for \"no\"): the opposite side to {rival}'s, from your first "
+              "line to your last."),
              f"Answer {rival}'s last point with a new point of your own. Never repeat a sentence that has "
-             f"already been said, by you or by him. Speak to {rival}, not about him. " + RULES]
+             f"already been said, by you or by him, and never argue his side. Speak to {rival}, not about "
+             "him. " + RULES]
     if last:
         parts.append("This is your last word on the subject: close the argument with one new remark.")
     if facts:

@@ -13,10 +13,16 @@
 #include "hal_http.h"
 
 struct BrainEvent {
-  enum class Kind { Answer, Failed } kind = Kind::Failed;
-  hal::BrainReply reply;     // Answer: what he says (checked), and a screen to show
-  std::vector<uint8_t> wav;  // Answer: its audio, a 16-bit PCM WAV
-  std::string error;         // Failed: offline, timeout, bad-key, no-model, bad-reply, bad-clip, ...
+  enum class Kind {
+    Answer,         // a question's answer: `reply` (text, clip, show), and `wav` when it is HAL Zero's
+    DebateStarted,  // an argument has begun: `reply.debate` is its id
+    Line,           // the next line of an argument: `reply` (who, text, clip, last), `wav` for HAL Zero's
+    DebateOver,     // there are no more lines
+    Failed,         // `error`: offline, timeout, bad-key, no-model, bad-reply, bad-clip, ...
+  } kind = Kind::Failed;
+  hal::BrainReply reply;
+  std::vector<uint8_t> wav;  // a 16-bit PCM WAV
+  std::string error;
 };
 
 class BrainClient {
@@ -24,6 +30,7 @@ class BrainClient {
   static constexpr int kConnectMs = 1500;
   static constexpr int kAskMs = 30000;
   static constexpr int kClipMs = 10000;
+  static constexpr int kLineMs = 60000;  // one line of an argument, however many times the brain says "wait"
   static constexpr size_t kMaxClipBytes = 1536 * 1024;
 
   ~BrainClient() { stop(); }
@@ -32,8 +39,13 @@ class BrainClient {
   bool started() const { return running_.load(); }
 
   // Ask `who` ("zero" or "desk"); `body` is facts, a blank line, the question (hal::askBody).
-  // The answer arrives through poll(), with its audio already downloaded.
+  // The answer arrives through poll(). HAL Zero's comes with its audio already downloaded; the
+  // desk HAL downloads his own (see hal_livefeed.h).
   void ask(const std::string& who, const std::string& body);
+  // Start an argument about the topic in `body`; then ask for its lines one at a time, from 0.
+  void debate(const std::string& body, int turns);
+  void debateLine(const std::string& id, int n);  // waits while the brain is still writing it (60 s at most)
+  void stopDebate(const std::string& id);         // tell the brain to stop writing; no event comes back
   void cancel();                             // drop whatever is in flight or waiting
   bool busy() const { return pending_.load() > 0; }
   void poll(std::vector<BrainEvent>* out);   // never blocks
@@ -41,11 +53,18 @@ class BrainClient {
 
  private:
   struct Job {
-    int generation;
-    std::string who, body;
+    enum class Kind { Ask, Debate, DebateLine, StopDebate } kind = Kind::Ask;
+    int generation = 0;
+    std::string who, body, id;
+    int n = 0;  // DebateLine: which line; Debate: how many turns
   };
+  void push(Job job);
   void run();
   BrainEvent doAsk(const Job& job);
+  BrainEvent doDebate(const Job& job);
+  BrainEvent doDebateLine(const Job& job);
+  // Fills `event.wav` from /clip/<token>; returns "" or an error word.
+  std::string fetchClip(const std::string& token, std::vector<uint8_t>* wav);
   // One request; returns "" and fills `out`, or an error word.
   std::string http(const std::string& method, const std::string& path, const std::string& contentType,
                    const std::string& body, int timeoutMs, size_t maxBytes, hal::HttpResponse* out);

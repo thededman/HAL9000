@@ -24,6 +24,12 @@ int msLeft(Clock::time_point deadline) {
   return left > 0 ? static_cast<int>(left) : 0;
 }
 
+BrainEvent failed(const std::string& error) {
+  BrainEvent event;
+  event.error = error;
+  return event;
+}
+
 }  // namespace
 
 void BrainClient::start(const std::string& host, int port, const std::string& key) {
@@ -43,14 +49,46 @@ void BrainClient::stop() {
   if (worker_.joinable()) worker_.join();
 }
 
-void BrainClient::ask(const std::string& who, const std::string& body) {
+void BrainClient::push(Job job) {
   if (!running_) return;
+  job.generation = generation_.load();
   {
     std::lock_guard<std::mutex> lock(mu_);
-    jobs_.push_back({generation_.load(), who, body});
+    jobs_.push_back(std::move(job));
     ++pending_;
   }
   wake_.notify_all();
+}
+
+void BrainClient::ask(const std::string& who, const std::string& body) {
+  Job job;
+  job.kind = Job::Kind::Ask;
+  job.who = who;
+  job.body = body;
+  push(std::move(job));
+}
+
+void BrainClient::debate(const std::string& body, int turns) {
+  Job job;
+  job.kind = Job::Kind::Debate;
+  job.body = body;
+  job.n = turns;
+  push(std::move(job));
+}
+
+void BrainClient::debateLine(const std::string& id, int n) {
+  Job job;
+  job.kind = Job::Kind::DebateLine;
+  job.id = id;
+  job.n = n;
+  push(std::move(job));
+}
+
+void BrainClient::stopDebate(const std::string& id) {
+  Job job;
+  job.kind = Job::Kind::StopDebate;
+  job.id = id;
+  push(std::move(job));
 }
 
 void BrainClient::cancel() {
@@ -88,38 +126,87 @@ void BrainClient::run() {
       job = std::move(jobs_.front());
       jobs_.pop_front();
     }
-    BrainEvent event = doAsk(job);
+    if (job.kind == Job::Kind::StopDebate) {  // nothing to report back
+      hal::HttpResponse ignored;
+      http("POST", "/debate/" + job.id + "/stop", "", "", 3000, 4096, &ignored);
+      std::lock_guard<std::mutex> lock(mu_);
+      --pending_;
+      continue;
+    }
+    BrainEvent event = job.kind == Job::Kind::Ask      ? doAsk(job)
+                       : job.kind == Job::Kind::Debate ? doDebate(job)
+                                                       : doDebateLine(job);
     std::lock_guard<std::mutex> lock(mu_);
     --pending_;
     if (job.generation == generation_.load()) done_.push_back(std::move(event));  // else: cancelled meanwhile
   }
 }
 
+std::string BrainClient::fetchClip(const std::string& token, std::vector<uint8_t>* wav) {
+  hal::HttpResponse clip;
+  std::string error = http("GET", "/clip/" + token, "", "", kClipMs, kMaxClipBytes, &clip);
+  if (!error.empty()) return error;
+  if (clip.status != 200) return "bad-clip";
+  wav->assign(clip.body.begin(), clip.body.end());
+  hal::WavInfo info;
+  if (!hal::parseWav(wav->data(), wav->size(), &info) || info.dataBytes == 0) return "bad-clip";
+  return "";
+}
+
 BrainEvent BrainClient::doAsk(const Job& job) {
   BrainEvent event;
   hal::HttpResponse response;
   std::string error = http("POST", "/ask?who=" + job.who, "text/plain", job.body, kAskMs, 4096, &response);
-  if (error.empty()) {
-    event.reply = hal::parseBrainReply(response);
-    if (!event.reply.ok) error = event.reply.error;
-    else if (event.reply.text.empty() || event.reply.clip.empty()) error = "bad-reply";
+  if (!error.empty()) return failed(error);
+  event.reply = hal::parseBrainReply(response);
+  if (!event.reply.ok) return failed(event.reply.error);
+  if (event.reply.text.empty() || event.reply.clip.empty()) return failed("bad-reply");
+  if (job.who == "zero") {  // his own line: the audio is needed here
+    error = fetchClip(event.reply.clip, &event.wav);
+    if (!error.empty()) return failed(error);
   }
-  if (error.empty()) {
-    hal::HttpResponse clip;
-    error = http("GET", "/clip/" + event.reply.clip, "", "", kClipMs, kMaxClipBytes, &clip);
-    hal::WavInfo info;
-    if (error.empty() && clip.status != 200) error = "bad-clip";
-    if (error.empty()) {
-      event.wav.assign(clip.body.begin(), clip.body.end());
-      if (!hal::parseWav(event.wav.data(), event.wav.size(), &info) || info.dataBytes == 0) error = "bad-clip";
-    }
-  }
-  if (!error.empty()) {
-    event = BrainEvent();
-    event.error = error;
-    return event;
-  }
+  event.reply.who = job.who;
   event.kind = BrainEvent::Kind::Answer;
+  return event;
+}
+
+BrainEvent BrainClient::doDebate(const Job& job) {
+  BrainEvent event;
+  hal::HttpResponse response;
+  std::string error =
+      http("POST", "/debate?turns=" + std::to_string(job.n), "text/plain", job.body, kAskMs, 4096, &response);
+  if (!error.empty()) return failed(error);
+  event.reply = hal::parseBrainReply(response);
+  if (!event.reply.ok) return failed(event.reply.error);
+  if (event.reply.debate.empty()) return failed("bad-reply");
+  event.kind = BrainEvent::Kind::DebateStarted;
+  return event;
+}
+
+BrainEvent BrainClient::doDebateLine(const Job& job) {
+  BrainEvent event;
+  const auto giveUp = Clock::now() + std::chrono::milliseconds(kLineMs);
+  const int generation = generation_.load();
+  while (true) {
+    hal::HttpResponse response;
+    // The brain holds the request for up to 20 s while the line is being written.
+    std::string error = http("GET", "/debate/" + job.id + "/" + std::to_string(job.n), "", "", 25000, 4096, &response);
+    if (!error.empty()) return failed(error);
+    event.reply = hal::parseBrainReply(response);
+    if (!event.reply.ok) return failed(event.reply.error);
+    if (event.reply.end) {
+      event.kind = BrainEvent::Kind::DebateOver;
+      return event;
+    }
+    if (!event.reply.wait) break;
+    if (Clock::now() >= giveUp || generation != generation_.load()) return failed("timeout");
+  }
+  if (event.reply.text.empty() || event.reply.clip.empty() || event.reply.who.empty()) return failed("bad-reply");
+  if (event.reply.who == "zero") {
+    std::string error = fetchClip(event.reply.clip, &event.wav);
+    if (!error.empty()) return failed(error);
+  }
+  event.kind = BrainEvent::Kind::Line;
   return event;
 }
 

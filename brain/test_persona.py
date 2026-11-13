@@ -194,6 +194,8 @@ class PromptTest(unittest.TestCase):
         self.assertIn("HAL Zero", d)  # who he is arguing with
         self.assertNotIn("[SHOW", d)
         self.assertNotIn("last word", debate_prompt("zero", "tea", [], last=False))
+        self.assertIn("first option", debate_prompt("zero", "tea or coffee", [], last=False))  # each keeps a side
+        self.assertIn("other option", debate_prompt("desk", "tea or coffee", [], last=False))
 
     def test_unknown_hal(self):
         for f in (lambda: system_prompt("dave", []), lambda: debate_prompt("dave", "x", [], False), lambda: other("dave"),
