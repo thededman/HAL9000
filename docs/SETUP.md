@@ -329,9 +329,30 @@ Press Enter, type a question, press Enter again. He answers aloud with a subtitl
 your monitor wall" also brings that screen up. Esc cancels a question he is still thinking
 about, and Space interrupts an answer.
 
-- Until it is paired with HAL Zero the brain only answers requests from this computer.
-  `tools/brain.sh pair` (which shares a key with HAL Zero and opens the brain to your
-  network) is for the Cardputer chat that comes next; you don't need it yet.
+**Chat on the Cardputer.** HAL Zero has to know where the brain is and share a key with it:
+
+```bash
+tools/brain.sh pair
+```
+
+- This makes a random key, writes `brain=on`, `brain_host`, `brain_port` and `brain_key` into
+  HAL Zero's `~/hal/config.txt` over SSH (his other settings are kept), and saves the key in
+  `brain/.env`. The key is never shown. A different Cardputer: `tools/brain.sh pair user@host`.
+- Restart the brain (`tools/brain.sh stop`, then `start`) and HAL Zero. A paired brain listens
+  on your network (port 9100) while it runs, and only answers requests that carry the key. If
+  your computer has a firewall, let Python accept incoming connections (macOS asks; on Linux
+  open TCP port 9100 to your own network).
+- On the Cardputer press **Enter**, type a question (120 characters at most) and press Enter
+  again. He thinks for a second and answers aloud with a subtitle. Esc cancels; Space interrupts
+  an answer. `tools/cardputer.sh run --ask "How hot are you running?"` asks from your computer.
+- If he says his higher functions are offline, the brain isn't running or can't be reached:
+  check `tools/brain.sh status`, and that both are on the same network.
+- To undo pairing, delete the `HAL_BRAIN_KEY` line from `brain/.env` and set `brain=off` in
+  HAL Zero's `~/hal/config.txt`. Until it is paired the brain only answers requests from the
+  computer it runs on.
+- A keyboard that types the wrong characters: `tools/cardputer.sh run --keys` shows and logs
+  the code of every key you press.
+
 - The brain's own tests need no model, voice or microphone:
   `tools/.venv/bin/python -m unittest discover -s brain -t . -p 'test_*.py'`
 

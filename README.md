@@ -96,7 +96,8 @@ when he quits.
 
 **Keys:** Space is HAL's "finger" (tap or hold, like the CoreS3's screen), Tab or
 up/down opens the menu, D lists the conversations, Enter picks, Esc goes back (and
-quits from the eye). The arrows are F (up), X (down), Z (left) and C (right), with or
+quits from the eye). With the AI brain paired, Enter on the eye screen opens a box to
+type him a question. The arrows are F (up), X (down), Z (left) and C (right), with or
 without Fn.
 
 **His screens.** Besides the shared console screens and Visual Analysis, HAL Zero has
@@ -135,8 +136,14 @@ program on your computer does the thinking with an AI model that runs locally
 Every answer is cleaned down to one short spoken line, and the film's famous lines are
 filtered out: the HALs only do original material.
 
-The brain itself already works from the computer (`tools/brain.sh ask zero "..."`):
-[docs/SETUP.md](docs/SETUP.md#9-the-ai-brain-optional), step 9. Chat on the Cardputer comes next.
+What works today: on the Cardputer, press **Enter**, type a question and press Enter again.
+HAL Zero sends it to the brain along with his real readings (time, temperature, Wi-Fi, the
+link to the desk HAL), then answers aloud with a subtitle; ask him to show you a screen and
+he brings it up. From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` do the
+same for either HAL. Still to come: the desk HAL speaking his answers, live arguments on the
+devices, and talking instead of typing.
+
+Set-up is step 9 of [docs/SETUP.md](docs/SETUP.md#9-the-ai-brain-optional).
 
 ## Licence
 

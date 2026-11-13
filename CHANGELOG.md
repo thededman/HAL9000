@@ -7,10 +7,19 @@ and versions follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- The AI brain, first part: a small server on your computer (`tools/brain.sh start`) that
-  answers as either HAL in his voice, using a model that runs locally through Ollama.
-  `tools/brain.sh ask zero "..."` asks from the computer. It can also turn a recording into
-  text and run a live argument between the two HALs. Chat on the devices comes next.
+- The AI brain: a small server on your computer (`tools/brain.sh start`) that answers as
+  either HAL in his voice, using a model that runs locally through Ollama. It can also turn a
+  recording into text and run a live argument between the two HALs.
+- Typed chat with HAL Zero: press Enter on the Cardputer, type a question, and he answers
+  aloud with a subtitle, using his real readings. Asking for a screen brings it up. If the
+  brain can't be reached he says so (five new lines). `tools/brain.sh pair` connects the two.
+- `tools/brain.sh ask zero "..."` (or `ask desk`) asks from the computer; the simulator takes
+  `--brain HOST` and `--ask "QUESTION"`; `--keys` shows the code of every key pressed.
+- A guard that keeps the film's best-known lines out of anything the AI says.
+
+### Changed
+- The two HALs speak link version 3 (messages for fetching AI lines, not used yet). Older
+  firmware on either side keeps working.
 
 ## [0.5.0] - 2026-11-11
 

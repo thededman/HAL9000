@@ -3,7 +3,8 @@
 #   tools/cardputer.sh build     build in Docker (arm64 Debian 13, like the device)
 #   tools/cardputer.sh deploy    copy the program, start script and launcher entry to the device (as pi)
 #   tools/cardputer.sh install   add HAL Zero to M5Stack's launcher (once; asks for pi's sudo password)
-#   tools/cardputer.sh run [ARGS] start it on the device's screen (Esc quits; the launcher comes back)
+#   tools/cardputer.sh run [ARGS] start it on the device's screen (Esc quits; the launcher comes back);
+#                                e.g. run --show wall, run --ask "A question for the AI brain", run --keys
 #   tools/cardputer.sh stop      quit it
 #   tools/cardputer.sh log       the last lines of its log
 #   tools/cardputer.sh look      make it look around (Visual Analysis, the live camera)
@@ -32,7 +33,9 @@ case "${1:-}" in
     ;;
   run)
     shift
-    ssh "$HOST" "setsid -f ~/hal-zero/hal-zero $* > /dev/null 2>&1 < /dev/null"
+    args=""
+    for a in "$@"; do args="$args $(printf '%q' "$a")"; done  # keep "a question with spaces" as one argument
+    ssh "$HOST" "setsid -f ~/hal-zero/hal-zero$args > /dev/null 2>&1 < /dev/null"
     echo "started; log: tools/cardputer.sh log"
     ;;
   install)
