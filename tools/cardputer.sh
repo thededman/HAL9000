@@ -33,6 +33,9 @@ case "${1:-}" in
     ;;
   run)
     shift
+    if ssh "$HOST" 'pgrep -x hal9000 >/dev/null'; then
+      echo "HAL Zero is already running on the device (tools/cardputer.sh stop quits him)"; exit 1
+    fi
     args=""
     for a in "$@"; do args="$args $(printf '%q' "$a")"; done  # keep "a question with spaces" as one argument
     ssh "$HOST" "setsid -f ~/hal-zero/hal-zero$args > /dev/null 2>&1 < /dev/null"

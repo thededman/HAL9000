@@ -3,6 +3,12 @@
 # M5Stack's launcher shares that screen, so it's paused while HAL Zero runs and
 # brought back (to its lock screen) when he quits: Esc, the menu's Quit, or
 # `pkill hal9000`. Extra arguments go to hal9000 (e.g. --link HOST, --dialogue ID).
+# One HAL Zero at a time: two would fight over the screen, the keyboard, the sound and the link
+# (started from the launcher and over SSH at the same moment, for instance).
+if pgrep -u "$(id -u)" -x hal9000 >/dev/null; then
+  echo "HAL Zero is already running" >&2
+  exit 0
+fi
 export XDG_RUNTIME_DIR="/run/user/$(id -u)"   # PipeWire, for sound
 [ -t 2 ] || exec > /tmp/hal-zero.log 2>&1      # started from the launcher: keep a log
 DIR="$(cd "$(dirname "$0")" && pwd)"
