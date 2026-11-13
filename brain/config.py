@@ -1,5 +1,6 @@
 """The brain's settings file: brain/.env, KEY=VALUE lines. It is git-ignored: keys live there."""
 import pathlib
+import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / "brain" / ".env"
@@ -10,7 +11,7 @@ def read_env(path=ENV_PATH) -> dict[str, str]:
     """Settings from a KEY=VALUE file. Comments, blank lines and lines without '=' are skipped."""
     env: dict[str, str] = {}
     try:
-        text = pathlib.Path(path).read_text(encoding="utf-8")
+        text = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return env
     for line in text.splitlines():
@@ -32,3 +33,8 @@ def port_from(env: dict[str, str]) -> int:
     except ValueError:
         return DEFAULT_PORT
     return port if 1024 <= port <= 65535 else DEFAULT_PORT
+
+
+def valid_key(key) -> bool:
+    """The shared key is 32 lower-case hex characters: the only kind HAL Zero accepts."""
+    return isinstance(key, str) and re.fullmatch(r"[0-9a-f]{32}", key) is not None

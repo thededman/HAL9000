@@ -1,5 +1,7 @@
 import http.client
+import socket
 import threading
+import time
 import unittest
 
 from brain.clips import ClipStore
@@ -19,12 +21,16 @@ def fields(body: bytes) -> dict:
 class ServerCase(unittest.TestCase):
     key = KEY
     long_poll_s = 5.0
+    read_deadline_s = 15.0
+    max_handlers = 16
 
     def setUp(self):
         self.provider, self.voice, self.ears = FakeProvider(), FakeVoice(), FakeEars()
         self.brain = Brain(self.provider, self.voice, self.ears, ClipStore(), ChatMemory())
+        self.log: list[str] = []
         self.server = make_server(self.brain, Debates(self.brain), self.key, port=0, long_poll_s=self.long_poll_s,
-                                  log=False)
+                                  log=self.log.append, read_deadline_s=self.read_deadline_s,
+                                  max_handlers=self.max_handlers)
         self.port = self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         self.thread.start()
@@ -37,7 +43,7 @@ class ServerCase(unittest.TestCase):
     def call(self, method, path, body=None, key=KEY, headers=None, length=True):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         try:
-            conn.putrequest(method, path)
+            conn.putrequest(method, path, skip_host="Host" in (headers or {}))
             if key is not None:
                 conn.putheader("X-HAL-Key", key)
             for name, value in (headers or {}).items():
@@ -51,6 +57,23 @@ class ServerCase(unittest.TestCase):
             return reply.status, reply.read(), reply.getheader("Content-Type", "")
         finally:
             conn.close()
+
+
+    def raw(self, data: bytes, hold_s: float = 5.0) -> tuple[bytes, float]:
+        """Send bytes as they are; returns everything the server sent before it closed, and how long that took."""
+        started = time.monotonic()
+        with socket.create_connection(("127.0.0.1", self.port), timeout=hold_s) as sock:
+            sock.sendall(data)
+            got = b""
+            try:
+                while True:
+                    chunk = sock.recv(65536)
+                    if not chunk:
+                        break
+                    got += chunk
+            except (TimeoutError, ConnectionError):
+                pass
+        return got, time.monotonic() - started
 
 
 class RoundTripTest(ServerCase):
@@ -178,6 +201,140 @@ class RefusalTest(ServerCase):
         self.assertEqual(self.call("POST", "/hear", make_wav(1.0)), (503, b"error=no-ears\n", "text/plain; charset=utf-8"))
 
 
+class HardeningTest(ServerCase):
+    def post(self, path: str, body: bytes, extra: str = "") -> bytes:
+        return (f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nX-HAL-Key: {KEY}\r\n{extra}"
+                f"Content-Length: {len(body)}\r\n\r\n").encode() + body
+
+    def test_error_after_body_closes_at_once(self):
+        for path, body in (("/ask?who=dave", b"\nhi"), ("/hear", make_wav(1.0, rate=22050)),
+                           ("/debate/" + "0" * 16 + "/stop", b"")):
+            got, took = self.raw(self.post(path, body))
+            self.assertIn(b"error=", got, path)
+            self.assertLess(took, 0.5, path)  # not held open waiting for a body that was already read
+        self.provider.fail_on = {1}
+        got, took = self.raw(self.post("/ask?who=zero", b"\nhi"))
+        self.assertIn(b"503", got.split(b"\r\n")[0])
+        self.assertLess(took, 0.5)
+
+    def test_content_length_odd_digits(self):
+        head = f"POST /ask?who=zero HTTP/1.1\r\nHost: x\r\nX-HAL-Key: {KEY}\r\n"
+        got, _ = self.raw(head.encode() + b"Content-Length: \xb2\r\n\r\n")  # a superscript two "is a digit"
+        self.assertIn(b"error=no-length", got)
+        got, _ = self.raw(head.encode() + b"Content-Length: " + b"9" * 5000 + b"\r\n\r\n")
+        self.assertIn(b"error=too-large", got)
+        got, _ = self.raw(head.encode() + b"Content-Length: -5\r\n\r\n")
+        self.assertIn(b"error=no-length", got)
+        self.assertEqual(self.provider.calls, [])
+
+    def test_bad_url_gets_a_status(self):
+        for line in (b"GET http://[::1 HTTP/1.1", b"POST http://[::1 HTTP/1.1"):
+            got, _ = self.raw(line + b"\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+            self.assertRegex(got.split(b"\r\n")[0], rb"^HTTP/1\.[01] 4\d\d", line)
+            self.assertIn(b"error=", got)
+
+    def test_unexpected_error_is_500_and_it_keeps_serving(self):
+        def boom(system, messages, max_tokens=80):
+            raise RuntimeError("something nobody planned for")
+
+        self.provider.chat = boom
+        status, body, _ = self.call("POST", "/ask?who=zero", b"\nhi")
+        self.assertEqual((status, body), (500, b"error=internal\n"))
+        self.assertEqual(self.call("GET", "/health")[0], 200)
+        self.assertTrue(any("internal error: RuntimeError" in line for line in self.log))
+        self.assertFalse(any("Traceback" in line for line in self.log))
+
+    def test_plain_errors_for_things_the_library_refuses(self):
+        got, _ = self.raw(b"BREW /coffee HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertIn(b"error=", got)
+        self.assertNotIn(b"<html", got.lower())
+
+    def test_log_line_bounded_and_printable(self):
+        self.raw(b"GET /" + b"a" * 5000 + b"\x1b[31m\x07 HTTP/1.1\r\nHost: x\r\n\r\n")
+        self.assertTrue(self.log)
+        for line in self.log:
+            self.assertLessEqual(len(line), 260)
+            self.assertNotIn("\x1b", line)
+            self.assertNotIn("\x07", line)
+
+    def test_log_never_holds_key_or_token(self):
+        got = fields(self.call("POST", "/ask?who=zero", b"\nhi")[1])
+        self.call("GET", "/clip/" + got["clip"], key=None)
+        self.call("POST", "/ask?who=zero", b"\nhi", key="wrong-" + KEY)
+        self.assertGreaterEqual(len(self.log), 3)
+        for line in self.log:
+            self.assertNotIn(KEY, line)
+            self.assertNotIn(got["clip"], line)
+
+    def test_a_503_says_why_in_the_log(self):
+        self.provider.fail_on = {1}
+        self.call("POST", "/ask?who=zero", b"\nhi")
+        self.assertTrue(any("no-model" in line and "fake model is down" in line for line in self.log), self.log)
+
+    def test_debate_failure_is_503(self):
+        self.provider.fail_on = {1}
+        debate = fields(self.call("POST", "/debate?turns=2", b"\ntea")[1])["debate"]
+        status, body, _ = self.call("GET", f"/debate/{debate}/0")
+        self.assertEqual((status, body), (503, b"error=no-model\n"))  # not 204: that means "finished"
+
+    def test_heard_is_plain_and_bounded(self):
+        self.ears.text = "caf\u00e9 \u266a \u201cquoted\u201d " + "x" * 500
+        heard = fields(self.call("POST", "/hear", make_wav(1.0))[1])["heard"]
+        self.assertLessEqual(len(heard), 300)
+        self.assertTrue(all(" " <= ch <= "~" for ch in heard), heard[:40])
+        self.assertTrue(heard.startswith("caf quoted x"))
+
+    def test_documented_maximum_body_fits(self):
+        body = ("\n".join("f" * 120 for _ in range(24)) + "\n\n" + "q" * 300).encode()
+        self.assertLessEqual(len(body), 4096)
+        self.assertEqual(self.call("POST", "/ask?who=zero", body)[0], 200)
+        self.assertEqual(self.provider.calls[0][0].count("- " + "f" * 120), 24)
+
+    def test_ask_during_an_argument(self):
+        self.provider.delay_s = 0.05
+        debate = fields(self.call("POST", "/debate?turns=4", b"\ntea")[1])["debate"]
+        results = []
+        asker = threading.Thread(target=lambda: results.append(self.call("POST", "/ask?who=desk", b"\nhi")[0]))
+        asker.start()
+        lines = [self.call("GET", f"/debate/{debate}/{n}")[0] for n in range(4)]
+        asker.join(10)
+        self.assertEqual((results, lines), ([200], [200, 200, 200, 200]))
+        self.assertFalse(self.provider.overlapped)
+
+
+class SlowSenderTest(ServerCase):
+    read_deadline_s = 0.4
+    max_handlers = 2
+
+    def test_slow_sender_is_cut_off(self):
+        head = f"POST /ask?who=zero HTTP/1.1\r\nHost: x\r\nX-HAL-Key: {KEY}\r\nContent-Length: 10\r\n\r\nabc"
+        got, took = self.raw(head.encode(), hold_s=5)  # seven bytes of the body never come
+        self.assertLess(took, 2.0)
+        self.assertEqual(self.provider.calls, [])
+        got, took = self.raw(b"GET /health HTT", hold_s=5)  # nor does the rest of this request line
+        self.assertLess(took, 2.0)
+        self.assertEqual(self.call("GET", "/health")[0], 200)
+
+    def test_the_deadline_is_for_sending_not_for_thinking(self):
+        self.provider.delay_s = 0.8  # twice the read deadline
+        self.assertEqual(self.call("POST", "/ask?who=zero", b"\nhi")[0], 200)
+
+    def test_handlers_are_capped(self):
+        held = [socket.create_connection(("127.0.0.1", self.port), timeout=5) for _ in range(2)]
+        try:
+            for sock in held:
+                sock.sendall(b"GET /health HTT")  # two requests that never finish
+            time.sleep(0.1)
+            got, took = self.raw(b"GET /health HTTP/1.1\r\nHost: x\r\n\r\n", hold_s=2)
+            self.assertEqual(got, b"")  # the third is turned away at the door
+            self.assertLess(took, 0.5)
+        finally:
+            for sock in held:
+                sock.close()
+        time.sleep(0.6)  # the two are cut off by the read deadline, and their places come free
+        self.assertEqual(self.call("GET", "/health")[0], 200)
+
+
 class WaitingTest(ServerCase):
     long_poll_s = 0.05
 
@@ -195,6 +352,16 @@ class UnpairedTest(ServerCase):
     def test_binds_local_without_a_key(self):
         self.assertEqual(self.server.server_address[0], "127.0.0.1")
         self.assertEqual(self.call("POST", "/ask?who=zero", b"\nhi", key=None)[0], 200)  # this computer only
+
+    def test_unpaired_refuses_browser_style_requests(self):
+        # A web page open in a browser on this computer can post to 127.0.0.1; it can't hide where it came from.
+        for headers in ({"Origin": "https://attacker.example"}, {"Host": "attacker.example"},
+                        {"Host": "attacker.example:9100"}, {"Origin": "null"}):
+            status, body, _ = self.call("POST", "/ask?who=zero", b"\nhi", key=None, headers=headers)
+            self.assertEqual((status, body), (403, b"error=local-only\n"), headers)
+        for host in ("127.0.0.1:9100", "localhost", "localhost:9100", "[::1]:9100"):
+            self.assertEqual(self.call("POST", "/ask?who=zero", b"\nhi", key=None, headers={"Host": host})[0], 200, host)
+        self.assertEqual(len(self.provider.calls), 4)
 
 
 class PairedBindTest(unittest.TestCase):

@@ -4,6 +4,8 @@ import threading
 import time
 
 from . import persona
+from .providers import ProviderError
+from .voice import VoiceError
 
 
 class Debate:
@@ -19,6 +21,7 @@ class Debate:
         self._lines: list = []
         self._wanted = 0        # the highest line asked for so far
         self._stopped = False   # stopped, failed, or nobody came back for it
+        self._error = None      # why it failed: "no-model", "no-voice" or "internal"
         self._touched = clock()
         self._cond = threading.Condition()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -45,7 +48,10 @@ class Debate:
             try:
                 system = persona.debate_prompt(who, self._topic, self._facts, last=n == self.turns - 1)
                 line = self._brain.speak(who, system, self._messages(who, so_far), allow_show=False)
-            except Exception:  # the model or the voice failed: the argument ends here
+            except Exception as e:  # the model or the voice failed: the argument stops here, and says why
+                with self._cond:
+                    self._error = ("no-model" if isinstance(e, ProviderError) else
+                                   "no-voice" if isinstance(e, VoiceError) else "internal")
                 self.stop()
                 return
             with self._cond:
@@ -55,8 +61,9 @@ class Debate:
                 self._cond.notify_all()
 
     def get(self, n: int, timeout_s: float = 20):
-        """("line", Line) once line n exists, ("wait", None) if it still doesn't after
-        `timeout_s`, ("end", None) past the last line or after the argument stopped."""
+        """("line", Line) once line n exists; ("wait", None) if it still doesn't after
+        `timeout_s`; ("end", None) past the last line or after the argument was stopped;
+        ("failed", "no-model" | "no-voice" | "internal") when the line will never come."""
         deadline = time.monotonic() + timeout_s
         with self._cond:
             self._touched = self._clock()
@@ -67,7 +74,7 @@ class Debate:
                 self._cond.notify_all()
             while n >= len(self._lines):
                 if self._stopped:
-                    return "end", None
+                    return ("failed", self._error) if self._error else ("end", None)
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     return "wait", None

@@ -23,7 +23,8 @@ class Brain:
     def speak(self, who: str, system: str, messages: list[dict], allow_show: bool = True) -> Line:
         """One line from the model, cleaned, spoken in `who`'s voice and kept for fetching."""
         with self._one_at_a_time:
-            text, show = persona.split_show(self.provider.chat(system, messages), who)
+            raw = self.provider.chat(system, messages)[:persona.MAX_RAW]  # far more than a line: don't work on it
+            text, show = persona.split_show(persona.strip_thinking(raw), who)
             text = persona.clean(text)
             if persona.is_film_line(text):  # the prompt forbids it; this makes sure
                 text, show = persona.OWN_WORDS[who], None
@@ -40,4 +41,4 @@ class Brain:
     def hear(self, wav: bytes) -> str:
         """What was said in a recording (16-bit mono 16 kHz); may be empty."""
         stt.check_wav(wav)
-        return stt.tidy(self.ears.transcribe(wav))
+        return persona.plain(stt.tidy(self.ears.transcribe(wav)), persona.MAX_QUESTION)

@@ -31,9 +31,10 @@ def main(argv: list[str]) -> int:
     base = f"http://127.0.0.1:{port_from(env)}"
     body = ("\n".join(args.fact) + "\n\n" + " ".join(args.question)).encode("utf-8")
     headers = {"X-HAL-Key": env["HAL_BRAIN_KEY"]} if env.get("HAL_BRAIN_KEY") else {}
+    direct = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # this computer: never through a proxy
     request = urllib.request.Request(f"{base}/ask?who={args.who}", body, headers)
     try:
-        with urllib.request.urlopen(request, timeout=60) as reply:
+        with direct.open(request, timeout=60) as reply:
             text = reply.read().decode("utf-8")
     except urllib.error.HTTPError as e:
         print(f"The brain said no: {e.code} {e.read().decode('utf-8', 'replace').strip()}", file=sys.stderr)
@@ -51,10 +52,15 @@ def main(argv: list[str]) -> int:
     if not player:
         print("(no audio player found: this needs afplay, aplay or paplay)", file=sys.stderr)
         return 0
-    with urllib.request.urlopen(f"{base}/clip/{urllib.parse.quote(got['clip'])}", timeout=30) as clip, \
-            tempfile.TemporaryDirectory() as folder:
+    try:
+        with direct.open(f"{base}/clip/{urllib.parse.quote(got['clip'])}", timeout=30) as clip:
+            audio = clip.read()
+    except OSError as e:
+        print(f"(couldn't fetch the audio: {e})", file=sys.stderr)
+        return 0
+    with tempfile.TemporaryDirectory() as folder:
         wav = pathlib.Path(folder) / "reply.wav"
-        wav.write_bytes(clip.read())
+        wav.write_bytes(audio)
         subprocess.run(player + [str(wav)], check=False)
     return 0
 

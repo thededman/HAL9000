@@ -1,4 +1,5 @@
 """A local model through Ollama (https://ollama.com) on this computer: nothing leaves the house."""
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -7,6 +8,8 @@ from . import ProviderError
 
 DEFAULT_MODEL = "qwen3.6:35b-a3b"
 DEFAULT_HOST = "http://127.0.0.1:11434"
+# Straight to this computer: an http_proxy setting must not send prompts and facts elsewhere.
+_DIRECT = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
 def build_request(model: str, system: str, messages: list[dict], max_tokens: int) -> dict:
@@ -42,15 +45,15 @@ class OllamaProvider:
         body = json.dumps(build_request(self.model, system, messages, max_tokens)).encode()
         request = urllib.request.Request(self._host + "/api/chat", body, {"Content-Type": "application/json"})
         try:
-            with urllib.request.urlopen(request, timeout=self._timeout) as reply:
+            with _DIRECT.open(request, timeout=self._timeout) as reply:
                 payload = json.load(reply)
         except urllib.error.HTTPError as e:  # Ollama explains itself in the body (e.g. the model isn't pulled)
             try:
                 payload = json.load(e)
             except ValueError:
                 raise ProviderError(f"Ollama answered {e.code}") from None
-        except (OSError, ValueError) as e:  # not running, timed out, or not JSON
-            raise ProviderError(f"Ollama isn't answering: {e}") from None
+        except (OSError, ValueError, http.client.HTTPException) as e:  # not running, timed out, cut off, not JSON
+            raise ProviderError(f"Ollama isn't answering: {type(e).__name__}: {e}"[:200]) from None
         return parse_response(payload)
 
     def warm(self) -> bool:
@@ -58,5 +61,5 @@ class OllamaProvider:
         try:
             self.chat("Reply with one word.", [{"role": "user", "content": "Ready?"}], max_tokens=1)
             return True
-        except ProviderError:
+        except Exception:  # whatever it was, warming up must not take anything else down
             return False

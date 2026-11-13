@@ -22,7 +22,7 @@ HTTP API; `whisper-cli`; `tools/make_voice.py` for the voice.
   `tools/.venv/bin/python -m unittest discover -s brain -t . -p 'test_*.py'` (no model, voice,
   microphone or network needed).
 - Replies are `text/plain; charset=utf-8`, one `key=value` per line, no line breaks in values.
-- Limits, exactly: reply text ≤ 150 characters; question ≤ 300 characters; facts ≤ 40 lines of
+- Limits, exactly: reply text ≤ 150 characters; question ≤ 300 characters; facts ≤ 24 lines of
   ≤ 120 characters; `/ask` and `/debate` bodies ≤ 4096 bytes; `/hear` body ≤ 1 048 576 bytes;
   debate turns 2–12 (default 8); clip tokens 32 hex characters, 600 s; clip store ≤ 64 clips and
   ≤ 40 MB; chat memory 12 messages, 600 s idle; long-poll 20 s; model timeout 25 s.

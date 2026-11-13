@@ -19,7 +19,7 @@ def wav_ms(wav: bytes) -> int:
     try:
         with wave.open(io.BytesIO(wav), "rb") as w:
             return w.getnframes() * 1000 // w.getframerate()
-    except (wave.Error, EOFError, ZeroDivisionError):
+    except Exception:  # not a WAV, or a header that lies about its sizes
         return 0
 
 

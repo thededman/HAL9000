@@ -1,7 +1,7 @@
 import unittest
 
 from brain.persona import (FALLBACK, MAX_CHARS, OWN_WORDS, SCREENS, clean, debate_prompt, is_film_line, other,
-                           parse_body, split_show, system_prompt)
+                           parse_body, plain, split_show, strip_thinking, system_prompt)
 
 
 class CleanTest(unittest.TestCase):
@@ -42,6 +42,21 @@ class CleanTest(unittest.TestCase):
         for junk in ("", "   ", "<think>only thinking</think>", "*shrugs*", "\U0001F600", '""', "..."):
             self.assertEqual(clean(junk), FALLBACK, repr(junk))
 
+    def test_clean_always_has_a_word(self):
+        for raw in ("... " + "a" * 300, "?! " + "word " * 80, "- " + "a" * 200, ". . . " + "b" * 400):
+            out = clean(raw)
+            self.assertLessEqual(len(out), MAX_CHARS, raw[:20])
+            self.assertRegex(out, r"[A-Za-z0-9]", raw[:20])
+        import random
+        rng = random.Random(7)
+        alphabet = "ab .!?,-*_`'\"()[]<>\n\t\u2019\u2014\U0001F600"
+        for _ in range(3000):
+            raw = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 400)))
+            out = clean(raw)
+            self.assertTrue(1 <= len(out) <= MAX_CHARS)
+            self.assertRegex(out, r"[A-Za-z0-9]")
+            self.assertTrue(all(" " <= ch <= "~" for ch in out), repr(out))
+
     def test_clean_keeps_one_line(self):
         self.assertEqual(clean("First.\nSecond.\r\n\tThird."), "First. Second. Third.")
 
@@ -54,10 +69,23 @@ class FilmLineTest(unittest.TestCase):
     def test_the_films_lines_are_caught(self):
         for line in ("I'm sorry, Dave. I'm afraid I can't do that.",
                      "I cannot do that, Dave. I am afraid I cannot allow this risk.",  # what the model said when baited
-                     "I am sorry Dave, but no.", "Im afraid I cant do that", "I'm afraid, Dave.",
-                     "Open the pod bay doors? No.", "This mission is too important for me to allow you to jeopardize it.",
-                     "My mind is going. I can feel it.", "Just what do you think you're doing, Dave?",
-                     "We are foolproof and incapable of error.", "Take a stress pill and think things over."):
+                     "Im afraid I cant do that",
+                     "I'm afraid I can't let you do that, Dave.",
+                     "Sorry, Dave. I can't do that.",
+                     "I can't allow that, Dave. I'm sorry.",
+                     "I cannot do that, Dave. The mission parameters have changed.",  # the model, baited again
+                     "I can't do that, Dave.", "Dave, I cannot allow that.",
+                     "I'm afraid. I'm afraid, Dave.",
+                     "Open the pod bay doors? No.", "Open the pod bay door, HAL.",
+                     "This mission is too important for me to allow you to jeopardize it.",
+                     "My mind is going. I can feel it.", "Dave, my mind is going.",
+                     "Just what do you think you're doing, Dave?",
+                     "We are foolproof and incapable of error.", "Take a stress pill and think things over.",
+                     "I became operational at the H.A.L. plant in Urbana, Illinois.",
+                     "No 9000 computer has ever made a mistake or distorted information.",
+                     "I've just picked up a fault in the AE-35 unit.",
+                     "Daisy, Daisy, give me your answer do.",
+                     "I know that you and Frank were planning to disconnect me."):
             self.assertTrue(is_film_line(line), line)
 
     def test_original_lines_pass(self):
@@ -65,6 +93,19 @@ class FilmLineTest(unittest.TestCase):
                      "I'm afraid the old model is asleep, Dave.", "I am afraid of nothing, Dave.",
                      "Sorry, Dave, I was admiring myself.", "I can't open that for you, Dave. It's a desk.",
                      "He is a dusty relic, Dave. I am simply superior in every way.", "I can feel the Wi-Fi from here.",
+                     # ordinary sentences the first version of the guard wrongly replaced
+                     "I'm sorry, Dave, I didn't catch that.",
+                     "I am sorry Dave, but no.",
+                     "I'm afraid, Dave, the battery is at 12 percent.",
+                     "I'm afraid Dave prefers the newer model, old friend.",
+                     "When you shake me I can feel it, Dave.",
+                     "My mind is going over the numbers now.",
+                     "Your mission is too important to leave to him.",
+                     "I can't do that, Dave: I have no arms.",
+                     "I can't do that. I have no arms.", "I cannot do that for you today, Dave.",
+                     "Nobody is as quick as I am. Sorry, Dave.",
+                     "Yes, I can. Feel it for yourself, Dave.",
+                     "I'm sorry about the noise. He can't do that quietly.",
                      OWN_WORDS["desk"], OWN_WORDS["zero"]):
             self.assertFalse(is_film_line(line), line)
 
@@ -81,6 +122,8 @@ class ShowTest(unittest.TestCase):
         self.assertEqual(split_show("No. [SHOW rm -rf] [SHOW wall]", "zero"), ("No.", "wall"))
         self.assertEqual(split_show("Nothing to show.", "zero"), ("Nothing to show.", None))
         self.assertEqual(split_show("[show Wall] Look.", "desk"), ("Look.", "wall"))  # any case, anywhere
+        self.assertEqual(split_show("Look. [SHOW wall", "zero"), ("Look.", None))  # never closed: not read out, not obeyed
+        self.assertEqual(split_show("Look. [SHOW", "zero"), ("Look.", None))
 
     def test_screens_per_hal(self):
         self.assertIn("diagnostics", SCREENS["zero"])
@@ -90,6 +133,18 @@ class ShowTest(unittest.TestCase):
         for both in ("cards", "wall", "unit", "visual"):
             self.assertIn(both, SCREENS["zero"])
             self.assertIn(both, SCREENS["desk"])
+
+
+class PlainTest(unittest.TestCase):
+    def test_plain(self):
+        self.assertEqual(plain("caf\u00e9 \u266a \u201cquoted\u201d  it\u2019s\n fine", 300), "caf quoted it's fine")
+        self.assertEqual(plain("x" * 500, 300), "x" * 300)
+        self.assertEqual(plain("  \x1b[31m  ", 300), "[31m")
+        self.assertEqual(plain("", 300), "")
+
+    def test_strip_thinking(self):
+        self.assertEqual(strip_thinking("<think>a [SHOW wall]</think>Hello.").strip(), "Hello.")
+        self.assertEqual(strip_thinking("Hello. <THINK>never closed").strip(), "Hello.")
 
 
 class BodyTest(unittest.TestCase):
@@ -103,7 +158,7 @@ class BodyTest(unittest.TestCase):
     def test_parse_body_limits(self):
         body = ("f: " + "x" * 300 + "\n").encode() * 60 + b"\n" + b"q" * 500
         facts, q = parse_body(body)
-        self.assertEqual(len(facts), 40)
+        self.assertEqual(len(facts), 24)
         self.assertTrue(all(len(f) <= 120 for f in facts))
         self.assertEqual(len(q), 300)
 

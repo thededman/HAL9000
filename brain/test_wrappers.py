@@ -1,5 +1,9 @@
 import io
+import os
 import pathlib
+import socket
+import threading
+import time
 import unittest
 import wave
 
@@ -42,6 +46,64 @@ class OllamaTest(unittest.TestCase):
             dead.chat("s", [{"role": "user", "content": "q"}])
         dead.warm()  # never raises
 
+    def test_ollama_cut_off_mid_answer_is_provider_error(self):
+        # A stand-in that promises 500 bytes and hangs up after 20, and one that isn't HTTP at all.
+        for reply in (b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n" + b'{"message": {"conte',
+                      b"SSH-2.0-OpenSSH_9.9\r\n"):
+            listener = socket.create_server(("127.0.0.1", 0))
+            port = listener.getsockname()[1]
+
+            def serve(listener=listener, reply=reply):
+                conn, _ = listener.accept()
+                conn.recv(65536)
+                conn.sendall(reply)
+                conn.close()
+                listener.close()
+
+            threading.Thread(target=serve, daemon=True).start()
+            provider = ollama.OllamaProvider(host=f"http://127.0.0.1:{port}", timeout_s=3)
+            with self.assertRaises(providers.ProviderError):
+                provider.chat("s", [{"role": "user", "content": "q"}])
+
+    def test_warm_never_raises_whatever_happens(self):
+        provider = ollama.OllamaProvider(host="http://127.0.0.1:9", timeout_s=1)
+
+        def boom(*a, **k):
+            raise RuntimeError("anything")
+
+        provider.chat = boom
+        self.assertIs(provider.warm(), False)
+
+    def test_local_calls_ignore_proxies(self):
+        # With http_proxy set, urllib would hand a request for 127.0.0.1 (prompt, facts and all) to the proxy.
+        seen = []
+        listener = socket.create_server(("127.0.0.1", 0))
+        proxy_port = listener.getsockname()[1]
+
+        def proxy():
+            listener.settimeout(1.5)
+            try:
+                conn, _ = listener.accept()
+                seen.append(conn.recv(65536))
+                conn.close()
+            except OSError:
+                pass
+            listener.close()
+
+        threading.Thread(target=proxy, daemon=True).start()
+        old = {k: os.environ.get(k) for k in ("http_proxy", "HTTP_PROXY", "no_proxy", "NO_PROXY")}
+        os.environ["http_proxy"] = os.environ["HTTP_PROXY"] = f"http://127.0.0.1:{proxy_port}"
+        os.environ.pop("no_proxy", None)
+        os.environ.pop("NO_PROXY", None)
+        try:
+            with self.assertRaises(providers.ProviderError):  # nothing listens on the discard port
+                ollama.OllamaProvider(host="http://127.0.0.1:9", timeout_s=1).chat("secret prompt", [])
+        finally:
+            for k, v in old.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        time.sleep(0.1)
+        self.assertEqual(seen, [])
+
     def test_make_provider(self):
         p = providers.make_provider({})
         self.assertEqual((p.name, p.model), ("ollama", "qwen3.6:35b-a3b"))
@@ -72,6 +134,14 @@ class EarsTest(unittest.TestCase):
         for name, clip in cases.items():
             with self.assertRaises(ValueError, msg=name):
                 stt.check_wav(clip)
+
+    def test_broken_headers_are_just_bad_audio(self):
+        good = make_wav(1.0)
+        huge_fmt = good[:16] + b"\xff\xff\xff\xff" + good[20:]  # a chunk that claims to be 4 GB
+        for clip in (huge_fmt, good[:12] + b"fmt " + b"\x00" * 4 + good[20:], b"RIFF\xff\xff\xff\xffWAVE" + b"\x00" * 50):
+            with self.assertRaises(ValueError):
+                stt.check_wav(clip)
+            self.assertEqual(voice.wav_ms(clip), 0)
 
     def test_tidy(self):
         self.assertEqual(stt.tidy(" [BLANK_AUDIO] \n"), "")

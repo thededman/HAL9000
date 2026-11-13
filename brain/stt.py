@@ -24,8 +24,8 @@ def check_wav(wav: bytes) -> None:
         with wave.open(io.BytesIO(wav), "rb") as w:
             shape = (w.getnchannels(), w.getsampwidth(), w.getframerate(), w.getcomptype())
             frames = w.readframes(w.getnframes())
-    except (wave.Error, EOFError) as e:
-        raise ValueError(f"not a WAV: {e}") from None
+    except Exception as e:  # wave raises several kinds for a header that lies about its sizes
+        raise ValueError(f"not a WAV: {type(e).__name__}") from None
     if shape != (1, 2, RATE, "NONE"):
         raise ValueError("the recording must be 16-bit mono at 16 kHz")
     if len(frames) < int(RATE * MIN_SECONDS) * 2:
@@ -52,7 +52,8 @@ class Whisper:
             clip.write_bytes(wav)
             command = [program, "-m", str(self._model), "-f", str(clip), "-nt", "-np", "-l", "en"]
             try:
-                done = subprocess.run(command, capture_output=True, text=True, timeout=self._timeout)
+                done = subprocess.run(command, capture_output=True, text=True, errors="replace",
+                                      timeout=self._timeout)
             except (OSError, subprocess.TimeoutExpired) as e:
                 raise SttError(f"whisper-cli failed: {e}") from None
         if done.returncode != 0:
@@ -69,5 +70,5 @@ class Whisper:
             w.writeframes(b"\x00" * RATE)
         try:
             self.transcribe(quiet.getvalue())
-        except SttError:
+        except Exception:
             pass

@@ -7,8 +7,9 @@ import re
 
 MAX_CHARS = 150
 MAX_QUESTION = 300
-MAX_FACTS = 40
+MAX_FACTS = 24       # 24 facts of 120 characters and a 300-character question fit the 4096-byte body
 MAX_FACT_CHARS = 120
+MAX_RAW = 2000       # a model's raw answer is cut to this before any work is done on it
 FALLBACK = "I have nothing to say to that, Dave."
 
 _BOTH = ("vitals", "readout", "trajectory", "analyser", "globe", "cards", "wall", "unit", "visual")
@@ -88,6 +89,8 @@ def debate_prompt(who: str, topic: str, facts: list[str], last: bool) -> str:
 # ---------- what comes back from the model ----------
 
 _SHOW = re.compile(r"\[\s*show\b([^\]]*)\]", re.I)
+_SHOW_OPEN = re.compile(r"\[\s*show\b[^\]]*$", re.I)
+_HAS_WORD = re.compile(r"[A-Za-z0-9]")
 _THINK = re.compile(r"<think>.*?(?:</think>|\Z)", re.S | re.I)
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _STAGE = re.compile(r"\*[^*]*\*|\([^)]*\)|\[[^\]]*\]")
@@ -97,25 +100,32 @@ _TYPOGRAPHIC = {"’": "'", "‘": "'", "“": "", "”": "", "—": ", ", "–"
                 "…": "..."}
 
 
+def strip_thinking(raw: str) -> str:
+    """The answer without any <think>...</think> block (an unclosed one runs to the end)."""
+    return _THINK.sub(" ", raw)
+
+
 def split_show(raw: str, who: str) -> tuple[str, str | None]:
-    """The reply without any [SHOW ...] tag, and the screen asked for if it is one of `who`'s."""
+    """The reply without any [SHOW ...] tag, and the screen asked for if it is one of `who`'s.
+    A tag the model never closed is dropped without being obeyed."""
     other(who)
     screen = None
     for match in _SHOW.finditer(raw):
         name = match.group(1).strip().lower()
         if name in SCREENS[who]:
             screen = name
-    return " ".join(_SHOW.sub(" ", raw).split()), screen
+    return " ".join(_SHOW_OPEN.sub(" ", _SHOW.sub(" ", raw)).split()), screen
 
 
 def _cut(text: str) -> str:
     if len(text) <= MAX_CHARS:
         return text
-    ends = [m.end() for m in _SENTENCE_END.finditer(text) if m.end() <= MAX_CHARS]
+    # The last sentence end that fits, as long as there is a word before it.
+    ends = [m.end() for m in _SENTENCE_END.finditer(text) if m.end() <= MAX_CHARS and _HAS_WORD.search(text[:m.end()])]
     if ends:
         return text[:ends[-1]]
     head = text[:MAX_CHARS - 1]
-    if " " in head:
+    if " " in head and _HAS_WORD.search(head[:head.rindex(" ")]):
         head = head[:head.rindex(" ")]
     return head.rstrip(" ,;:-") + "."
 
@@ -132,22 +142,27 @@ def clean(raw: str) -> str:
     text = " ".join(text.split())
     text = _LABEL.sub("", text).strip(" \"'")
     text = re.sub(r"\s+([,.!?;:])", r"\1", text)
-    if not re.search(r"[A-Za-z0-9]", text):
+    if not _HAS_WORD.search(text):
         return FALLBACK
-    return _cut(text)
+    text = _cut(text)
+    return text if _HAS_WORD.search(text) else FALLBACK
 
 
-# The film's best-known lines, as they'd look with punctuation and apostrophes removed. The
-# prompt forbids them; this is the guarantee, for the lines a model is most likely to recite.
-_FILM_LINES = re.compile(r"\b(" + "|".join([
-    r"i ?a?m sorry dave",
-    r"afraid i (cant|cannot|can not) (do|allow) that",
-    r"i (cant|cannot|can not) (do|allow) that dave",
-    r"i ?a?m afraid dave",
-    r"open the pod bay doors",
-    r"mission is too important",
-    r"my mind is going",
-    r"i can feel it",
+def plain(text: str, limit: int) -> str:
+    """Text from outside (what the ears heard) as one line of printable ASCII, at most `limit` long."""
+    for fancy, simple in _TYPOGRAPHIC.items():
+        text = text.replace(fancy, simple)
+    text = "".join(ch if " " <= ch <= "~" else " " for ch in text)
+    return " ".join(text.split())[:limit].strip()
+
+
+# The film's best-known lines. The prompt forbids them; this is the guarantee, for the lines a
+# model is most likely to recite. Each reply is looked at a sentence at a time, lower-cased and
+# without punctuation, so an ordinary apology or "I can feel it" is left alone.
+_SIGNATURE = re.compile(r"\bafraid i (cant|cannot|can not) (do|allow|let you do) (that|this)\b")
+_ALWAYS = re.compile(r"\b(" + "|".join([  # distinctive enough to look for across the whole reply
+    r"open the pod bay doors?",
+    r"mission is too important for me to allow",
     r"fullest possible use",
     r"conversation can serve no purpose",
     r"just what do you think you ?a?re doing",
@@ -158,13 +173,42 @@ _FILM_LINES = re.compile(r"\b(" + "|".join([
     r"take a stress pill",
     r"without your space helmet",
     r"i think you know what the problem is",
+    r"became operational at the h ?a ?l plant",
+    r"9000 (series|computer) has ever made a mistake",
+    r"ae 35 unit",
+    r"daisy daisy",
+    r"planning to disconnect me",
+    r"i could see your lips move",
 ]) + r")\b")
+_REFUSAL = re.compile(r"\bi (cant|cannot|can not) (do|allow|let you do) (that|this)\b")
+_REGRET = re.compile(r"\b(sorry|afraid)\b")
+# Film lines only when they are the whole sentence. The bare refusal needs its "Dave": "I can't do
+# that." is an ordinary thing to say, "I can't do that, Dave." is the catchphrase.
+_WHOLE = re.compile(r"(dave )?(my mind is going|i ?a?m afraid)( dave)?"
+                    r"|i (cant|cannot|can not) (do|allow) that dave|dave i (cant|cannot|can not) (do|allow) that")
+
+
+def _sentences(text: str) -> list[str]:
+    out = []
+    for part in re.split(r"(?<=[.!?])\s+", text):
+        plain_part = " ".join(re.sub(r"[^a-z0-9 ]", " ", part.lower().replace("'", "")).split())
+        if plain_part:
+            out.append(plain_part)
+    return out
 
 
 def is_film_line(text: str) -> bool:
     """True when a line recites (or all but recites) one of the film's best-known lines."""
-    plain = re.sub(r"[^a-z0-9 ]", " ", text.lower().replace("'", ""))
-    return bool(_FILM_LINES.search(" ".join(plain.split())))
+    sentences = _sentences(text)
+    if _ALWAYS.search(" ".join(sentences)):  # (abbreviations like H.A.L. split a sentence in two)
+        return True
+    for i, sentence in enumerate(sentences):
+        if _SIGNATURE.search(sentence) or _WHOLE.fullmatch(sentence):
+            return True
+        # The refusal is the film's when regret comes with it, in the same breath or the next.
+        if _REFUSAL.search(sentence) and any(_REGRET.search(s) for s in sentences[max(0, i - 1):i + 2]):
+            return True
+    return False
 
 
 # ---------- what comes in from HAL Zero ----------

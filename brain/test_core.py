@@ -69,6 +69,17 @@ class AskTest(unittest.TestCase):
             self.assertEqual(brain.voice.said[-1], (who, OWN_WORDS[who]))
             self.assertEqual(brain.memory.history(who)[-1]["content"], OWN_WORDS[who])  # nor remembered
 
+    def test_a_screen_named_while_thinking_is_not_shown(self):
+        brain, _ = make_brain(FakeProvider(["<think>maybe [SHOW wall]?</think>No screens today.", "Look. [SHOW wall",
+                                            "x" * 100000 + " [SHOW wall]"]))
+        line = brain.ask("zero", [], "Hello?")
+        self.assertEqual((line.text, line.show), ("No screens today.", None))
+        line = brain.ask("zero", [], "Show me?")  # a tag the model never closed is not read out
+        self.assertEqual(line.text, "Look.")
+        started = time.monotonic()
+        brain.ask("zero", [], "Go on?")  # far more than a spoken line: cut before any work is done on it
+        self.assertLess(time.monotonic() - started, 0.5)
+
     def test_ask_model_down(self):
         brain, _ = make_brain(FakeProvider(fail_on={1}))
         with self.assertRaises(ProviderError):
@@ -179,7 +190,19 @@ class DebateTest(unittest.TestCase):
         brain, _ = make_brain(FakeProvider(fail_on={2}))
         debate = Debate(brain, "tea", [], turns=4)
         self.assertEqual(debate.get(0, timeout_s=5)[0], "line")
-        self.assertEqual(debate.get(1, timeout_s=5), ("end", None))
+        self.assertEqual(debate.get(1, timeout_s=5), ("failed", "no-model"))  # not "end": it didn't finish
+        self.assertEqual(debate.get(3, timeout_s=1), ("failed", "no-model"))
+        self.assertEqual(debate.get(4, timeout_s=1), ("end", None))            # past the last line all the same
+
+    def test_debate_voice_down(self):
+        from brain.voice import VoiceError
+        brain, _ = make_brain()
+
+        def no_voice(who, text):
+            raise VoiceError("no ffmpeg")
+
+        brain.voice.render = no_voice
+        self.assertEqual(Debate(brain, "tea", [], turns=2).get(0, timeout_s=5), ("failed", "no-voice"))
 
     def test_debates_registry(self):
         clock = Clock()

@@ -68,17 +68,23 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
 
 - **Replies** are `text/plain`, one `key=value` per line, so the C++ side needs no JSON parser.
   Values never contain a line break. Clients ignore keys they don't know.
-- **Errors** are an HTTP status and one line, `error=<code>`: 401 `bad-key`, 400 `bad-request`
-  or `bad-audio`, 404 `not-found`, 411 `no-length`, 413 `too-large`, 503 `no-model`, `no-voice`
-  or `no-ears`.
+- **Errors** are an HTTP status and one line, `error=<code>`: 401 `bad-key`, 403 `local-only`
+  (an unpaired brain asked from anywhere but this computer, or by a web page), 400 `bad-request`
+  or `bad-audio`, 404 `not-found`, 411 `no-length`, 413 `too-large`, 500 `internal`, 503
+  `no-model`, `no-voice` or `no-ears`. An error is sent and the connection closed at once.
 - **`GET /debate/<id>/<n>`** waits up to 20 s for line n. Still not ready: 202 with `wait=1`
-  (ask again). Past the last line: 204. Line 0 is HAL Zero's, then they alternate.
+  (ask again). Past the last line, or after it was stopped: 204. If the model or the voice gave
+  out: 503, so a failed argument never looks like a finished one. Line 0 is HAL Zero's, then
+  they alternate.
 - **Clip tokens** are 32 random hex characters, good for 10 minutes. No key is needed to fetch
   one, so the desk HAL needs no settings.
 - **Listening address:** with a key set, all interfaces; with no key, this computer only
   (`127.0.0.1`), so an unpaired server is never open to the network.
 - The server runs only while David has started it (`tools/brain.sh start`); it is not a
   login item.
+- **It assumes strangers on the network:** a whole request must arrive within 15 s however
+  slowly it is sent, at most 16 are handled at once, nothing is read past its size limit, and
+  the log holds short printable lines with no key or clip token in them.
 
 ## 2. Personas, facts and screens on request (`brain/persona.py`)
 
@@ -87,8 +93,8 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
 - **Rules in every prompt:** 1–2 short sentences, at most **150 characters** (what the
   subtitles hold), plain text, no film quotes, stay in character.
 - **Facts** ("things you know right now") come from HAL Zero with each request, one
-  `name: value` per line: the time, his readings, the link, and for the desk HAL his status and
-  sensors. The prompt says to use a fact only when the question is about it (the local model
+  `name: value` per line (at most 24 lines of 120 characters): the time, his readings, the link,
+  and for the desk HAL his status and sensors. The prompt says to use a fact only when the question is about it (the local model
   otherwise recites them in every answer).
 - **Screens on request:** when Dave asks to see something, the reply may end with `[SHOW id]`.
   The server strips it and returns `show=<id>` only if the id is one of that HAL's screens:
@@ -102,8 +108,11 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
   "I have nothing to say to that, Dave."
 - **The film-line guard:** the prompt tells both HALs never to recite or paraphrase the film,
   even when baited ("open the pod bay doors"). Because a local model does it anyway, the
-  cleaned line is also checked against the film's best-known lines; a match is replaced with a
-  stock line in that HAL's own words and is neither spoken nor remembered.
+  cleaned line is also checked, a sentence at a time, against the film's best-known lines; a
+  match is replaced with a stock line in that HAL's own words and is neither spoken nor
+  remembered. Ordinary speech is left alone: an apology, "I'm afraid…" or "I can't do that"
+  only counts next to the rest of the famous refusal (or, for "I can't do that, Dave.", as a
+  whole sentence).
 
 ## 3. Voice and listening
 
@@ -111,6 +120,7 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
   treatment, HAL Zero's treatment A). The model stays loaded; one line is rendered at a time.
 - **Listening** (`brain/stt.py`): `whisper-cli` with `brain/models/ggml-small.en.bin` (the
   488 MB download David approved). Bracketed noises such as `[BLANK_AUDIO]` are removed.
+  What was heard goes back as plain ASCII, at most 300 characters.
 - **Clips** (`brain/clips.py`): kept in memory, at most 64 or 40 MB, oldest dropped first.
 
 ## 4. Memory and arguments
