@@ -345,6 +345,12 @@ tools/brain.sh pair
 - On the Cardputer press **Enter**, type a question (120 characters at most) and press Enter
   again. He thinks for a second and answers aloud with a subtitle. Esc cancels; Space interrupts
   an answer. `tools/cardputer.sh run --ask "How hot are you running?"` asks from your computer.
+- **Ask the desk HAL, or make them argue.** In the box, Tab switches between HAL Zero and the
+  desk unit; the menu (Tab from the eye) has "Ask the desk unit..." and "Make them argue...",
+  which takes a subject and runs eight lines between the two. This needs the two HALs linked
+  (step 7) and both on v0.6 or later: flash the desk HAL again (step 5) after updating. HAL Zero
+  tells the desk HAL where to download each of his lines, so the desk HAL needs no settings.
+  Space on HAL Zero, or a tap on the desk HAL, stops an argument.
 - If he says his higher functions are offline, the brain isn't running or can't be reached:
   check `tools/brain.sh status`, and that both are on the same network.
 - To undo pairing, delete the `HAL_BRAIN_KEY` line from `brain/.env` and set `brain=off` in

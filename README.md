@@ -136,12 +136,19 @@ program on your computer does the thinking with an AI model that runs locally
 Every answer is cleaned down to one short spoken line, and the film's famous lines are
 filtered out: the HALs only do original material.
 
-What works today: on the Cardputer, press **Enter**, type a question and press Enter again.
-HAL Zero sends it to the brain along with his real readings (time, temperature, Wi-Fi, the
-link to the desk HAL), then answers aloud with a subtitle; ask him to show you a screen and
-he brings it up. From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` do the
-same for either HAL. Still to come: the desk HAL speaking his answers, live arguments on the
-devices, and talking instead of typing.
+What works today, from the Cardputer:
+
+- **Ask HAL Zero:** press **Enter**, type a question, press Enter again. He sends it to the
+  brain along with his real readings (time, temperature, Wi-Fi, the link) and answers aloud
+  with a subtitle. Ask him to show you a screen and he brings it up.
+- **Ask the desk HAL:** press Tab in the box (or pick "Ask the desk unit..." in the menu). HAL
+  Zero collects the desk HAL's own sensor readings, and the desk HAL downloads and speaks his
+  answer.
+- **Make them argue:** "Make them argue..." in the menu takes a subject, and the two go at it
+  for eight lines, each written while the one before is being spoken.
+
+From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` ask either HAL. Still
+to come: talking instead of typing, and the optional cloud models.
 
 Set-up is step 9 of [docs/SETUP.md](docs/SETUP.md#9-the-ai-brain-optional).
 
