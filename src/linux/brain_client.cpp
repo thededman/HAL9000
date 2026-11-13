@@ -91,6 +91,13 @@ void BrainClient::stopDebate(const std::string& id) {
   push(std::move(job));
 }
 
+void BrainClient::hear(std::vector<uint8_t> wav) {
+  Job job;
+  job.kind = Job::Kind::Hear;
+  job.body.assign(wav.begin(), wav.end());
+  push(std::move(job));
+}
+
 void BrainClient::cancel() {
   ++generation_;
   {
@@ -135,6 +142,7 @@ void BrainClient::run() {
     }
     BrainEvent event = job.kind == Job::Kind::Ask      ? doAsk(job)
                        : job.kind == Job::Kind::Debate ? doDebate(job)
+                       : job.kind == Job::Kind::Hear   ? doHear(job)
                                                        : doDebateLine(job);
     std::lock_guard<std::mutex> lock(mu_);
     --pending_;
@@ -167,6 +175,18 @@ BrainEvent BrainClient::doAsk(const Job& job) {
   }
   event.reply.who = job.who;
   event.kind = BrainEvent::Kind::Answer;
+  return event;
+}
+
+BrainEvent BrainClient::doHear(const Job& job) {
+  BrainEvent event;
+  hal::HttpResponse response;
+  std::string error = http("POST", "/hear", "audio/wav", job.body, kAskMs, 4096, &response);
+  if (!error.empty()) return failed(error);
+  event.reply = hal::parseBrainReply(response);
+  if (!event.reply.ok) return failed(event.reply.error);
+  if (!event.reply.hasHeard) return failed("bad-reply");
+  event.kind = BrainEvent::Kind::Heard;
   return event;
 }
 

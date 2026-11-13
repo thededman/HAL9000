@@ -45,6 +45,7 @@
 #include "hud.h"
 #include "iio_imu.h"
 #include "link_client.h"
+#include "mic.h"
 #include "posix_storage.h"
 #include "sdl_audio.h"
 #include "sdl_io.h"
@@ -233,7 +234,14 @@ struct App {
   std::string showAfter;                          // a screen the answer asked for, opened once he has spoken
   std::string autoAsk, autoAskDesk, autoArgue;    // --ask, --ask-desk, --argue: put this once booted
   hal::LiveFeed feed;                             // the brain's lines become FETCH and append, in order
-  enum class Talk { None, Zero, Desk, Argue } talk = Talk::None;     // what the brain is doing for us
+  enum class Talk { None, Zero, Desk, Argue, Hear } talk = Talk::None;  // what the brain is doing for us
+  // Speaking to him: the talk key held, the microphone recording, then the words in the ask box.
+  Mic mic;
+  hal::Recording recording;
+  bool talkDown = false, talkDropped = false;     // from the keyboard, each pass
+  bool listening = false;
+  uint32_t sendHeardAt = 0;                       // what was heard is in the ask box: send it then (0: not waiting)
+  std::string hearFile;                           // --hear: a recording from a file instead of the microphone
   enum class AskMode { Zero, Desk, Topic } askMode = AskMode::Zero;  // what the ask box is for
   std::string debateId;                           // the argument under way, as the brain knows it
   int debateNext = 0;                             // its next line to ask the brain for (from 0)
@@ -466,6 +474,79 @@ struct App {
     deskQuestion.clear();
   }
 
+  void didntCatch(uint32_t now) {
+    halLog("heard nothing");
+    gloatText = "I DIDN'T CATCH THAT, DAVE";
+    gloatUntil = now + 4000;
+  }
+
+  // The talk key went down: stop talking and listen.
+  void startListening() {
+    if (listening || !canAsk() || overlay != Overlay::None) return;
+    audio.stop();  // or he records himself
+    if (!mic.start()) {
+      halLog("no microphone");
+      return;
+    }
+    recording.start();
+    listening = true;
+    halLog("listening");
+  }
+
+  // The key came up (or 15 s passed): send what was said, if anything was.
+  void stopListening(bool keep, uint32_t now) {
+    if (!listening) return;
+    mic.pump(&recording);
+    mic.stop();
+    listening = false;
+    if (!keep) {
+      halLog("listening: dropped (Fn was part of a key combination)");
+      return;
+    }
+    sendRecording(now);
+  }
+
+  void sendRecording(uint32_t now) {
+    std::vector<uint8_t> wav = recording.wav();
+    halLog("recorded %u ms", unsigned(recording.ms()));
+    if (wav.empty()) return didntCatch(now);
+    talk = Talk::Hear;
+    thinking = true;
+    brainClient.hear(std::move(wav));
+  }
+
+  // --hear FILE: a 16 kHz mono 16-bit WAV, as if it had just been recorded.
+  void hearFromFile(const std::string& path, uint32_t now) {
+    std::vector<uint8_t> file;
+    if (FILE* f = std::fopen(path.c_str(), "rb")) {
+      int c;
+      while ((c = std::fgetc(f)) != EOF) file.push_back(uint8_t(c));
+      std::fclose(f);
+    }
+    hal::WavInfo info;
+    if (!hal::parseWav(file.data(), file.size(), &info) || info.sampleRate != 16000 || info.channels != 1) {
+      halLog("--hear: %s isn't a 16 kHz mono 16-bit WAV", path.c_str());
+      return;
+    }
+    recording.start();
+    recording.append(reinterpret_cast<const int16_t*>(file.data() + info.dataOffset), info.dataBytes / 2);
+    sendRecording(now);
+  }
+
+  // What the ask box holds goes to whoever it is for.
+  void submitAskBox(uint32_t now) {
+    sendHeardAt = 0;
+    if (askBox.empty()) {
+      halLog("ask box: Enter with nothing typed");
+      return;
+    }
+    overlay = Overlay::None;
+    if (!canAsk()) halLog("ask box: he can't take a question right now");
+    else if (askMode == AskMode::Zero) submitQuestion(askBox.text());
+    else if (askMode == AskMode::Desk) submitDeskQuestion(askBox.text(), now);
+    else submitTopic(askBox.text(), now);
+  }
+
   // Forget whatever the brain was doing for us (answered, interrupted, failed).
   void endTalk() {
     if (talk == Talk::None && !thinking) return;
@@ -532,6 +613,16 @@ struct App {
         brainOffline(e.error, now);
       }
       endTalk();
+    } else if (e.kind == Kind::Heard) {  // his words go in the ask box, and are sent after a moment
+      thinking = false;
+      talk = Talk::None;
+      halLog("heard: %s", e.reply.heard.c_str());
+      if (e.reply.heard.empty()) return didntCatch(now);
+      askMode = AskMode::Zero;
+      askBox.clear();
+      for (char c : e.reply.heard) askBox.insert(c);
+      overlay = Overlay::Ask;
+      sendHeardAt = now + 1500;
     } else if (e.kind == Kind::DebateStarted) {
       debateId = e.reply.debate;
       debateNext = 0;  // counts the lines received; line 0 is asked for here, the rest as the talk moves along
@@ -606,6 +697,9 @@ struct App {
   bool onKeys(const KeyInput& keys) {
     if (keys.quit) return false;
     uint32_t now = nowMs();
+    talkDown = keys.talkDown;
+    talkDropped = keys.talkDropped;
+    if (sendHeardAt && (!keys.pressed.empty() || !keys.typed.empty())) sendHeardAt = 0;  // Dave is taking over
     if (overlay == Overlay::Ask)
       for (char c : keys.typed) askBox.insert(c);
     for (SDL_Keycode k : keys.pressed) {
@@ -618,15 +712,7 @@ struct App {
         } else if (k == SDLK_TAB && askMode != AskMode::Topic) {  // which HAL the question is for
           askMode = askMode == AskMode::Zero ? AskMode::Desk : AskMode::Zero;
         } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
-          if (askBox.empty()) {
-            halLog("ask box: Enter with nothing typed");
-          } else {
-            overlay = Overlay::None;
-            if (!canAsk()) halLog("ask box: he can't take a question right now");
-            else if (askMode == AskMode::Zero) submitQuestion(askBox.text());
-            else if (askMode == AskMode::Desk) submitDeskQuestion(askBox.text(), now);
-            else submitTopic(askBox.text(), now);
-          }
+          submitAskBox(now);
         }
         continue;
       }
@@ -776,6 +862,20 @@ struct App {
     } else if (!autoArgue.empty() && canAsk() && (link.connected() || now - startMs > 8000)) {
       submitTopic(autoArgue, now);
       autoArgue.clear();
+    }
+    if (!hearFile.empty() && canAsk()) {
+      hearFromFile(hearFile, now);
+      hearFile.clear();
+    }
+    if (talkDown && !listening) startListening();
+    if (listening) {
+      mic.pump(&recording);
+      if (talkDropped) stopListening(false, now);
+      else if (!talkDown || recording.full()) stopListening(true, now);
+    }
+    if (sendHeardAt && int32_t(now - sendHeardAt) >= 0) {
+      if (overlay == Overlay::Ask) submitAskBox(now);
+      sendHeardAt = 0;
     }
     if (senseAt && (haveSensors || now - senseAt >= 1000)) sendAfterSense(now);
     std::vector<BrainEvent> events;
@@ -983,7 +1083,7 @@ struct App {
 
   HudInfo hudInfo(uint32_t now) const {
     HudInfo h;
-    h.mode = thinking ? "THINKING" : conductor.active() ? "TALKING" : modeName(brain->mode());
+    h.mode = listening ? "LISTENING" : thinking ? "THINKING" : conductor.active() ? "TALKING" : modeName(brain->mode());
     h.uptimeS = upSeconds();
     h.cpuTempC = cpuTempC();
     h.wifi = wifiUp();
@@ -1012,13 +1112,21 @@ struct App {
     drawEye(lens, L, p);
     lens.pushSprite(&frame, lensX(L), lensY(L), eyeTransparentKey());
     drawHud(frame, hudInfo(now), now);
-    const char* strip = overlay == Overlay::Ask    ? (askMode == AskMode::Topic ? "type a subject   ENTER go   ESC cancel"
-                                                                                : "TAB which HAL   ENTER ask   ESC cancel")
+    char meter[64];
+    if (listening) {  // a level meter: he can hear you
+      const int bars = recording.level() * 20 / 255;
+      std::snprintf(meter, sizeof meter, "LISTENING  [%.*s%*s]  let go to send", bars, "||||||||||||||||||||", 20 - bars, "");
+    }
+    const char* strip = listening                  ? meter
+                        : overlay == Overlay::Ask  ? (sendHeardAt ? "sending...   any key to edit   ESC cancel"
+                                                      : askMode == AskMode::Topic ? "type a subject   ENTER go   ESC cancel"
+                                                      : "TAB which HAL   ENTER ask   ESC cancel")
                         : overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
                                                                : "UP DOWN move   ENTER pick   ESC back")
                         : thinking                 ? ((now / 500) % 2 ? "BRAIN THINKING ...   ESC cancel" : "BRAIN THINKING       ESC cancel")
                         : conductor.active()       ? "SPACE interrupt   ESC quit"
-                        : brainClient.started()    ? "SPACE talk   ENTER ask   TAB menu   ESC quit"
+                        : brainClient.started()    ? (cardKeys ? "ENTER ask   hold Fn: speak   TAB menu   ESC quit"
+                                                               : "ENTER ask   hold right Alt: speak   TAB menu")
                                                    : "SPACE talk   TAB menu   D dialogues   ESC quit";
     drawCommandStrip(frame, strip);
   }
@@ -1304,7 +1412,7 @@ int main(int argc, char** argv) {
   bool keysMode = false;
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, brainArg;
+  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, hearArg, brainArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -1318,6 +1426,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--ask") && i + 1 < argc) askArg = argv[++i];
     else if (!std::strcmp(argv[i], "--ask-desk") && i + 1 < argc) askDeskArg = argv[++i];
     else if (!std::strcmp(argv[i], "--argue") && i + 1 < argc) argueArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--hear") && i + 1 < argc) hearArg = argv[++i];
     else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
     else if (!std::strcmp(argv[i], "--keys")) keysMode = true;
   }
@@ -1339,6 +1448,7 @@ int main(int argc, char** argv) {
   app.autoAsk = askArg;
   app.autoAskDesk = askDeskArg;
   app.autoArgue = argueArg;
+  app.hearFile = hearArg;
   if (!brainArg.empty()) {  // --brain host[:port] overrides config.txt, for trying the chat in the simulator
     app.cfg.brain = true;
     size_t colon = brainArg.rfind(':');
@@ -1402,6 +1512,7 @@ int main(int argc, char** argv) {
   }
   if (quitSignal) halLog("quit (signal)");
   app.brainClient.stop();
+  app.mic.close();
   app.link.stop();
   if (app.camera) app.camera->close();  // stops rpicam-vid
   app.audio.close();

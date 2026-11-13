@@ -18,6 +18,7 @@ struct BrainEvent {
     DebateStarted,  // an argument has begun: `reply.debate` is its id
     Line,           // the next line of an argument: `reply` (who, text, clip, last), `wav` for HAL Zero's
     DebateOver,     // there are no more lines
+    Heard,          // what was said in a recording: `reply.heard` (may be empty)
     Failed,         // `error`: offline, timeout, bad-key, no-model, bad-reply, bad-clip, ...
   } kind = Kind::Failed;
   hal::BrainReply reply;
@@ -46,6 +47,7 @@ class BrainClient {
   void debate(const std::string& body, int turns);
   void debateLine(const std::string& id, int n);  // waits while the brain is still writing it (60 s at most)
   void stopDebate(const std::string& id);         // tell the brain to stop writing; no event comes back
+  void hear(std::vector<uint8_t> wav);            // a 16 kHz mono recording: what was said?
   void cancel();                             // drop whatever is in flight or waiting
   bool busy() const { return pending_.load() > 0; }
   void poll(std::vector<BrainEvent>* out);   // never blocks
@@ -53,9 +55,9 @@ class BrainClient {
 
  private:
   struct Job {
-    enum class Kind { Ask, Debate, DebateLine, StopDebate } kind = Kind::Ask;
+    enum class Kind { Ask, Debate, DebateLine, StopDebate, Hear } kind = Kind::Ask;
     int generation = 0;
-    std::string who, body, id;
+    std::string who, body, id;  // body also carries a recording's bytes (Hear)
     int n = 0;  // DebateLine: which line; Debate: how many turns
   };
   void push(Job job);
@@ -63,6 +65,7 @@ class BrainClient {
   BrainEvent doAsk(const Job& job);
   BrainEvent doDebate(const Job& job);
   BrainEvent doDebateLine(const Job& job);
+  BrainEvent doHear(const Job& job);
   // Fills `event.wav` from /clip/<token>; returns "" or an error word.
   std::string fetchClip(const std::string& token, std::vector<uint8_t>* wav);
   // One request; returns "" and fills `out`, or an error word.

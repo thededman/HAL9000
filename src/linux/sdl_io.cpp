@@ -52,10 +52,13 @@ void SdlIo::poll(KeyInput* keys) {
       bool down = e.type == SDL_KEYDOWN;
       if (!e.key.repeat) keys->raw.push_back({int(e.key.keysym.scancode), down});
       if (e.key.keysym.sym == SDLK_SPACE) space_ = down;
+      if (e.key.keysym.sym == SDLK_RALT) talk_ = down;
       if (down && !e.key.repeat) keys->pressed.push_back(e.key.keysym.sym);
     }
   }
   keys->spaceDown = space_;
+  keys->talkDown = talk_;
+  keys->talkDropped = false;
 }
 
 void SdlIo::close() {

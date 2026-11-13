@@ -128,6 +128,7 @@ void FbIo::poll(KeyInput* keys) {
   keys->pressed.clear();
   keys->typed.clear();
   keys->raw.clear();
+  keys->talkDropped = false;
   if (keyFd_ >= 0) {
     input_event ev;
     while (read(keyFd_, &ev, sizeof ev) == ssize_t(sizeof ev)) {
@@ -135,6 +136,15 @@ void FbIo::poll(KeyInput* keys) {
       if (ev.value == 0 || ev.value == 1) keys->raw.push_back({int(ev.code), ev.value == 1});
       if (ev.code == KEY_SPACE) space_ = ev.value != 0;
       if (ev.code == KEY_LEFTSHIFT || ev.code == KEY_RIGHTSHIFT) shift_ = ev.value != 0;
+      // Fn held by itself is the talk key. With another key it is an ordinary Fn combination
+      // (the keyboard sends the combination as its own code while Fn is down).
+      if (ev.code == 389) {
+        fn_ = ev.value != 0;
+        if (!fn_) fnCombo_ = false;
+      } else if (fn_ && ev.value == 1 && !fnCombo_) {
+        fnCombo_ = true;
+        keys->talkDropped = true;
+      }
       if (ev.value == 1) {  // pressed (2 = auto-repeat, ignored)
         const char c = hal::keyToChar(ev.code, shift_);
         if (c) keys->typed.push_back(c);  // for the ask box
@@ -145,6 +155,7 @@ void FbIo::poll(KeyInput* keys) {
     }
   }
   keys->spaceDown = space_;
+  keys->talkDown = fn_ && !fnCombo_;
 }
 
 void FbIo::close() {
