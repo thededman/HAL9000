@@ -375,8 +375,9 @@ struct App {
   }
 
   // Can a question go to the AI brain right now?
+  // (Not only when he is idle: on a Cardputer being handled he is rarely idle for long.)
   bool canAsk() const {
-    return booted && brainClient.started() && !thinking && !conductor.active() && brain->mode() == hal::Mode::Idle;
+    return booted && brainClient.started() && !thinking && !conductor.active() && brain->canConverse();
   }
 
   void submitQuestion(const std::string& question) {
@@ -426,11 +427,19 @@ struct App {
       for (char c : keys.typed) askBox.insert(c);
     for (SDL_Keycode k : keys.pressed) {
       if (overlay == Overlay::Ask) {  // typing a question: every other key is just a letter
-        if (k == SDLK_ESCAPE) overlay = Overlay::None;
-        else if (k == SDLK_BACKSPACE) askBox.backspace();
-        else if ((k == SDLK_RETURN || k == SDLK_KP_ENTER) && !askBox.empty()) {
+        if (k == SDLK_ESCAPE) {
           overlay = Overlay::None;
-          if (canAsk()) submitQuestion(askBox.text());
+          halLog("ask box: cancelled");
+        } else if (k == SDLK_BACKSPACE) {
+          askBox.backspace();
+        } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+          if (askBox.empty()) {
+            halLog("ask box: Enter with nothing typed");
+          } else {
+            overlay = Overlay::None;
+            if (canAsk()) submitQuestion(askBox.text());
+            else halLog("ask box: he can't take a question right now");
+          }
         }
         continue;
       }
@@ -469,6 +478,10 @@ struct App {
           if (canAsk()) {
             askBox.clear();
             overlay = Overlay::Ask;
+            halLog("ask box: open");
+          } else {
+            halLog("ask box: not now (%s)", !brainClient.started() ? "no brain paired" : thinking ? "still thinking"
+                                            : conductor.active() ? "in a conversation" : "busy");
           }
           break;
         case SDLK_TAB:
