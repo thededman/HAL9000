@@ -68,6 +68,11 @@ void test_ids() {
   TEST_ASSERT_FALSE(hal::isValidDialogueId("Intro"));
   TEST_ASSERT_FALSE(hal::isValidDialogueId(std::string(33, 'a')));
   TEST_ASSERT_FALSE(hal::parseDialogue("../x", "OLD: A.\n", &d, &err));
+  // "live" names the AI brain's lines on the link: a script called that would never be heard.
+  err.clear();
+  TEST_ASSERT_FALSE(hal::parseDialogue("live", "OLD: A.\n", &d, &err));
+  TEST_ASSERT_EQUAL(1, int(err.size()));
+  TEST_ASSERT_TRUE(hal::isValidDialogueId("live"));  // on the link itself the name is fine
 }
 
 void test_voice_path() {

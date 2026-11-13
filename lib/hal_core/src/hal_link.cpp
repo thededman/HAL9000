@@ -128,8 +128,10 @@ bool validReason(const std::string& r) {
 
 }  // namespace
 
-bool isPrivateIpv4(const std::string& dotted) {
-  int part[4] = {0, 0, 0, 0};
+namespace {
+
+// "a.b.c.d" with each part 0..255 and no leading zeros.
+bool parseIpv4(const std::string& dotted, int part[4]) {
   size_t start = 0;
   for (int n = 0; n < 4; ++n) {
     size_t dot = dotted.find('.', start);
@@ -142,7 +144,23 @@ bool isPrivateIpv4(const std::string& dotted) {
     if (part[n] > 255) return false;
     start = dot + 1;
   }
+  return true;
+}
+
+}  // namespace
+
+bool isPrivateIpv4(const std::string& dotted) {
+  int part[4] = {0, 0, 0, 0};
+  if (!parseIpv4(dotted, part)) return false;
   return part[0] == 10 || (part[0] == 172 && part[1] >= 16 && part[1] <= 31) || (part[0] == 192 && part[1] == 168);
+}
+
+bool sameSubnet(const std::string& a, const std::string& b, const std::string& mask) {
+  int pa[4], pb[4], pm[4];
+  if (!parseIpv4(a, pa) || !parseIpv4(b, pb) || !parseIpv4(mask, pm) || pm[0] == 0) return false;
+  for (int i = 0; i < 4; ++i)
+    if ((pa[i] & pm[i]) != (pb[i] & pm[i])) return false;
+  return true;
 }
 
 Message parseMessage(const std::string& line) {

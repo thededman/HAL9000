@@ -27,8 +27,9 @@ case "${1:-}" in
     scp -q .pio/build/cardputer/program "$HOST":hal-zero/hal9000.new
     ssh "$HOST" 'chmod +x ~/hal-zero/hal9000.new && mv -f ~/hal-zero/hal9000.new ~/hal-zero/hal9000'
     scp -q tools/cardputer/hal-zero tools/cardputer/hal-zero.desktop tools/cardputer/hal-zero.png "$HOST":hal-zero/
-    # HAL Zero's settings: only if there are none yet (never overwrites yours).
-    ssh "$HOST" 'test -f ~/hal/config.txt' || { scp -q tools/cardputer/config.txt "$HOST":hal/config.txt && echo "settings: ~/hal/config.txt"; }
+    # HAL Zero's settings: only if there are none yet (never overwrites yours). The Cardputer
+    # decides, in one step: a connection that fails while asking must not look like "none yet".
+    ssh "$HOST" '[ -e ~/hal/config.txt ] || { cat > ~/hal/config.txt.new && mv ~/hal/config.txt.new ~/hal/config.txt && echo "settings: ~/hal/config.txt"; }' < tools/cardputer/config.txt
     echo "deployed to $HOST:~/hal-zero/"
     ;;
   run)

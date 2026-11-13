@@ -4,6 +4,7 @@ and the question to OpenAI. Recordings never leave this computer. It is turned o
 (docs/SETUP.md, step 9) and needs nothing installed."""
 import http.client
 import json
+import sys
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -80,7 +81,11 @@ class OpenAIProvider:
 
     def chat(self, system: str, messages: list[dict], max_tokens: int = 80) -> str:
         """`max_tokens` is the local model's measure and isn't used: see MAX_TOKENS."""
-        return parse_response(self._call("POST", "/chat/completions", build_request(self.model, system, messages)))
+        payload = self._call("POST", "/chat/completions", build_request(self.model, system, messages))
+        text = parse_response(payload)
+        if not text and payload["choices"][0]["message"].get("refusal"):  # the log says why HAL had nothing to say
+            print("OpenAI declined that question", file=sys.stderr, flush=True)
+        return text
 
     def warm(self) -> bool:
         """There is nothing to load, so this only checks the key and the model's name. No line is

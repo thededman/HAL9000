@@ -6,6 +6,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-12
+
 ### Added
 - The AI brain: a small server on your computer (`tools/brain.sh start`) that answers as
   either HAL in his voice, using a model that runs locally through Ollama. It can also turn a
@@ -14,7 +16,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   aloud with a subtitle, using his real readings. Asking for a screen brings it up. If the
   brain can't be reached he says so (five new lines). `tools/brain.sh pair` connects the two.
 - Speaking to HAL Zero: hold Fn, ask, let go. What he heard appears in the ask box for a
-  moment before it is sent, so a mishearing can be corrected.
+  moment before it is sent, so a mishearing can be corrected. A key click or a knock during
+  the recording doesn't spoil it, and he says nothing of his own while he listens.
 - Questions for the desk HAL from the Cardputer (Tab in the ask box): he downloads the
   brain's answer himself and speaks it, using his own sensor readings.
 - Live arguments: "Make them argue..." in HAL Zero's menu takes a subject and the two HALs
@@ -24,12 +27,23 @@ and versions follow [Semantic Versioning](https://semver.org/).
   shows the code of every key pressed.
 - A guard that keeps the film's best-known lines out of anything the AI says.
 - Claude or ChatGPT can write the HALs' lines instead of the local model, with your own API
-  key in `brain/.env`. The setup guide lists exactly what is sent when you turn this on
-  (questions and readings; never recordings).
+  key in `brain/.env`. The setup guide lists what is sent when you turn this on (questions
+  and readings; never recordings).
 
 ### Changed
 - The two HALs speak link version 3 (the desk HAL fetches and speaks AI lines, and reports his
   sensors). Older firmware on either side keeps working, without the AI features.
+- On HAL Zero, Esc during a conversation now stops it, as Space does. Esc quits from the quiet
+  eye only.
+- A script can no longer be named `live`: on the link that name means the AI brain's lines.
+
+### Fixed
+- `tools/cardputer.sh deploy` could replace HAL Zero's settings with the template if the
+  connection failed at the wrong moment. The Cardputer now decides in one step.
+- The desk HAL could go on believing he was in a conversation (no greetings or idle remarks)
+  when a line from HAL Zero crossed his own "stop" after a tap.
+- Subtitles on HAL Zero lost their last word or two when a full-length line didn't break
+  neatly into three rows.
 
 ## [0.5.0] - 2026-11-11
 

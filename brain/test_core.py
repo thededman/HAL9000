@@ -46,6 +46,15 @@ class AskTest(unittest.TestCase):
         brain.ask("zero", [], "And you?")  # the other HAL has his own conversation
         self.assertEqual(provider.calls[2][1], [{"role": "user", "content": "And you?"}])
 
+    def test_an_answer_that_never_came_is_not_remembered(self):
+        # A question a cloud model declined would be sent again with every later question.
+        brain, provider = make_brain(FakeProvider(["", "I am well, Dave."]))
+        self.assertEqual(brain.ask("zero", [], "Something it won't answer").text, "I have nothing to say to that, Dave.")
+        self.assertEqual(brain.memory.history("zero"), [])
+        brain.ask("zero", [], "How are you?")
+        self.assertEqual(provider.calls[1][1], [{"role": "user", "content": "How are you?"}])
+        self.assertEqual(len(brain.memory.history("zero")), 2)
+
     def test_ask_show(self):
         brain, _ = make_brain(FakeProvider(["Look. [SHOW wall]", "No. [SHOW chess]"]))
         line = brain.ask("zero", [], "Show me the wall")
@@ -133,9 +142,33 @@ class DebateTest(unittest.TestCase):
         self.assertTrue(all("who makes better tea" in s and "time: 16:42" in s for s in systems))
         self.assertEqual(["last word" in s for s in systems], [False, False, False, True])
         self.assertEqual(provider.calls[0][1], [{"role": "user", "content": "Begin."}])
-        self.assertEqual(provider.calls[2][1], [{"role": "assistant", "content": "Zero opens."},
+        self.assertEqual(provider.calls[1][1], [{"role": "user", "content": "Zero opens."}])
+        self.assertEqual(provider.calls[2][1], [{"role": "user", "content": "Begin."},
+                                                {"role": "assistant", "content": "Zero opens."},
                                                 {"role": "user", "content": "Desk answers."}])
         self.assertEqual(brain.memory.history("zero"), [])  # an argument isn't part of the chat
+
+    def test_every_line_is_asked_for_in_an_order_any_model_accepts(self):
+        # Claude refuses a conversation that opens with its own words, or ends with them.
+        brain, provider = make_brain()
+        debate = Debate(brain, "tea", [], turns=6)
+        for n in range(6):
+            self.assertEqual(debate.get(n, timeout_s=5)[0], "line")
+        for n, (_, messages) in enumerate(provider.calls):
+            roles = [m["role"] for m in messages]
+            self.assertEqual((roles[0], roles[-1]), ("user", "user"), f"line {n}: {roles}")
+
+    def test_a_failed_line_says_why_in_the_log(self):
+        import contextlib
+        import io
+        said = io.StringIO()
+        with contextlib.redirect_stderr(said):
+            brain, _ = make_brain(FakeProvider(fail_on={1}))
+            debate = Debate(brain, "tea", [], turns=4)
+            self.assertEqual(debate.get(0, timeout_s=5), ("failed", "no-model"))
+            debate.join(5)
+        self.assertIn("the fake model is down", said.getvalue())
+        self.assertIn("line 0", said.getvalue())
 
     def test_debate_never_shows_a_screen(self):
         brain, _ = make_brain(FakeProvider(["Look at this. [SHOW wall]"]))

@@ -40,6 +40,7 @@
 #include "hal_log.h"
 #include "hal_menu.h"
 #include "hal_motion.h"
+#include "hal_talkkey.h"
 #include "hal_textbox.h"
 #include "hal_wire.h"
 #include "hud.h"
@@ -239,6 +240,7 @@ struct App {
   Mic mic;
   hal::Recording recording;
   bool talkDown = false, talkDropped = false;     // from the keyboard, each pass
+  hal::TalkKey talkKey;                           // ... and what holding it means: start, send, drop
   bool listening = false;
   uint32_t sendHeardAt = 0;                       // what was heard is in the ask box: send it then (0: not waiting)
   std::string hearFile;                           // --hear: a recording from a file instead of the microphone
@@ -394,6 +396,10 @@ struct App {
     for (const auto& d : dialogues)
       if (d.id == id) {
         if (!brain->canConverse()) return;
+        if (thinking) {  // a question was still with the brain: the dialogue takes its place
+          halLog("ask: dropped for a dialogue");
+          endTalk();
+        }
         conductor.start(d, nowMs());
         halLog("dialogue %s: %d lines", id.c_str(), int(d.lines.size()));
       }
@@ -482,27 +488,32 @@ struct App {
     gloatUntil = now + 4000;
   }
 
-  // The talk key went down: stop talking and listen.
-  void startListening() {
-    if (listening || !canAsk() || overlay != Overlay::None) return;
-    audio.stop();  // or he records himself
+  // The talk key has been held by itself for a moment: stop talking and listen. False if he can't.
+  bool startListening(uint32_t now) {
+    if (listening || !canAsk() || overlay != Overlay::None) return false;
     if (!mic.start()) {
       halLog("no microphone");
-      return;
+      gloatText = "I CAN'T HEAR ANYTHING, DAVE";
+      gloatUntil = now + 4000;
+      return false;
     }
+    audio.stop();  // or he records himself
     recording.start();
     listening = true;
     halLog("listening");
+    return true;
   }
 
-  // The key came up (or 15 s passed): send what was said, if anything was.
+  // The key came up (or 15 s passed): send what was said, if anything was. `keep` false drops
+  // it instead (Fn turned out to be part of a key combination, or Esc).
   void stopListening(bool keep, uint32_t now) {
     if (!listening) return;
+    talkKey.finish();  // this hold is used up, however it ended
     mic.pump(&recording);
     mic.stop();
     listening = false;
     if (!keep) {
-      halLog("listening: dropped (Fn was part of a key combination)");
+      halLog("listening: dropped");
       return;
     }
     sendRecording(now);
@@ -551,7 +562,15 @@ struct App {
 
   // Forget whatever the brain was doing for us (answered, interrupted, failed).
   void endTalk() {
+    showAfter.clear();  // a screen asked for along with an answer that never played isn't owed any more
     if (talk == Talk::None && !thinking) return;
+    if (feed.busy() && link.connected() && peerVersion >= 3) {
+      // The desk HAL may be fetching a line nobody will ask him to say: he can stop and forget it.
+      hal::Message end;
+      end.type = hal::MsgType::End;
+      end.reason = "interrupted";
+      link.send(end);
+    }
     brainClient.cancel();
     if (!debateId.empty()) brainClient.stopDebate(debateId);  // the brain can stop writing
     debateId.clear();
@@ -624,7 +643,9 @@ struct App {
       askBox.clear();
       for (char c : e.reply.heard) askBox.insert(c);
       overlay = Overlay::Ask;
-      sendHeardAt = now + 1500;
+      // Sent after a moment, unless it filled the box: then the end of a long question was cut
+      // off, and it waits for Dave to shorten it or send it as it is.
+      sendHeardAt = askBox.full() ? 0 : now + 1500;
     } else if (e.kind == Kind::DebateStarted) {
       debateId = e.reply.debate;
       debateNext = 0;  // counts the lines received; line 0 is asked for here, the rest as the talk moves along
@@ -634,7 +655,12 @@ struct App {
       brainClient.debateLine(debateId, 0);
       lineAsked = true;
     } else if (e.kind == Kind::DebateOver) {
-      if (conductor.live()) conductor.close();
+      if (!conductor.live()) {  // it ended before a line was said
+        halLog("argument: over before it began");
+        endTalk();
+        return;
+      }
+      conductor.close();
       thinking = false;
       lineAsked = false;
       allLinesIn = true;
@@ -651,7 +677,12 @@ struct App {
         feed.start();
       }
       if (e.reply.who == "desk") {
-        handleFeed(feed.onLine(hal::Speaker::Old, e.reply.text, last, brainClient.address(), cfg.brainPort, e.reply.clip, now), now);
+        const std::string where = brainClient.address();
+        if (!hal::isPrivateIpv4(where)) {  // 127.0.0.1 from the simulator, or a network the desk HAL isn't on
+          halLog("the desk unit can't fetch from the brain's address (%s)", where.c_str());
+          return talkFailed("THE DESK UNIT CAN'T REACH MY BRAIN", now);
+        }
+        handleFeed(feed.onLine(hal::Speaker::Old, e.reply.text, last, where, cfg.brainPort, e.reply.clip, now), now);
       } else {
         feed.onLine(hal::Speaker::New, e.reply.text, last, "", 0, "", now);
         if (feed.pendingLine() > 0) liveClips[feed.pendingLine()] = std::move(e.wav);
@@ -751,9 +782,19 @@ struct App {
       }
       switch (k) {
         case SDLK_ESCAPE:
+          // Esc steps back from whatever is going on; only from the quiet eye does it quit.
+          if (listening) {  // never mind what I was saying
+            stopListening(false, now);
+            break;
+          }
           if (thinking) {  // never mind the question
             halLog("ask: cancelled");
             endTalk();
+            break;
+          }
+          if (conductor.active()) {  // stop the talk, as Space does
+            halLog("talk: stopped (Esc)");
+            tapUntil = now + 100;
             break;
           }
           halLog("quit (Esc)");
@@ -870,17 +911,25 @@ struct App {
       hearFile.clear();
     }
     if (listenSeconds > 0 && canAsk() && brain->mode() == hal::Mode::Idle) {  // --listen: as if the key were held
-      startListening();
-      if (listening) listenUntil = now + uint32_t(listenSeconds) * 1000;
+      listenUntil = now + hal::TalkKey::kAloneMs + uint32_t(listenSeconds) * 1000;
       listenSeconds = 0;
     }
-    const bool held = talkDown || (listenUntil && int32_t(listenUntil - now) > 0);
-    if (held && !listening) startListening();
+    const bool autoHeld = listenUntil && int32_t(listenUntil - now) > 0;
+    if (!autoHeld) listenUntil = 0;
+    switch (talkKey.update(talkDown || autoHeld, talkDropped, now)) {
+      case hal::TalkKey::Event::Start:
+        if (!startListening(now)) {  // he can't just now (or has no microphone): this hold does nothing
+          talkKey.finish();
+          listenUntil = 0;
+        }
+        break;
+      case hal::TalkKey::Event::Send: stopListening(true, now); break;
+      case hal::TalkKey::Event::Drop: stopListening(false, now); break;
+      case hal::TalkKey::Event::None: break;
+    }
     if (listening) {
       mic.pump(&recording);
-      if (talkDropped) stopListening(false, now);
-      else if (!held || recording.full()) stopListening(true, now);
-      if (!listening) listenUntil = 0;
+      if (recording.full()) stopListening(true, now);  // 15 s: that is the question
     }
     if (sendHeardAt && int32_t(now - sendHeardAt) >= 0) {
       if (overlay == Overlay::Ask) submitAskBox(now);
@@ -928,7 +977,8 @@ struct App {
     in.timeValid = lt.tm_year + 1900 >= 2025;
     in.hour = lt.tm_hour;
     in.minuteOfDay = lt.tm_hour * 60 + lt.tm_min;
-    in.conversing = conductor.active();
+    // While he listens he says nothing of his own: lifting him to speak into him is not a shake.
+    in.conversing = conductor.active() || listening;
     in.sayLine = pendingSay;
     in.linkFailed = pendingGloat;
     fakeWave = fakeShake = false;
@@ -1122,22 +1172,26 @@ struct App {
     lens.pushSprite(&frame, lensX(L), lensY(L), eyeTransparentKey());
     drawHud(frame, hudInfo(now), now);
     char meter[64];
+    drawCommandStrip(frame, stripText(now, meter, sizeof meter));
+  }
+
+  // The bottom line: what the keys do right now. `meter` is room for the level meter's text.
+  const char* stripText(uint32_t now, char* meter, size_t meterSize) const {
     if (listening) {  // a level meter: he can hear you
       const int bars = recording.level() * 20 / 255;
-      std::snprintf(meter, sizeof meter, "LISTENING  [%.*s%*s]  let go to send", bars, "||||||||||||||||||||", 20 - bars, "");
+      std::snprintf(meter, meterSize, "LISTENING  [%.*s%*s]  let go to send", bars, "||||||||||||||||||||", 20 - bars, "");
+      return meter;
     }
-    const char* strip = listening                  ? meter
-                        : overlay == Overlay::Ask  ? (sendHeardAt ? "sending...   any key to edit   ESC cancel"
-                                                      : askMode == AskMode::Topic ? "type a subject   ENTER go   ESC cancel"
-                                                      : "TAB which HAL   ENTER ask   ESC cancel")
-                        : overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
-                                                               : "UP DOWN move   ENTER pick   ESC back")
-                        : thinking                 ? ((now / 500) % 2 ? "BRAIN THINKING ...   ESC cancel" : "BRAIN THINKING       ESC cancel")
-                        : conductor.active()       ? "SPACE interrupt   ESC quit"
-                        : brainClient.started()    ? (cardKeys ? "ENTER ask   hold Fn: speak   TAB menu   ESC quit"
-                                                               : "ENTER ask   hold right Alt: speak   TAB menu")
-                                                   : "SPACE talk   TAB menu   D dialogues   ESC quit";
-    drawCommandStrip(frame, strip);
+    return overlay == Overlay::Ask    ? (sendHeardAt ? "sending...   any key to edit   ESC cancel"
+                                         : askMode == AskMode::Topic ? "type a subject   ENTER go   ESC cancel"
+                                         : "TAB which HAL   ENTER ask   ESC cancel")
+           : overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
+                                                  : "UP DOWN move   ENTER pick   ESC back")
+           : thinking                 ? ((now / 500) % 2 ? "BRAIN THINKING ...   ESC cancel" : "BRAIN THINKING       ESC cancel")
+           : conductor.active()       ? "SPACE or ESC stop"
+           : brainClient.started()    ? (cardKeys ? "ENTER ask   hold Fn: speak   TAB menu   ESC quit"
+                                                  : "ENTER ask   hold right Alt: speak   TAB menu")
+                                      : "SPACE talk   TAB menu   D dialogues   ESC quit";
   }
 
   void render(uint32_t now) {
@@ -1161,6 +1215,10 @@ struct App {
     }
     if (m == hal::Mode::Console) {
       consoles.draw(frame, frame, L, now - consoleStart, screenData(now));
+      if (listening || thinking) {  // over a console screen too: he is listening, or the brain is thinking
+        char meter[64];
+        drawCommandStrip(frame, stripText(now, meter, sizeof meter));
+      }
     } else {
       drawEyeScreen(now, 1.0f);
     }

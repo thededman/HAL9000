@@ -174,11 +174,18 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
 - **Typed chat with HAL Zero:** Enter opens `> _`; a worker thread talks to the brain; the
   answer plays from memory with a subtitle; `BRAIN THINKING` / `BRAIN OFFLINE` on the HUD.
 - **The desk HAL speaks AI lines:** he downloads the clip himself in small slices so the eye
-  keeps moving, and plays it from PSRAM.
+  keeps moving, and plays it from PSRAM. Only the newest FETCH of a batch is acted on; the
+  connection may hold the loop for 0.4 s at most, and not again for 2 s after it failed; the
+  download has 3 s without progress and 7 s in all. Fetching line n forgets any clip held for
+  n or later, and his own END or BUSY forgets them all: a clip is only ever played in the
+  conversation that fetched it.
 - **Arguments:** "Make them argue…" in HAL Zero's menu; he conducts, adding each line once it
   is playable. A tap on either HAL still stops both.
 - **Speaking:** hold a key to talk (not Space); 16 kHz mono, 15 s at most; the screen shows
-  what he heard, then the answer plays.
+  what he heard, then the answer plays. The key must be down by itself for 0.15 s before he
+  listens (so an Fn combination never starts a recording), a hold is used once, and he says
+  nothing of his own while listening. Loudness is measured over what lasts 60 ms or more, so
+  a key click neither sets the gain nor counts as speech.
 
 ## 8. When things go wrong
 
@@ -193,9 +200,12 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
 - An open port on the computer: the shared key on everything that costs anything, size caps
   on every body, and only speech and a whitelisted screen id ever come back.
 - The key and any cloud keys live in `brain/.env` (git-ignored, mode 600) and are never logged.
-- The desk HAL fetches from an address a link peer names: private addresses only, a strict
-  token, a size cap, and it must parse as a WAV. The link is off by default.
-- Local model: nothing leaves the house. Cloud option: the question and the facts do.
+- The desk HAL fetches from an address a link peer names: private addresses on his own
+  network only, a strict token, a size cap, and it must be a WAV he can play (mono or stereo,
+  8–48 kHz, a minute at most). The link is off by default.
+- Local model: nothing leaves the house. Cloud option: the persona prompt, the facts, the chat
+  memory (or the argument so far) and the question do, to the company's own address whatever
+  the computer's environment says; never audio.
 
 ## 10. Testing
 

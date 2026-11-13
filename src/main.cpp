@@ -16,6 +16,7 @@
 #include "clip_fetch.h"
 #include "consoles.h"
 #include "hal_dialogue.h"
+#include "hal_liveclips.h"
 #include "hal_layout.h"
 #include "debug_shot.h"
 #include "hal_gauges.h"
@@ -158,49 +159,15 @@ uint32_t uptimeSeconds() { return static_cast<uint32_t>(esp_timer_get_time() / 1
 // ourselves and say READY, and speak it when he says "SAY live n". Two wait at most.
 ClipFetch clipFetch;
 int fetchingLine = 0;  // the live line being downloaded (0: none)
-struct LiveClip {
-  int n = 0;
-  uint8_t* data = nullptr;
-  size_t len = 0;
-};
-LiveClip liveClips[2];
+hal::LiveClips liveClips;  // fetched and waiting to be spoken: two at most
+uint32_t linkEndedMs = 0;  // when we last ended a conversation ourselves (0: not lately)
+uint32_t sensedMs = 0;     // when the sensors were last read for a SENSE (0: never)
 
-void dropLiveClips() {
-  for (LiveClip& c : liveClips) {
-    if (c.data) free(c.data);
-    c = LiveClip();
-  }
-}
-
-void keepLiveClip(int n, uint8_t* data, size_t len) {
-  LiveClip* slot = !liveClips[0].data ? &liveClips[0] : !liveClips[1].data ? &liveClips[1] : nullptr;
-  if (!slot) {  // both taken: the older line makes room
-    slot = liveClips[0].n < liveClips[1].n ? &liveClips[0] : &liveClips[1];
-    free(slot->data);
-  }
-  *slot = {n, data, len};
-}
-
-bool haveLiveClip(int n) {
-  for (const LiveClip& c : liveClips)
-    if (c.data && c.n == n) return true;
-  return false;
-}
-
-LiveClip takeLiveClip(int n) {
-  for (LiveClip& c : liveClips)
-    if (c.data && c.n == n) {
-      LiveClip out = c;
-      c = LiveClip();
-      return out;
-    }
-  return LiveClip();
-}
-
+// The conversation is over, however it ended: nothing fetched for it may be spoken later.
 void forgetLiveLines() {
   clipFetch.abort();
   fetchingLine = 0;
-  dropLiveClips();
+  liveClips.clear();
 }
 
 // The answer to HAL Zero's SENSE: what our sensors read right now.
@@ -480,6 +447,12 @@ void loop() {
     zeroVersion = 0;
   }
   zeroWasConnected = zeroConnected;
+  // Fetching starts with a short wait for the brain to answer, so only the newest FETCH of a
+  // batch is acted on: a peer can't hold the eye still by sending a pile of them.
+  const hal::Message* newestFetch = nullptr;
+  for (const hal::Message& m : linkInbox)
+    if (m.type == hal::MsgType::Fetch) newestFetch = &m;
+  if (linkEndedMs && now - linkEndedMs > 1000) linkEndedMs = 0;
   for (const hal::Message& m : linkInbox) {
     linkLastMsgMs = now;
     zeroLiveness.heard(now);
@@ -492,9 +465,10 @@ void loop() {
       r.type = hal::MsgType::Pong;
     } else if (m.type == hal::MsgType::Say) {
       r.n = m.n;
-      if (!brain->canConverse()) {
+      if (!brain->canConverse() || linkEndedMs) {  // (a SAY that crossed our own END: that talk is over)
         r.type = hal::MsgType::Busy;
-      } else if (m.id == "live" ? !haveLiveClip(m.n)
+        if (m.id == "live") forgetLiveLines();  // HAL Zero ends the conversation on BUSY and doesn't say so
+      } else if (m.id == "live" ? !liveClips.has(m.n)
                                 : (!haveMemory || !storage.exists(hal::dialogueVoicePath(m.id, m.n, hal::Speaker::Old)))) {
         r.type = hal::MsgType::Missing;
       } else {
@@ -511,12 +485,20 @@ void loop() {
       continue;
     } else if (m.type == hal::MsgType::Fetch) {  // a line the AI brain wrote for us: go and get it
       r.n = m.n;
-      fetchingLine = m.n;
-      if (clipFetch.begin(m.host, m.port, m.token)) continue;  // READY or MISSING follows, from the loop below
-      fetchingLine = 0;
       r.type = hal::MsgType::Missing;
+      if (&m == newestFetch) {
+        // Numbers only rise within a conversation: anything held for this line or later is left
+        // over from one that ended without an END, and must not be spoken in this one.
+        liveClips.forgetFrom(m.n);
+        fetchingLine = m.n;
+        if (clipFetch.begin(m.host, m.port, m.token)) continue;  // READY or MISSING follows, from the loop below
+        fetchingLine = 0;
+      }
     } else if (m.type == hal::MsgType::Sense) {  // HAL Zero wants our readings for a question put to us
-      readDeskSensors();
+      if (!sensedMs || now - sensedMs >= 500) {  // (not for every SENSE in a pile of them)
+        readDeskSensors();
+        sensedMs = now ? now : 1;
+      }
       r.type = hal::MsgType::Sensors;
       r.sensors = linkSensors();
     } else if (m.type == hal::MsgType::Status) {  // HAL Zero diagnosing us; mid-dialogue is fine
@@ -541,7 +523,7 @@ void loop() {
       uint8_t* data = nullptr;
       size_t len = 0;
       if (fetched == ClipFetch::State::Done && clipFetch.take(&data, &len)) {
-        keepLiveClip(fetchingLine, data, len);
+        liveClips.keep(fetchingLine, data, len);
         r.type = hal::MsgType::Ready;
         Serial.printf("clip: line %d fetched (%u bytes)\n", fetchingLine, unsigned(len));
       } else {
@@ -565,6 +547,8 @@ void loop() {
     end.reason = "interrupted";
     linkServer.send(end);
     linkConversing = false;
+    forgetLiveLines();  // HAL Zero sends no END back: what was fetched for this talk goes now
+    linkEndedMs = now ? now : 1;
   }
 
   audio.setVolume(static_cast<uint8_t>(a.volume));
@@ -596,7 +580,7 @@ void loop() {
     r.n = a.dialogueLine;
     bool started = false;
     if (linkDialogue == "live") {  // the brain's line: it is in memory, not on the card
-      LiveClip clip = takeLiveClip(a.dialogueLine);
+      hal::LiveClips::Clip clip = liveClips.take(a.dialogueLine);
       started = clip.data && audio.playBuffer(clip.data, clip.len, "the brain's line");
       if (started) {
         ++linesSpoken;

@@ -20,6 +20,7 @@ Modes (how the desk HAL answers):
 Every message in and out is printed. Stdlib only.
 """
 import argparse
+import http.client
 import asyncio
 import io
 import re
@@ -74,7 +75,7 @@ def download(ip: str, port: int, token: str) -> int:
     try:
         with _DIRECT.open(f"http://{ip}:{port}/clip/{token}", timeout=8) as reply:
             data = reply.read(MAX_CLIP + 1)
-    except OSError:
+    except (OSError, http.client.HTTPException):  # nobody there, or not a web server at all
         return 0
     return wav_ms(data) if len(data) <= MAX_CLIP else 0
 

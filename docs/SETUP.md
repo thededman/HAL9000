@@ -328,7 +328,14 @@ stops it, `status` says whether it is running, and its log is `brain/.run/brain.
 
 Press Enter, type a question, press Enter again. He answers aloud with a subtitle; "show me
 your monitor wall" also brings that screen up. Esc cancels a question he is still thinking
-about, and Space interrupts an answer.
+about, and Space or Esc stops an answer.
+
+- Once the brain is paired (below) it wants the key from the simulator too: copy the
+  `HAL_BRAIN_KEY` value from `brain/.env` into a line `brain_key=...` in
+  `build/new/hal/config.txt`.
+- To try the desk HAL's lines from the simulator, give `--brain` your computer's address on
+  the network instead of `127.0.0.1`: the desk HAL downloads his lines from that address, and
+  only ever from his own network.
 
 **Chat on the Cardputer.** HAL Zero has to know where the brain is and share a key with it:
 
@@ -340,15 +347,18 @@ tools/brain.sh pair
   HAL Zero's `~/hal/config.txt` over SSH (his other settings are kept), and saves the key in
   `brain/.env`. The key is never shown. A different Cardputer: `tools/brain.sh pair user@host`.
 - Restart the brain (`tools/brain.sh stop`, then `start`) and HAL Zero. A paired brain listens
-  on your network (port 9100) while it runs, and only answers requests that carry the key. If
+  on your network (port 9100) while it runs. Everything that costs anything needs the key;
+  without it the brain only says that it is running, and hands a line's audio to whoever
+  holds that line's one-off, ten-minute address (the desk HAL has no key). If
   your computer has a firewall, let Python accept incoming connections (macOS asks; on Linux
   open TCP port 9100 to your own network).
 - On the Cardputer press **Enter**, type a question (120 characters at most) and press Enter
-  again. He thinks for a second and answers aloud with a subtitle. Esc cancels; Space interrupts
-  an answer. `tools/cardputer.sh run --ask "How hot are you running?"` asks from your computer.
-- **Or say it.** Hold **Fn** by itself, speak, and let go (15 seconds at most; the strip shows
-  a level meter while he listens). What he heard appears in the box for a moment and is then
-  sent; press any key in that moment to correct it, or Tab to put it to the desk unit instead.
+  again. He thinks for a second and answers aloud with a subtitle. Esc cancels; Space or Esc
+  stops an answer. `tools/cardputer.sh run --ask "How hot are you running?"` asks from your computer.
+- **Or say it.** Hold **Fn** by itself, speak once the strip shows the level meter, and let go
+  (15 seconds at most). What he heard appears in the box for a moment and is then sent; press
+  any key in that moment to correct it, or Tab to put it to the desk unit instead. A question
+  too long for the box waits there for you to shorten or send it.
   This needs the brain's ears (`whisper-cli` and its model, above). The recording goes to the
   brain on your computer and nowhere else. `tools/cardputer.sh run --listen 5` makes him
   listen for five seconds without a key, to test the microphone.
@@ -357,7 +367,7 @@ tools/brain.sh pair
   which takes a subject and runs eight lines between the two. This needs the two HALs linked
   (step 7) and both on v0.6 or later: flash the desk HAL again (step 5) after updating. HAL Zero
   tells the desk HAL where to download each of his lines, so the desk HAL needs no settings.
-  Space on HAL Zero, or a tap on the desk HAL, stops an argument.
+  Space or Esc on HAL Zero, or a tap on the desk HAL, stops an argument.
 - If he says his higher functions are offline, the brain isn't running or can't be reached:
   check `tools/brain.sh status`, and that both are on the same network.
 - To undo pairing, delete the `HAL_BRAIN_KEY` line from `brain/.env` and set `brain=off` in
@@ -374,14 +384,18 @@ November 2026 prices, so an argument costs eight of those.
 With a cloud model, every line sends that company:
 
 - the HAL's instructions (who he is and how he talks),
-- the facts he knows at that moment: the time and his readings, such as temperature, memory,
-  battery, Wi-Fi signal strength, uptime and the state of the link,
-- the last few lines of your chat with him, and
-- your question, or the subject of the argument. A spoken question is turned into text on
-  your computer first, and only the text is sent.
+- what he knows at that moment, as numbers and words, never pictures or sound: the time and
+  his readings (processor load, memory, temperature, battery, Wi-Fi signal strength, room
+  light, proximity, tilt, how much movement the camera sees, lines spoken, uptime, firmware
+  version, and the state of the link and of the other HAL),
+- for a question: the last few questions and answers of your chat with him, and the question.
+  A spoken question is turned into text on your computer first, and only the text is sent,
+- for an argument: its subject, both HALs' readings, and the argument so far.
 
 Never sent: recordings of your voice, the HALs' voices (both stay on your computer), Wi-Fi
-names and passwords, and the key shared with HAL Zero.
+names and passwords, network addresses, and the key shared with HAL Zero. As with any
+internet request, the company sees your internet address; Anthropic's library also tells
+Anthropic its own version, your operating system and your Python version.
 
 For **Claude**, install Anthropic's library next to the voice tool:
 
@@ -398,7 +412,9 @@ ANTHROPIC_API_KEY=your key
 ```
 
 Delete the `HAL_BRAIN_MODEL` line, or name a Claude model on it. Without one the brain uses
-`claude-opus-5-5`; `claude-haiku-5-5` is quicker and far cheaper.
+`claude-opus-5-5`; `claude-haiku-5-5` is quicker and far cheaper. Use a model of the 5 series
+(Opus, Sonnet, Haiku or Fable): the brain asks for a quick, low-effort answer in a way some
+older models refuse.
 
 For **ChatGPT** nothing needs installing. Name one of
 [OpenAI's models](https://developers.openai.com/api/docs/models) yourself: the brain doesn't
@@ -411,14 +427,18 @@ OPENAI_API_KEY=your key
 ```
 
 - Restart the brain (`tools/brain.sh stop`, then `start`). The line it prints names the model
-  in use, and it checks the key and the model's name straight away without asking the model
-  anything.
+  in use. A few seconds later it checks the key and the model's name, without asking the
+  model anything: if either is wrong, `brain/.run/brain.log` says so ("The model isn't
+  answering yet").
+- HAL Zero waits 30 seconds for an answer and the brain gives the model 20 to 25. A model that
+  thinks for longer than that is the wrong one for a spoken reply: pick a faster one.
 - Keys stay in `brain/.env`, which git ignores, and the brain never prints them. Keep the file
   private: `chmod 600 brain/.env`.
 - The HALs behave as before: the same rules, the same 150-character lines, the same guard
   against film quotes. If the company's safety filter declines a question, HAL says he has
-  nothing to say to that and `brain/.run/brain.log` notes it. With the default Claude models
-  the brain first asks Anthropic to let another Claude model answer instead.
+  nothing to say to that and `brain/.run/brain.log` notes it; that question is left out of
+  his memory of the chat. With the default Claude models the brain first asks Anthropic to let
+  another Claude model answer instead.
 - If the internet or the company's service is down, HAL Zero says his higher functions are
   offline, as he does when the local model isn't running; the log says why.
 - To go back, set `HAL_BRAIN_PROVIDER=ollama` and restore the `HAL_BRAIN_MODEL` line.

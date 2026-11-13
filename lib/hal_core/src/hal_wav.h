@@ -20,6 +20,10 @@ struct WavInfo {
 // Accepts PCM (format 1), 16-bit only. Never reads past `len`.
 bool parseWav(const uint8_t* data, size_t len, WavInfo* out);
 
+// A downloaded line the HALs will play: mono or stereo at an ordinary rate, with something in it,
+// and no longer than a minute. (A megabyte that claims 50 Hz would otherwise "speak" for hours.)
+bool playableClip(const WavInfo& info);
+
 // RMS of the first channel per `frameMs` frame, scaled so a full-scale square
 // wave is 255. Length = ceil(samples / samplesPerFrame).
 std::vector<uint8_t> loudnessEnvelope(const uint8_t* data, const WavInfo& info, uint32_t frameMs);

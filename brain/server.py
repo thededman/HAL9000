@@ -176,9 +176,9 @@ class Handler(BaseHTTPRequestHandler):
         """Run a request; whatever goes wrong inside is one log line and a 500, never a traceback."""
         try:
             work()
-        except OSError:
+        except (ConnectionError, TimeoutError):
             raise  # the other end went away
-        except Exception as e:
+        except Exception as e:  # including trouble on this computer, such as a full disk
             self.log_message("internal error: %s", type(e).__name__)
             try:
                 self._send(500, format_reply({"error": "internal"}))

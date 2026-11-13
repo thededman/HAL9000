@@ -59,6 +59,9 @@ struct PeerSensors {           // SENSORS: what the desk HAL's sensors read righ
 
 // A dotted IPv4 address in 10/8, 172.16/12 or 192.168/16: the only places a HAL fetches from.
 bool isPrivateIpv4(const std::string& dotted);
+// Are two dotted IPv4 addresses on the same network, given its mask? False for anything malformed
+// and for an empty mask (no network yet). The desk HAL only fetches from his own network.
+bool sameSubnet(const std::string& a, const std::string& b, const std::string& mask);
 
 struct Message {
   MsgType type = MsgType::Invalid;

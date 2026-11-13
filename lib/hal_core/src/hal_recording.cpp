@@ -1,5 +1,6 @@
 #include "hal_recording.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 
@@ -39,26 +40,48 @@ uint8_t Recording::level() const {
 
 std::vector<uint8_t> Recording::wav() const {
   std::vector<uint8_t> out;
-  int peak = 0;
-  for (int16_t s : samples_) peak = std::max(peak, std::abs(int(s)));
-  if (peak < kQuietPeak) return out;  // nothing was said
-
-  // The speech: from the first 20 ms frame with something a quarter as loud as the loudest
-  // sample, to the last, with a little room either side.
-  const int threshold = peak / 4;
-  size_t first = samples_.size(), last = 0;
+  // How loud each 20 ms is, and the same with anything that lasts under 60 ms taken out (a key
+  // click, the Cardputer being put down): each frame becomes the median of itself and the two
+  // either side. Speech is measured by that; one loud knock must not become the measure of "loud".
+  const size_t frames = (samples_.size() + kFrame - 1) / kFrame;
+  std::vector<int> peaks(frames, 0);
   for (size_t i = 0; i < samples_.size(); ++i) {
-    if (std::abs(int(samples_[i])) < threshold) continue;
-    if (first == samples_.size()) first = i;
-    last = i;
+    const int a = std::abs(int(samples_[i]));
+    if (a > peaks[i / kFrame]) peaks[i / kFrame] = a;
   }
-  first = first / kFrame * kFrame;
-  size_t begin = first > kMargin ? first - kMargin : 0;
-  size_t end = last + kMargin < samples_.size() ? last + kMargin : samples_.size();
-  if ((last - first) * 1000 / kRate < static_cast<size_t>(kMinMs)) return out;  // a click or a brushed key
+  std::vector<int> steady(frames, 0);
+  int level = 0;
+  for (size_t f = 0; f < frames; ++f) {
+    int around[5];
+    for (int k = 0; k < 5; ++k) {
+      const long j = long(f) + k - 2;
+      around[k] = j < 0 || j >= long(frames) ? 0 : peaks[size_t(j)];
+    }
+    std::nth_element(around, around + 2, around + 5);
+    steady[f] = around[2];
+    level = std::max(level, steady[f]);
+  }
+  if (level < kQuietPeak) return out;  // nothing was said
 
-  // Quiet speech up to half of full scale, by 40 times at most; loud speech as it is.
-  const double gain = peak >= kTargetPeak ? 1.0 : std::min(double(kMaxGain), double(kTargetPeak) / peak);
+  // The speech: from the first frame a quarter as loud as its loudest part to the last, with a
+  // little room either side.
+  const int threshold = level / 4;
+  size_t firstFrame = frames, lastFrame = 0;
+  for (size_t f = 0; f < frames; ++f) {
+    if (steady[f] < threshold) continue;
+    if (firstFrame == frames) firstFrame = f;
+    lastFrame = f;
+  }
+  const size_t first = firstFrame * kFrame;
+  const size_t last = std::min((lastFrame + 1) * kFrame, samples_.size());
+  if ((last - first) * 1000 / kRate < static_cast<size_t>(kMinMs)) return out;  // a click or a brushed key
+  const size_t begin = first > kMargin ? first - kMargin : 0;
+  const size_t end = last + kMargin < samples_.size() ? last + kMargin : samples_.size();
+
+  // Quiet speech up to half of full scale, by 40 times at most; loud speech as it is. Anything
+  // sharper than twice the speech (a click) is held there first, so nothing passes full scale.
+  const double gain = level >= kTargetPeak ? 1.0 : std::min(double(kMaxGain), double(kTargetPeak) / level);
+  const int ceiling = level >= kTargetPeak ? 32767 : 2 * level;
   const size_t n = end - begin;
   out.reserve(44 + n * 2);
   out.insert(out.end(), {'R', 'I', 'F', 'F'});
@@ -74,7 +97,8 @@ std::vector<uint8_t> Recording::wav() const {
   out.insert(out.end(), {'d', 'a', 't', 'a'});
   put32(out, static_cast<uint32_t>(n * 2));
   for (size_t i = begin; i < end; ++i) {
-    double v = samples_[i] * gain;
+    const int held = std::max(-ceiling, std::min(ceiling, int(samples_[i])));
+    double v = held * gain;
     int s = static_cast<int>(v < -32767 ? -32767 : v > 32767 ? 32767 : v);
     put16(out, static_cast<uint16_t>(static_cast<int16_t>(s)));
   }

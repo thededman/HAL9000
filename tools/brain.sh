@@ -25,6 +25,9 @@ case "${1:-}" in
     mkdir -p "$RUN"
     if [ -f "$RUN/brain.log" ] && [ "$(wc -c < "$RUN/brain.log")" -gt 1048576 ]; then mv -f "$RUN/brain.log" "$RUN/brain.log.old"; fi
     p=$(port)
+    # Something else on the port (a brain started by hand, or from another copy of this folder)
+    # would make ours look started and then die: say so instead.
+    if healthy "$p"; then echo "Something is already answering on port $p: stop it first (or set HAL_BRAIN_PORT in brain/.env)."; exit 1; fi
     nohup "$PY" -m brain.server >> "$RUN/brain.log" 2>&1 &
     echo $! > "$RUN/pid"
     for _ in $(seq 100); do

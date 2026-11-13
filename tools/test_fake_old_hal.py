@@ -48,6 +48,21 @@ class FakeDeskHalTest(unittest.TestCase):
     def test_download_gives_up_quietly(self):
         self.assertEqual(fake.download("127.0.0.1", 9, TOKEN), 0)  # nothing listens on the discard port
 
+    def test_download_from_something_that_is_not_a_web_server(self):
+        import socket
+        import threading
+        listener = socket.create_server(("127.0.0.1", 0))
+
+        def serve():
+            conn, _ = listener.accept()
+            conn.recv(65536)
+            conn.sendall(b"SSH-2.0-OpenSSH_9.9\r\n")
+            conn.close()
+            listener.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+        self.assertEqual(fake.download("127.0.0.1", listener.getsockname()[1], TOKEN), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

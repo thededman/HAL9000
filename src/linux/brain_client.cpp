@@ -106,8 +106,7 @@ void BrainClient::cancel() {
     jobs_.clear();
     done_.clear();
   }
-  int fd = fd_.load();
-  if (fd >= 0) shutdown(fd, SHUT_RDWR);  // wakes the worker out of connect/recv
+  // The worker notices by itself: it looks at the generation every tenth of a second while it waits.
 }
 
 void BrainClient::poll(std::vector<BrainEvent>* out) {
@@ -135,7 +134,7 @@ void BrainClient::run() {
     }
     if (job.kind == Job::Kind::StopDebate) {  // nothing to report back
       hal::HttpResponse ignored;
-      http("POST", "/debate/" + job.id + "/stop", "", "", 3000, 4096, &ignored);
+      http(job.generation, "POST", "/debate/" + job.id + "/stop", "", "", 3000, 4096, &ignored);
       std::lock_guard<std::mutex> lock(mu_);
       --pending_;
       continue;
@@ -150,27 +149,27 @@ void BrainClient::run() {
   }
 }
 
-std::string BrainClient::fetchClip(const std::string& token, std::vector<uint8_t>* wav) {
+std::string BrainClient::fetchClip(int generation, const std::string& token, std::vector<uint8_t>* wav) {
   hal::HttpResponse clip;
-  std::string error = http("GET", "/clip/" + token, "", "", kClipMs, kMaxClipBytes, &clip);
+  std::string error = http(generation, "GET", "/clip/" + token, "", "", kClipMs, kMaxClipBytes, &clip);
   if (!error.empty()) return error;
   if (clip.status != 200) return "bad-clip";
   wav->assign(clip.body.begin(), clip.body.end());
   hal::WavInfo info;
-  if (!hal::parseWav(wav->data(), wav->size(), &info) || info.dataBytes == 0) return "bad-clip";
+  if (!hal::parseWav(wav->data(), wav->size(), &info) || !hal::playableClip(info)) return "bad-clip";
   return "";
 }
 
 BrainEvent BrainClient::doAsk(const Job& job) {
   BrainEvent event;
   hal::HttpResponse response;
-  std::string error = http("POST", "/ask?who=" + job.who, "text/plain", job.body, kAskMs, 4096, &response);
+  std::string error = http(job.generation, "POST", "/ask?who=" + job.who, "text/plain", job.body, kAskMs, 4096, &response);
   if (!error.empty()) return failed(error);
   event.reply = hal::parseBrainReply(response);
   if (!event.reply.ok) return failed(event.reply.error);
   if (event.reply.text.empty() || event.reply.clip.empty()) return failed("bad-reply");
   if (job.who == "zero") {  // his own line: the audio is needed here
-    error = fetchClip(event.reply.clip, &event.wav);
+    error = fetchClip(job.generation, event.reply.clip, &event.wav);
     if (!error.empty()) return failed(error);
   }
   event.reply.who = job.who;
@@ -181,7 +180,7 @@ BrainEvent BrainClient::doAsk(const Job& job) {
 BrainEvent BrainClient::doHear(const Job& job) {
   BrainEvent event;
   hal::HttpResponse response;
-  std::string error = http("POST", "/hear", "audio/wav", job.body, kAskMs, 4096, &response);
+  std::string error = http(job.generation, "POST", "/hear", "audio/wav", job.body, kAskMs, 4096, &response);
   if (!error.empty()) return failed(error);
   event.reply = hal::parseBrainReply(response);
   if (!event.reply.ok) return failed(event.reply.error);
@@ -193,8 +192,8 @@ BrainEvent BrainClient::doHear(const Job& job) {
 BrainEvent BrainClient::doDebate(const Job& job) {
   BrainEvent event;
   hal::HttpResponse response;
-  std::string error =
-      http("POST", "/debate?turns=" + std::to_string(job.n), "text/plain", job.body, kAskMs, 4096, &response);
+  std::string error = http(job.generation, "POST", "/debate?turns=" + std::to_string(job.n), "text/plain", job.body,
+                           kAskMs, 4096, &response);
   if (!error.empty()) return failed(error);
   event.reply = hal::parseBrainReply(response);
   if (!event.reply.ok) return failed(event.reply.error);
@@ -206,11 +205,12 @@ BrainEvent BrainClient::doDebate(const Job& job) {
 BrainEvent BrainClient::doDebateLine(const Job& job) {
   BrainEvent event;
   const auto giveUp = Clock::now() + std::chrono::milliseconds(kLineMs);
-  const int generation = generation_.load();
+  const int generation = job.generation;
   while (true) {
     hal::HttpResponse response;
     // The brain holds the request for up to 20 s while the line is being written.
-    std::string error = http("GET", "/debate/" + job.id + "/" + std::to_string(job.n), "", "", 25000, 4096, &response);
+    std::string error =
+        http(generation, "GET", "/debate/" + job.id + "/" + std::to_string(job.n), "", "", 25000, 4096, &response);
     if (!error.empty()) return failed(error);
     event.reply = hal::parseBrainReply(response);
     if (!event.reply.ok) return failed(event.reply.error);
@@ -223,17 +223,22 @@ BrainEvent BrainClient::doDebateLine(const Job& job) {
   }
   if (event.reply.text.empty() || event.reply.clip.empty() || event.reply.who.empty()) return failed("bad-reply");
   if (event.reply.who == "zero") {
-    std::string error = fetchClip(event.reply.clip, &event.wav);
+    std::string error = fetchClip(generation, event.reply.clip, &event.wav);
     if (!error.empty()) return failed(error);
   }
   event.kind = BrainEvent::Kind::Line;
   return event;
 }
 
-std::string BrainClient::http(const std::string& method, const std::string& path, const std::string& contentType,
-                              const std::string& body, int timeoutMs, size_t maxBytes, hal::HttpResponse* out) {
+std::string BrainClient::http(int generation, const std::string& method, const std::string& path,
+                              const std::string& contentType, const std::string& body, int timeoutMs, size_t maxBytes,
+                              hal::HttpResponse* out) {
   const std::string request = hal::httpRequest(method, host_, port_, path, key_, contentType, body);
   if (request.empty()) return "bad-request";
+  // Cancelled (or the program is closing)? Asked before each step and every tenth of a second
+  // while waiting, so a question given up on is dropped wherever it had got to.
+  const auto cancelled = [&] { return generation != generation_.load() || !running_; };
+  if (cancelled()) return "cancelled";
 
   addrinfo hints{};
   hints.ai_family = AF_INET;  // the desk HAL is told this address too, and he speaks IPv4
@@ -243,13 +248,12 @@ std::string BrainClient::http(const std::string& method, const std::string& path
   char dotted[INET_ADDRSTRLEN] = "";
   inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(found->ai_addr)->sin_addr, dotted, sizeof dotted);
 
-  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  int fd = cancelled() ? -1 : socket(AF_INET, SOCK_STREAM, 0);  // (the name lookup above can take a while)
   if (fd < 0) {
     freeaddrinfo(found);
-    return "offline";
+    return cancelled() ? "cancelled" : "offline";
   }
   fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-  fd_ = fd;
   std::string error;
   const auto fail = [&](const char* why) {
     error = why;
@@ -257,12 +261,18 @@ std::string BrainClient::http(const std::string& method, const std::string& path
   };
   // Wait until the socket is ready for `events`, within `ms`.
   const auto ready = [&](short events, int ms) {
-    pollfd p{fd, events, 0};
-    int r = ::poll(&p, 1, ms);
-    return r > 0 && !(p.revents & (POLLERR | POLLNVAL)) ? true : fail(r == 0 ? "timeout" : "offline");
+    const auto until = Clock::now() + std::chrono::milliseconds(ms);
+    while (true) {
+      if (cancelled()) return fail("cancelled");
+      pollfd p{fd, events, 0};
+      const int left = msLeft(until);
+      int r = ::poll(&p, 1, left < 100 ? left : 100);
+      if (r > 0) return (p.revents & (POLLERR | POLLNVAL)) ? fail("offline") : true;
+      if (r < 0 && errno != EINTR) return fail("offline");  // (a signal just means: look again)
+      if (msLeft(until) == 0) return fail("timeout");
+    }
   };
 
-  const int generation = generation_.load();
   bool ok = true;
   if (connect(fd, found->ai_addr, found->ai_addrlen) != 0) {
     ok = errno == EINPROGRESS && ready(POLLOUT, kConnectMs);
@@ -301,9 +311,8 @@ std::string BrainClient::http(const std::string& method, const std::string& path
       if (raw.size() > maxBytes + 2048) ok = fail("bad-reply");  // more than any reply or clip
     }
   }
-  fd_ = -1;
   close(fd);
-  if (generation != generation_.load()) return "cancelled";
+  if (cancelled()) return "cancelled";
   if (!ok) return error.empty() ? "offline" : error;
   if (!hal::parseHttpResponse(raw, out)) return "bad-reply";
   std::lock_guard<std::mutex> lock(mu_);

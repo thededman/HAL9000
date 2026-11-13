@@ -27,6 +27,10 @@ bool parseDialogue(const std::string& id, const std::string& input, Dialogue* ou
   auto fail = [&](int lineNo, const std::string& msg) {
     if (errors) errors->push_back("line " + std::to_string(lineNo) + ": " + msg);
   };
+  if (id == "live") {  // on the link that name means the AI brain's lines, which aren't on the card
+    fail(0, "a script can't be called 'live'");
+    return false;
+  }
   Dialogue d;
   d.id = id;
   bool ok = true;

@@ -55,6 +55,11 @@ bool parseWav(const uint8_t* data, size_t len, WavInfo* out) {
   return false;
 }
 
+bool playableClip(const WavInfo& info) {
+  return info.channels >= 1 && info.channels <= 2 && info.sampleRate >= 8000 && info.sampleRate <= 48000 &&
+         info.dataBytes > 0 && info.durationMs <= 60000;
+}
+
 std::vector<uint8_t> loudnessEnvelope(const uint8_t* data, const WavInfo& info, uint32_t frameMs) {
   std::vector<uint8_t> env;
   size_t stride = info.channels;

@@ -225,6 +225,32 @@ void test_live_old_line_flow() {
   TEST_ASSERT_TRUE(sent(o, "END done"));
 }
 
+void test_live_missing_line_goes_back_to_waiting() {
+  // The desk HAL lost a live line: it is skipped, and the wait for the next one starts afresh.
+  hal::Conductor c;
+  c.startLive(0);
+  c.append(hal::Speaker::Old, "From the desk.");
+  TEST_ASSERT_TRUE(sent(c.tick(0), "SAY live 1"));
+  ConductorOut o = c.onRemote(msg("MISSING 1"), 20000);
+  TEST_ASSERT_FALSE(o.finished);
+  TEST_ASSERT_TRUE(c.active());
+  TEST_ASSERT_FALSE(c.tick(50000).finished);  // 30 s from the MISSING, not from the start
+  TEST_ASSERT_TRUE(c.tick(50001).finished);
+}
+
+void test_live_survives_the_clock_wrapping() {
+  hal::Conductor c;
+  c.startLive(0xFFFFF000u);  // 4 s before the millisecond clock wraps (every 49 days)
+  TEST_ASSERT_FALSE(c.tick(0x00000100u).finished);
+  c.append(hal::Speaker::New, "One.");
+  TEST_ASSERT_TRUE(c.tick(0x00000200u).playLocal);
+  c.onLocalDone(0x00001000u);
+  TEST_ASSERT_FALSE(c.tick(0x00001000u + 30000).finished);
+  ConductorOut o = c.tick(0x00001000u + 30001);
+  TEST_ASSERT_TRUE(o.finished);
+  TEST_ASSERT_EQUAL_STRING("timeout", o.reason.c_str());
+}
+
 void test_live_times_out() {
   hal::Conductor c;
   c.startLive(1000);
@@ -334,6 +360,8 @@ int main() {
   RUN_TEST(test_live_one_line);
   RUN_TEST(test_live_waits_for_the_next_line);
   RUN_TEST(test_live_old_line_flow);
+  RUN_TEST(test_live_missing_line_goes_back_to_waiting);
+  RUN_TEST(test_live_survives_the_clock_wrapping);
   RUN_TEST(test_live_times_out);
   RUN_TEST(test_append_after_end);
   RUN_TEST(test_live_is_capped);

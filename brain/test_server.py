@@ -244,6 +244,15 @@ class HardeningTest(ServerCase):
         self.assertTrue(any("internal error: RuntimeError" in line for line in self.log))
         self.assertFalse(any("Traceback" in line for line in self.log))
 
+    def test_trouble_on_this_computer_is_not_mistaken_for_a_caller_hanging_up(self):
+        def full(system, messages, max_tokens=80):
+            raise OSError(28, "No space left on device")
+
+        self.provider.chat = full
+        status, body, _ = self.call("POST", "/ask?who=zero", b"\nhi")
+        self.assertEqual((status, body), (500, b"error=internal\n"))
+        self.assertTrue(any("internal error: OSError" in line for line in self.log))
+
     def test_plain_errors_for_things_the_library_refuses(self):
         got, _ = self.raw(b"BREW /coffee HTTP/1.1\r\nHost: x\r\n\r\n")
         self.assertIn(b"error=", got)

@@ -180,6 +180,22 @@ void test_v3_round_trip() {
   TEST_ASSERT_EQUAL(42, s.sensors.temp);
 }
 
+void test_same_subnet() {
+  TEST_ASSERT_TRUE(hal::sameSubnet("192.168.1.20", "192.168.1.7", "255.255.255.0"));
+  TEST_ASSERT_TRUE(hal::sameSubnet("172.16.1.3", "172.16.0.14", "255.255.254.0"));
+  TEST_ASSERT_TRUE(hal::sameSubnet("10.9.8.7", "10.0.0.1", "255.0.0.0"));
+  // Private, but somewhere else: the modem's own network, a VPN.
+  TEST_ASSERT_FALSE(hal::sameSubnet("10.20.30.40", "192.168.1.7", "255.255.255.0"));
+  TEST_ASSERT_FALSE(hal::sameSubnet("192.168.2.20", "192.168.1.7", "255.255.255.0"));
+  TEST_ASSERT_FALSE(hal::sameSubnet("172.16.2.3", "172.16.0.14", "255.255.254.0"));
+  // No network yet (0.0.0.0), or nonsense: never.
+  TEST_ASSERT_FALSE(hal::sameSubnet("192.168.1.20", "0.0.0.0", "0.0.0.0"));
+  TEST_ASSERT_FALSE(hal::sameSubnet("192.168.1.20", "192.168.1.7", "0.0.0.0"));
+  TEST_ASSERT_FALSE(hal::sameSubnet("192.168.1.20", "192.168.1.7", ""));
+  TEST_ASSERT_FALSE(hal::sameSubnet("192.168.1", "192.168.1.7", "255.255.255.0"));
+  TEST_ASSERT_FALSE(hal::sameSubnet("192.168.1.20", "banana", "255.255.255.0"));
+}
+
 void test_private_ipv4() {
   for (const char* yes : {"10.0.0.1", "10.255.255.255", "172.16.0.14", "172.31.255.254", "192.168.1.20", "192.168.0.0"})
     TEST_ASSERT_TRUE_MESSAGE(hal::isPrivateIpv4(yes), yes);
@@ -360,6 +376,7 @@ int main() {
   RUN_TEST(test_version_two_still_reads_one);
   RUN_TEST(test_v3_round_trip);
   RUN_TEST(test_private_ipv4);
+  RUN_TEST(test_same_subnet);
   RUN_TEST(test_fetch_rejects);
   RUN_TEST(test_sensors_rejects);
   RUN_TEST(test_longest_v3_lines_fit);

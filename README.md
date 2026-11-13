@@ -95,8 +95,8 @@ He starts from M5Stack's launcher, which pauses while he has the screen and come
 when he quits.
 
 **Keys:** Space is HAL's "finger" (tap or hold, like the CoreS3's screen), Tab or
-up/down opens the menu, D lists the conversations, Enter picks, Esc goes back (and
-quits from the eye). With the AI brain paired, Enter on the eye screen opens a box to
+up/down opens the menu, D lists the conversations, Enter picks, Esc goes back or stops a
+conversation (and quits from the quiet eye). With the AI brain paired, Enter on the eye screen opens a box to
 type him a question, and holding Fn lets you say it instead. The arrows are F (up), X (down), Z (left) and C (right), with or
 without Fn.
 

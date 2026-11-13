@@ -35,7 +35,8 @@ class Brain:
         """Dave's question to one HAL, with what that HAL knows right now and the chat so far."""
         system = persona.system_prompt(who, facts)
         line = self.speak(who, system, self.memory.history(who) + [{"role": "user", "content": question}])
-        self.memory.add(who, question, line.text)
+        if line.text != persona.FALLBACK:  # no answer came (a cloud model may have declined): don't send it again
+            self.memory.add(who, question, line.text)
         return line
 
     def hear(self, wav: bytes) -> str:

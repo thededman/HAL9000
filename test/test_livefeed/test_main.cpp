@@ -115,6 +115,15 @@ void test_feed_ready_timeout() {
   TEST_ASSERT_TRUE(nothing(f.tick(60000)));
 }
 
+void test_feed_ready_timeout_across_the_clock_wrapping() {
+  LiveFeed f;
+  f.start();
+  deskLine(f, "Still downloading.", false, 0xFFFFFF00u);
+  TEST_ASSERT_TRUE(nothing(f.tick(0x00000100u)));              // half a second later, past the wrap
+  TEST_ASSERT_TRUE(nothing(f.tick(0xFFFFFF00u + 8000)));
+  TEST_ASSERT_TRUE(f.tick(0xFFFFFF00u + 8001).failed);
+}
+
 void test_feed_ignores_stale() {
   LiveFeed f;
   f.start();
@@ -179,6 +188,7 @@ int main() {
   RUN_TEST(test_feed_last_closes);
   RUN_TEST(test_feed_missing);
   RUN_TEST(test_feed_ready_timeout);
+  RUN_TEST(test_feed_ready_timeout_across_the_clock_wrapping);
   RUN_TEST(test_feed_ignores_stale);
   RUN_TEST(test_feed_bad_fetch_details);
   RUN_TEST(test_feed_restart);

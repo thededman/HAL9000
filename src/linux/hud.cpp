@@ -4,6 +4,7 @@
 
 #include <cstdio>
 
+#include "hal_subtitle.h"
 #include "screens/screens.h"
 
 using screens::blue;
@@ -32,32 +33,6 @@ void row(M5Canvas& f, int x, int y, const char* label, const char* value, uint16
   f.setTextColor(colour);
   f.setTextDatum(top_right);
   f.drawString(value, x + kPanelW - 6, y, &fonts::Font0);
-}
-
-std::vector<std::string> wrap(const std::string& text, size_t width) {
-  std::vector<std::string> lines;
-  std::string line, word;
-  auto flush = [&] {
-    if (line.empty()) {
-      line = word;
-    } else if (line.size() + 1 + word.size() <= width) {
-      line += " " + word;
-    } else {
-      lines.push_back(line);
-      line = word;
-    }
-    word.clear();
-  };
-  for (char c : text) {
-    if (c == ' ') {
-      if (!word.empty()) flush();
-    } else {
-      word += c;
-    }
-  }
-  if (!word.empty()) flush();
-  if (!line.empty()) lines.push_back(line);
-  return lines;
 }
 
 }  // namespace
@@ -184,8 +159,8 @@ void drawSubtitle(M5Canvas& f, bool halZero, const std::string& text, int n, int
   f.drawString(buf, x + w - 6, y + 4, &fonts::Font0);
   f.setTextDatum(top_left);
   f.setTextColor(white());
-  auto lines = wrap(text, 50);
-  for (size_t i = 0; i < lines.size() && i < 3; ++i) f.drawString(lines[i].c_str(), x + 6, y + 15 + int(i) * 9, &fonts::Font0);
+  auto lines = hal::subtitleRows(text, 50, 3);
+  for (size_t i = 0; i < lines.size(); ++i) f.drawString(lines[i].c_str(), x + 6, y + 15 + int(i) * 9, &fonts::Font0);
 }
 
 void drawAskBox(M5Canvas& f, const char* title, const std::string& text, size_t max, uint32_t now) {

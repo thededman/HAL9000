@@ -8,6 +8,9 @@ import sys
 from . import ProviderError
 
 DEFAULT_MODEL = "claude-opus-5-5"
+# Always given to the library, which would otherwise take an address from ANTHROPIC_BASE_URL in
+# the shell the brain was started from: the key and the questions go to Anthropic and nowhere else.
+BASE_URL = "https://api.anthropic.com"
 MAX_TOKENS = 4096  # a line is a sentence or two, but the model's thinking counts toward this as well
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 # These models' safety filters sometimes decline a harmless question. For them Anthropic is asked
@@ -55,8 +58,10 @@ class ClaudeProvider:
     def __init__(self, api_key: str, model: str = DEFAULT_MODEL, timeout_s: float = 20, sdk=None):
         self.model = model
         self._sdk = sdk or load_sdk()
-        # One try: HAL Zero stops waiting after 30 seconds, and a second try would outlast him.
-        self._client = self._sdk.Anthropic(api_key=api_key, timeout=timeout_s, max_retries=0)
+        # One try, 25 seconds at the very most (5 to connect, then `timeout_s` for the answer): HAL Zero
+        # stops waiting after 30, and a second try would outlast him.
+        self._client = self._sdk.Anthropic(api_key=api_key, base_url=BASE_URL, max_retries=0,
+                                           timeout=self._sdk.Timeout(float(timeout_s), connect=5.0))
 
     def chat(self, system: str, messages: list[dict], max_tokens: int = 80) -> str:
         """`max_tokens` is the local model's measure and isn't used: see MAX_TOKENS."""

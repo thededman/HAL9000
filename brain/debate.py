@@ -1,5 +1,6 @@
 """The two HALs arguing live: lines are written one ahead of the one being collected."""
 import secrets
+import sys
 import threading
 import time
 
@@ -28,9 +29,13 @@ class Debate:
         self._thread.start()
 
     def _messages(self, who: str, so_far: list) -> list[dict]:
-        if not so_far:
-            return [{"role": "user", "content": "Begin."}]
-        return [{"role": "assistant" if line.who == who else "user", "content": line.text} for line in so_far]
+        """The argument so far as `who` sees it: his own lines are his, the other's are put to him.
+        It opens with a word from outside when he spoke first: some models (Claude) refuse a
+        conversation that starts with their own words."""
+        messages = [{"role": "assistant" if line.who == who else "user", "content": line.text} for line in so_far]
+        if not messages or messages[0]["role"] != "user":
+            messages.insert(0, {"role": "user", "content": "Begin."})
+        return messages
 
     def _run(self) -> None:
         while True:
@@ -49,6 +54,9 @@ class Debate:
                 system = persona.debate_prompt(who, self._topic, self._facts, last=n == self.turns - 1)
                 line = self._brain.speak(who, system, self._messages(who, so_far), allow_show=False)
             except Exception as e:  # the model or the voice failed: the argument stops here, and says why
+                known = isinstance(e, (ProviderError, VoiceError))  # these explain themselves, without secrets
+                why = "".join(ch if " " <= ch <= "~" else " " for ch in (str(e) if known else type(e).__name__))
+                print(f"The argument stopped at line {n}: {why[:200]}", file=sys.stderr, flush=True)
                 with self._cond:
                     self._error = ("no-model" if isinstance(e, ProviderError) else
                                    "no-voice" if isinstance(e, VoiceError) else "internal")

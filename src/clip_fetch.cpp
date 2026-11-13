@@ -3,21 +3,35 @@
 #include <Arduino.h>
 
 #include "hal_http.h"
+#include "hal_link.h"
 #include "hal_wav.h"
 
 bool ClipFetch::begin(const std::string& host, int port, const std::string& token) {
   abort();
-  const std::string request = hal::httpRequest("GET", host, port, "/clip/" + token, "", "", "");
-  if (request.empty() || !client_.connect(host.c_str(), port, 1000)) {  // the brain is on this network: quick
-    Serial.println("clip: can't reach the brain");
+  const auto refuse = [this](const char* why) {
+    Serial.printf("clip: %s\n", why);
     client_.stop();
     state_ = State::Failed;
     return false;
+  };
+  // The brain is on this network. Anything else a link message names (another private network
+  // the router can reach, a VPN) is not ours to fetch from.
+  if (!hal::sameSubnet(host, WiFi.localIP().toString().c_str(), WiFi.subnetMask().toString().c_str()))
+    return refuse("that address isn't on this network");
+  const std::string request = hal::httpRequest("GET", host, port, "/clip/" + token, "", "", "");
+  if (request.empty()) return refuse("bad request");
+  // Connecting is the one step that holds the loop (and the eye) up. If nobody answered a moment
+  // ago, don't wait again so soon: a peer can't freeze him by naming dead addresses in a row.
+  if (refusedMs_ && millis() - refusedMs_ < kRetryMs) return refuse("the brain didn't answer a moment ago");
+  if (!client_.connect(host.c_str(), port, kConnectMs)) {
+    refusedMs_ = millis() ? millis() : 1;
+    return refuse("can't reach the brain");
   }
+  refusedMs_ = 0;
   client_.setNoDelay(true);
   client_.print(request.c_str());
   head_.clear();
-  progressMs_ = millis();
+  progressMs_ = startedMs_ = millis();
   state_ = State::Fetching;
   return true;
 }
@@ -60,12 +74,13 @@ ClipFetch::State ClipFetch::poll() {
   if (buf_ && got_ == len_) {  // all here: it has to be a WAV he can play
     client_.stop();
     hal::WavInfo info;
-    if (!hal::parseWav(buf_, len_, &info) || info.dataBytes == 0) return fail("that isn't a 16-bit PCM WAV");
+    if (!hal::parseWav(buf_, len_, &info) || !hal::playableClip(info)) return fail("that isn't a WAV he can play");
     state_ = State::Done;
     return state_;
   }
   if (!client_.connected() && client_.available() <= 0) return fail("the brain hung up early");
   if (millis() - progressMs_ > kStallMs) return fail("the download stalled");
+  if (millis() - startedMs_ > kTotalMs) return fail("the download is taking too long");
   return state_;
 }
 

@@ -103,13 +103,58 @@ void test_gain_never_clips() {
   Recording r;
   r.start();
   std::vector<int16_t> s = tone(1.0, 400);
-  s[4000] = 3000;  // a click: the gain follows the loudest sample, so nothing can pass full scale
-  s[9000] = -3000;
+  s[4000] = 3000;  // clicks: the gain follows the speech, and a click is held to twice its level,
+  s[9000] = -3000;  // so nothing can pass full scale
   add(r, s);
   std::vector<uint8_t> wav = r.wav();
-  int peak = peakOf(wav);
-  TEST_ASSERT_TRUE(peak <= 16500);
-  TEST_ASSERT_TRUE(peak >= 16000);
+  hal::WavInfo info;
+  TEST_ASSERT_TRUE(hal::parseWav(wav.data(), wav.size(), &info));
+  const auto* pcm = reinterpret_cast<const int16_t*>(wav.data() + info.dataOffset);
+  int louderThanSpeech = 0;
+  for (size_t i = 0; i < info.dataBytes / 2; ++i) {
+    TEST_ASSERT_TRUE(pcm[i] > -32768);
+    if (std::abs(int(pcm[i])) > 16500) ++louderThanSpeech;
+  }
+  TEST_ASSERT_EQUAL(2, louderThanSpeech);  // the two clicks, and only them
+  TEST_ASSERT_INT_WITHIN(60, 1000, int(info.durationMs));  // and the whole second of speech is there
+}
+
+void test_a_click_does_not_hide_quiet_speech() {
+  // Four seconds of quiet speech and one loud knock (a key, the Cardputer being put down). The
+  // knock must not become the measure of "loud": the speech would fall under it and be thrown away.
+  Recording r;
+  r.start();
+  std::vector<int16_t> s = tone(4.0, 230);
+  for (size_t i = 32000; i < 32160; ++i) s[i] = (i % 2) ? 2000 : -2000;  // 10 ms
+  add(r, s);
+  std::vector<uint8_t> wav = r.wav();
+  TEST_ASSERT_TRUE(wav.size() > 0);
+  TEST_ASSERT_TRUE(msOf(wav) >= 3900);
+  TEST_ASSERT_TRUE(peakOf(wav) >= 8000);  // the speech was brought up, by its own level
+}
+
+void test_clicks_either_side_are_not_the_speech() {
+  Recording r;
+  r.start();
+  std::vector<int16_t> s = silence(5.0);
+  for (size_t i = 1600; i < 1760; ++i) s[i] = 3000;             // the key going down, at 0.1 s
+  const std::vector<int16_t> said = tone(2.0, 300);             // speech from 1.5 s to 3.5 s
+  for (size_t i = 0; i < said.size(); ++i) s[24000 + i] = said[i];
+  for (size_t i = 76800; i < 76960; ++i) s[i] = -3000;          // and coming up, at 4.8 s
+  add(r, s);
+  std::vector<uint8_t> wav = r.wav();
+  TEST_ASSERT_TRUE(wav.size() > 0);
+  TEST_ASSERT_TRUE(msOf(wav) >= 2000 && msOf(wav) <= 2500);  // the speech and its margins: not the clicks
+  TEST_ASSERT_TRUE(peakOf(wav) <= 16500);
+}
+
+void test_a_click_alone_is_nothing() {
+  Recording r;
+  r.start();
+  std::vector<int16_t> s = silence(2.0);
+  for (size_t i = 16000; i < 16160; ++i) s[i] = 5000;
+  add(r, s);
+  TEST_ASSERT_EQUAL(0, int(r.wav().size()));
 }
 
 void test_too_short() {
@@ -181,6 +226,9 @@ int main() {
   RUN_TEST(test_gain_is_limited);
   RUN_TEST(test_loud_is_left_alone);
   RUN_TEST(test_gain_never_clips);
+  RUN_TEST(test_a_click_does_not_hide_quiet_speech);
+  RUN_TEST(test_clicks_either_side_are_not_the_speech);
+  RUN_TEST(test_a_click_alone_is_nothing);
   RUN_TEST(test_too_short);
   RUN_TEST(test_too_quiet);
   RUN_TEST(test_cap);

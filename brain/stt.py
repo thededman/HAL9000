@@ -38,7 +38,7 @@ def tidy(transcript: str) -> str:
 
 
 class Whisper:
-    def __init__(self, model: pathlib.Path = MODEL, binary: str = "whisper-cli", timeout_s: float = 30):
+    def __init__(self, model: pathlib.Path = MODEL, binary: str = "whisper-cli", timeout_s: float = 20):
         self._model, self._binary, self._timeout = pathlib.Path(model), binary, timeout_s
 
     def transcribe(self, wav: bytes) -> str:

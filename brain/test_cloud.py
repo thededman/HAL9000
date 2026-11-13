@@ -62,6 +62,10 @@ class FakeSdk:
     class CredentialsError(AnthropicError):
         pass
 
+    @staticmethod
+    def Timeout(default, **each):
+        return ("timeout", default, each)
+
     def __init__(self, answer=None):
         self.answer = answer if answer is not None else reply()  # a Message, or an exception to raise
         self.made = []       # how each client was built
@@ -130,7 +134,16 @@ class ClaudeTest(unittest.TestCase):
     def test_one_try_within_hal_zeros_patience(self):
         sdk = FakeSdk()
         claude.ClaudeProvider(KEY, sdk=sdk)
-        self.assertEqual(sdk.made, [{"api_key": KEY, "timeout": 20, "max_retries": 0}])
+        self.assertEqual(sdk.made[0]["max_retries"], 0)
+        self.assertEqual(sdk.made[0]["timeout"], ("timeout", 20.0, {"connect": 5.0}))  # 25 s at the very most
+
+    def test_the_key_goes_to_anthropic_whatever_this_computer_is_set_up_for(self):
+        # Without an address the library takes ANTHROPIC_BASE_URL from the shell the brain was started
+        # in: a gateway set up for some other program would get the key, the questions and the readings.
+        sdk = FakeSdk()
+        claude.ClaudeProvider(KEY, sdk=sdk)
+        self.assertEqual(sdk.made[0]["base_url"], "https://api.anthropic.com")
+        self.assertEqual(sdk.made[0]["api_key"], KEY)
 
     def test_reply_text(self):
         two = reply("One.")
@@ -265,6 +278,16 @@ class OpenAITest(unittest.TestCase):
                     {"error": {"message": "The model does not exist"}}, {"error": "odd"}, [], None):
             with self.assertRaises(providers.ProviderError, msg=repr(bad)):
                 openai.parse_response(bad)
+
+    def test_a_refusal_is_an_empty_reply_and_a_line_in_the_log(self):
+        import contextlib
+        import io
+        noted = io.StringIO()
+        self.api.will_say(said(None, refusal="I can't help with that."))
+        with contextlib.redirect_stderr(noted):
+            self.assertEqual(self.provider.chat("s", HISTORY), "")
+        self.assertIn("OpenAI declined", noted.getvalue())
+        self.assertNotIn("I can't help", noted.getvalue())  # the model's words stay out of the log
 
     def test_errors_are_provider_errors_that_never_show_the_key(self):
         # OpenAI's own 401 message quotes part of the key back.

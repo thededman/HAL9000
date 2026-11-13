@@ -67,9 +67,10 @@ class BrainClient {
   BrainEvent doDebateLine(const Job& job);
   BrainEvent doHear(const Job& job);
   // Fills `event.wav` from /clip/<token>; returns "" or an error word.
-  std::string fetchClip(const std::string& token, std::vector<uint8_t>* wav);
-  // One request; returns "" and fills `out`, or an error word.
-  std::string http(const std::string& method, const std::string& path, const std::string& contentType,
+  std::string fetchClip(int generation, const std::string& token, std::vector<uint8_t>* wav);
+  // One request for the job of that `generation`; returns "" and fills `out`, or an error word
+  // ("cancelled" within a tenth of a second of cancel() or stop(), wherever it had got to).
+  std::string http(int generation, const std::string& method, const std::string& path, const std::string& contentType,
                    const std::string& body, int timeoutMs, size_t maxBytes, hal::HttpResponse* out);
 
   std::string host_, key_;
@@ -78,7 +79,6 @@ class BrainClient {
   std::atomic<bool> running_{false};
   std::atomic<int> generation_{0};  // bumped by cancel(): older results are dropped
   std::atomic<int> pending_{0};
-  std::atomic<int> fd_{-1};         // the socket in use, so cancel() can interrupt it
   std::mutex mu_;
   std::condition_variable wake_;
   std::deque<Job> jobs_;

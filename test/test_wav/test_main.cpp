@@ -133,6 +133,34 @@ void test_envelope_silence_and_full() {
   for (uint8_t v : env) TEST_ASSERT_EQUAL(255, v);
 }
 
+void test_playable_clip() {
+  hal::WavInfo ok;
+  ok.sampleRate = 22050;
+  ok.channels = 1;
+  ok.bitsPerSample = 16;
+  ok.dataBytes = 44100;
+  ok.durationMs = 1000;
+  TEST_ASSERT_TRUE(hal::playableClip(ok));
+  hal::WavInfo w = ok;
+  w.channels = 2;
+  TEST_ASSERT_TRUE(hal::playableClip(w));
+  w.channels = 6;  // would play as noise
+  TEST_ASSERT_FALSE(hal::playableClip(w));
+  w = ok;
+  w.sampleRate = 50;  // a megabyte at 50 Hz would "speak" for hours
+  TEST_ASSERT_FALSE(hal::playableClip(w));
+  w.sampleRate = 96000;
+  TEST_ASSERT_FALSE(hal::playableClip(w));
+  w = ok;
+  w.dataBytes = 0;
+  TEST_ASSERT_FALSE(hal::playableClip(w));
+  w = ok;
+  w.durationMs = 60001;  // no line is a minute long
+  TEST_ASSERT_FALSE(hal::playableClip(w));
+  w.durationMs = 60000;
+  TEST_ASSERT_TRUE(hal::playableClip(w));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_parse_plain_mono);
@@ -142,5 +170,6 @@ int main() {
   RUN_TEST(test_rejects_non_pcm_and_8bit);
   RUN_TEST(test_rejects_garbage);
   RUN_TEST(test_envelope_silence_and_full);
+  RUN_TEST(test_playable_clip);
   return UNITY_END();
 }
