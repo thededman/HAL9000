@@ -209,6 +209,20 @@ void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenDa
 
 enum class Overlay { None, Menu, Dialogues, Ask };
 
+// One of the other HALs HAL Zero is linked to: his connection and what is known of him.
+struct Peer {
+  LinkClient link;
+  int who = -1;                // which HAL he is, as a cast number (hal_cast.h): the desk HAL in
+                               // the first place; a friend once he has said (IAM)
+  int version = 0;             // from his HELLO (0 = not seen)
+  hal::PeerStatus status;      // his last STATE
+  hal::PeerWatch watch;        // STATUS sent, STATE received
+  hal::PeerSensors sensors;    // his last SENSORS
+  bool haveSensors = false;    // ... since they were last asked for
+  hal::LinkLiveness liveness;  // pings, so one who lost power is noticed
+  bool wasConnected = false;
+};
+
 struct App {
   PosixStorage storage;
   hal::Config cfg;
@@ -228,7 +242,10 @@ struct App {
   bool audioOk = false;
   std::vector<hal::Dialogue> dialogues;
   hal::Conductor conductor;
-  LinkClient link;
+  // The other HALs: the desk HAL first (peer_host), then up to three friends (friends=).
+  static constexpr int kPeers = 4;
+  Peer peers[kPeers];
+  Peer& desk = peers[0];
   // The AI brain: a question typed in the ask box; its answer plays as a live conversation of one line.
   BrainClient brainClient;
   hal::TextBox askBox;
@@ -262,8 +279,6 @@ struct App {
   std::string deskQuestion;                       // waits for the desk HAL's sensors before it goes to the brain
   std::string argueTopic;                         // ... and so does the subject of an argument
   uint32_t senseAt = 0;                           // when they were asked for (0: not waiting)
-  bool haveSensors = false;
-  hal::PeerSensors peerSensors;
 
   M5Canvas frame, background, lens;
   hal::Menu menu;
@@ -292,16 +307,11 @@ struct App {
   SysMon sysmon;
   uint32_t lastSysMs = 0;
   uint32_t lineMs = 0;  // length of the line HAL started with the current console screen
-  hal::PeerStatus peerStatus;
-  int peerVersion = 0;                       // from the desk HAL's HELLO (0 = not seen)
-  hal::PeerWatch peerWatch;                  // STATUS sent, STATE received
-  hal::LinkLiveness liveness;                // pings, so a powered-off desk HAL is noticed
   // The film-style screens' readings: HAL Zero's real numbers, updated in place.
   std::vector<hal::Reading> readings = std::vector<hal::Reading>(11);
   std::vector<screens::UnitPart> unitParts = {{"CAM", false}, {"SPK", false}, {"IMU", false},
                                               {"KBD", true},  {"NET", true},  {"LNK", true}};
   int linesSpoken = 0;
-  bool wasConnected = false;
   bool diagGloated = false;                  // said a rival line on this diagnostics screen
 
   explicit App(std::string root) : storage(std::move(root)) {}
@@ -430,13 +440,13 @@ struct App {
   // For --ask-desk, --argue and --chat, which start as soon as they can: the desk HAL has said
   // hello (being connected isn't enough: his HELLO, and with it his version, comes a moment
   // later), or 8 seconds have gone by without him.
-  bool deskHeardFrom(uint32_t now) const { return (link.connected() && peerVersion > 0) || now - startMs > 8000; }
+  bool deskHeardFrom(uint32_t now) const { return (desk.link.connected() && desk.version > 0) || now - startMs > 8000; }
 
   // The desk HAL can only speak the brain's lines with firmware that knows how to fetch them.
   bool deskCanThink(uint32_t now) {
-    if (cfg.link && link.connected() && peerVersion >= 3) return true;
+    if (cfg.link && desk.link.connected() && desk.version >= 3) return true;
     // (Connected but not yet heard from, in the moment before his HELLO: that isn't "too old".)
-    gloatText = !cfg.link || !link.connected() || peerVersion == 0 ? "THE DESK UNIT ISN'T ANSWERING"
+    gloatText = !cfg.link || !desk.link.connected() || desk.version == 0 ? "THE DESK UNIT ISN'T ANSWERING"
                                                                     : "THE DESK UNIT IS TOO OLD TO THINK";
     gloatUntil = now + 5000;
     halLog("desk unit: %s", gloatText.c_str());
@@ -445,16 +455,16 @@ struct App {
 
   // Ask the desk HAL what his sensors read (and how he is), for a question or an argument.
   void senseDesk(uint32_t now) {
-    haveSensors = false;
+    desk.haveSensors = false;
     senseAt = now ? now : 1;
     hal::Message sense;
     sense.type = hal::MsgType::Sense;
-    link.send(sense);
+    desk.link.send(sense);
     askStatus(now);
   }
 
   const hal::PeerStatus* freshStatus(uint32_t now) const {
-    return peerWatch.state(link.connected(), peerVersion, now) == hal::PeerState::Ok ? &peerStatus : nullptr;
+    return desk.watch.state(desk.link.connected(), desk.version, now) == hal::PeerState::Ok ? &desk.status : nullptr;
   }
 
   // A question for the desk HAL: first his readings, so his answer can use them.
@@ -483,7 +493,7 @@ struct App {
   // Could the two strike up a conversation of their own right now? Only when both are at rest
   // and Dave isn't in the middle of anything with HAL Zero (the talk key going down counts).
   bool freeToChat() const {
-    return canAsk() && cfg.link && link.connected() && peerVersion >= 3 && overlay == Overlay::None && !listening &&
+    return canAsk() && cfg.link && desk.link.connected() && desk.version >= 3 && overlay == Overlay::None && !listening &&
            !talkDown && brain->mode() == hal::Mode::Idle && !lastQuiet;
   }
 
@@ -499,7 +509,7 @@ struct App {
   // it (then nothing is said or shown if it can't happen). False if it didn't start.
   bool startChat(uint32_t now, bool byThemselves) {
     if (!canAsk() || overlay != Overlay::None || listening) return false;
-    if (byThemselves ? !(cfg.link && link.connected() && peerVersion >= 3) : !deskCanThink(now)) return false;
+    if (byThemselves ? !(cfg.link && desk.link.connected() && desk.version >= 3) : !deskCanThink(now)) return false;
     talk = Talk::Chat;
     unprompted = byThemselves;
     debateId.clear();
@@ -514,7 +524,7 @@ struct App {
   // ... and once they are in (or a second has passed without them), it goes to the brain.
   void sendAfterSense(uint32_t now) {
     senseAt = 0;
-    const hal::PeerSensors* sensors = haveSensors ? &peerSensors : nullptr;
+    const hal::PeerSensors* sensors = desk.haveSensors ? &desk.sensors : nullptr;
     if (talk == Talk::Chat) {
       const hal::PeerStatus* desk = freshStatus(now);
       // Only when he is known to be at rest: a chat nobody asked for must not cut into whatever
@@ -629,12 +639,12 @@ struct App {
     chatTimer.restart(nowMs(), dice());  // their next chat counts from the end of this conversation
     if (talk != Talk::None || thinking) talkEndedMs = nowMs() ? nowMs() : 1;
     if (talk == Talk::None && !thinking) return;
-    if (feed.busy() && link.connected() && peerVersion >= 3) {
+    if (feed.busy() && desk.link.connected() && desk.version >= 3) {
       // The desk HAL may be fetching a line nobody will ask him to say: he can stop and forget it.
       hal::Message end;
       end.type = hal::MsgType::End;
       end.reason = "interrupted";
-      link.send(end);
+      desk.link.send(end);
     }
     brainClient.cancel();
     if (!debateId.empty()) brainClient.stopDebate(debateId);  // the brain can stop writing
@@ -659,7 +669,7 @@ struct App {
 
   // What the feed decided about the line in hand: send a FETCH, or the line is playable.
   void handleFeed(const hal::FeedOut& o, uint32_t now) {
-    if (o.send && !link.send(o.msg)) return talkFailed("THE DESK UNIT ISN'T ANSWERING", now);
+    if (o.send && !desk.link.send(o.msg)) return talkFailed("THE DESK UNIT ISN'T ANSWERING", now);
     if (o.failed) {
       halLog("live line %d: the desk unit %s", o.n, o.reason == "timeout" ? "never said he had it" : "couldn't fetch it");
       return talkFailed(o.reason == "timeout" ? "THE DESK UNIT IS TAKING TOO LONG" : "THE DESK UNIT LOST THE THREAD", now);
@@ -775,7 +785,7 @@ struct App {
 
   void handleConductor(const hal::ConductorOut& o) {
     if (o.playLocal) pendingSay = o.localLine;
-    if (o.send && !link.send(o.msg)) {
+    if (o.send && !desk.link.send(o.msg)) {
       if (o.msg.type != hal::MsgType::End) handleConductor(conductor.onDisconnected(nowMs()));
     }
     if (o.finished) {
@@ -916,40 +926,40 @@ struct App {
     if (!booted) return;
     // The desk HAL's messages.
     bool dropped = false;
-    link.poll(&inbox, &dropped);
-    const bool nowConnected = link.connected();
-    if (nowConnected && !wasConnected) liveness.connected(now);
-    wasConnected = nowConnected;
+    desk.link.poll(&inbox, &dropped);
+    const bool nowConnected = desk.link.connected();
+    if (nowConnected && !desk.wasConnected) desk.liveness.connected(now);
+    desk.wasConnected = nowConnected;
     for (const hal::Message& m : inbox) {
-      liveness.heard(now);
+      desk.liveness.heard(now);
       if (m.type == hal::MsgType::Pong) continue;
       if (m.type == hal::MsgType::Ping) {
         hal::Message pong;
         pong.type = hal::MsgType::Pong;
-        link.send(pong);
+        desk.link.send(pong);
       } else if (m.type == hal::MsgType::Sensors) {  // what his sensors read, for a question put to him
-        peerSensors = m.sensors;
-        haveSensors = true;
+        desk.sensors = m.sensors;
+        desk.haveSensors = true;
       } else if (m.type == hal::MsgType::State) {  // the desk HAL's numbers, for diagnostics
-        peerStatus = m.status;
-        peerWatch.received(now);
+        desk.status = m.status;
+        desk.watch.received(now);
       } else {
-        if (m.type == hal::MsgType::Hello) peerVersion = m.version;
+        if (m.type == hal::MsgType::Hello) desk.version = m.version;
         if (m.type == hal::MsgType::Ready || m.type == hal::MsgType::Missing) handleFeed(feed.onRemote(m), now);
         handleConductor(conductor.onRemote(m, now));
       }
     }
-    if (nowConnected && liveness.silent(now)) {  // no FIN when the CoreS3 loses power
-      link.drop();
-    } else if (nowConnected && liveness.pingDue(now)) {
+    if (nowConnected && desk.liveness.silent(now)) {  // no FIN when the CoreS3 loses power
+      desk.link.drop();
+    } else if (nowConnected && desk.liveness.pingDue(now)) {
       hal::Message ping;
       ping.type = hal::MsgType::Ping;
-      link.send(ping);
-      liveness.pinged(now);
+      desk.link.send(ping);
+      desk.liveness.pinged(now);
     }
     if (dropped) {
-      peerVersion = 0;
-      peerWatch.forget();
+      desk.version = 0;
+      desk.watch.forget();
     }
     if (dropped && conductor.active()) handleConductor(conductor.onDisconnected(now));
     // Diagnostics and benchmark ask the desk HAL how he is: on opening, then every 2 s.
@@ -960,7 +970,7 @@ struct App {
       askStatus(now);
     // Diagnostics finds the old model isn't answering: HAL Zero gloats, once per screen.
     if (brain->mode() == hal::Mode::Console && shown == "diagnostics" && !diagGloated) {
-      hal::PeerState st = peerWatch.state(link.connected(), peerVersion, now);
+      hal::PeerState st = desk.watch.state(desk.link.connected(), desk.version, now);
       if (st == hal::PeerState::NotResponding || st == hal::PeerState::TooOld) gloatNow();
     }
     if (now - lastSysMs >= 500) {
@@ -1021,7 +1031,7 @@ struct App {
       sendHeardAt = 0;
     }
     // His readings are in (and, for a chat nobody asked for, his status too), or a second has passed.
-    if (senseAt && ((haveSensors && (!unprompted || freshStatus(now))) || now - senseAt >= 1000)) sendAfterSense(now);
+    if (senseAt && ((desk.haveSensors && (!unprompted || freshStatus(now))) || now - senseAt >= 1000)) sendAfterSense(now);
     std::vector<BrainEvent> events;
     brainClient.poll(&events);
     for (BrainEvent& e : events) handleBrain(e, now);
@@ -1094,7 +1104,7 @@ struct App {
         updateReadings(now);  // the desk unit's card says WAITING until he answers
       }
       if (a.play) {
-        if (id == "diagnostics" && (!link.connected() || peerVersion == 1)) {
+        if (id == "diagnostics" && (!desk.link.connected() || desk.version == 1)) {
           gloatNow();  // nobody to diagnose (or too old to): gloat instead
         } else {
           std::string path;
@@ -1135,10 +1145,10 @@ struct App {
 
   // Sends STATUS to the desk HAL if one is due (on opening, then every 2 s).
   void askStatus(uint32_t now) {
-    if (!link.connected() || !peerWatch.due(now)) return;
+    if (!desk.link.connected() || !desk.watch.due(now)) return;
     hal::Message status;
     status.type = hal::MsgType::Status;
-    if (link.send(status)) peerWatch.sent(now);
+    if (desk.link.send(status)) desk.watch.sent(now);
   }
 
   // A rival line instead of the diagnostics line (at most once per screen).
@@ -1187,19 +1197,19 @@ struct App {
                                                     : hal::memoryReading(int(st.memTotalKb * (100 - used) / 100), int(st.memTotalKb)));
     put(hal::tempReading(std::isnan(temp) ? -999 : int(temp + 0.5f)));
     put(st.valid ? hal::netReading(wifi ? int(rssi) : 0) : hal::noReading("NET", "NETWORK"));  // no /proc on the Mac
-    put(hal::linkReading(cfg.link, link.connected()));
+    put(hal::linkReading(cfg.link, desk.link.connected()));
     put(hal::cameraReading(camera != nullptr, camera ? std::min(100, camera->score()) : 0));
     put(hal::tiltReading(haveImu ? motion.tiltFromHomeDeg() : -1));
     put(hal::audioReading(audio.level(), linesSpoken));
     put(hal::clockReading(clock));
     put(hal::uptimeReading(upSeconds()));
-    put(cfg.link ? hal::peerReading(peerWatch.state(link.connected(), peerVersion, now), peerStatus.mode)
+    put(cfg.link ? hal::peerReading(desk.watch.state(desk.link.connected(), desk.version, now), desk.status.mode)
                                             : hal::noReading("DSK", "DESK UNIT"));
     unitParts[0].ok = camera != nullptr;
     unitParts[1].ok = audioOk;
     unitParts[2].ok = haveImu;
     unitParts[4].ok = !st.valid || wifi;  // on the Mac there's no /proc to ask
-    unitParts[5].ok = !cfg.link || link.connected();
+    unitParts[5].ok = !cfg.link || desk.link.connected();
   }
 
   // What the console screens draw from.
@@ -1220,8 +1230,8 @@ struct App {
       d.gravityHome[0] = hm.x, d.gravityHome[1] = hm.y, d.gravityHome[2] = hm.z;
       d.gravityValid = true;
     }
-    d.peer.state = peerWatch.state(link.connected(), peerVersion, now);
-    d.peer.status = peerStatus;
+    d.peer.state = desk.watch.state(desk.link.connected(), desk.version, now);
+    d.peer.status = desk.status;
     time_t t = std::time(nullptr);
     struct tm lt;
     if (localtime_r(&t, &lt)) d.secondsSinceMidnight = lt.tm_hour * 3600 + lt.tm_min * 60 + lt.tm_sec;
@@ -1234,7 +1244,7 @@ struct App {
     h.uptimeS = upSeconds();
     h.cpuTempC = cpuTempC();
     h.wifi = wifiUp();
-    h.link = !cfg.link ? "OFF" : conductor.active() ? "TALKING" : link.connected() ? "READY" : "SEEKING";
+    h.link = !cfg.link ? "OFF" : conductor.active() ? "TALKING" : desk.link.connected() ? "READY" : "SEEKING";
     h.linkBusy = conductor.active();
     h.level = audio.level();
     h.motion = camera ? camera->score() : 0;
@@ -1601,7 +1611,7 @@ int main(int argc, char** argv) {
     app.cfg.peerHost = colon == std::string::npos ? linkArg : linkArg.substr(0, colon);
     if (colon != std::string::npos) app.cfg.linkPort = std::atoi(linkArg.c_str() + colon + 1);
   }
-  if (app.cfg.link) app.link.start(app.cfg.peerHost, app.cfg.linkPort);
+  if (app.cfg.link) app.desk.link.start(app.cfg.peerHost, app.cfg.linkPort);
   app.autoDialogue = dialogueArg;
   app.autoShow = showArg;
   app.autoAsk = askArg;
@@ -1677,7 +1687,7 @@ int main(int argc, char** argv) {
   if (quitSignal) halLog("quit (signal)");
   app.brainClient.stop();
   app.mic.close();
-  app.link.stop();
+  app.desk.link.stop();
   if (app.camera) app.camera->close();  // stops rpicam-vid
   app.audio.close();
   if (useFb) fbio.close();
