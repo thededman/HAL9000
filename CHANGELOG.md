@@ -6,7 +6,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.6.1] - 2026-11-13
+## [0.6.1] - 2026-11-14
 
 ### Fixed
 - A chat the HALs start by themselves no longer makes a fuss when it can't go ahead: if the
@@ -18,6 +18,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - `chat_min_minutes` on its own, set above the usual maximum, was ignored (both settings fell
   back to 20 and 40). The maximum now rises to meet it.
 - The HALs don't strike up a chat the very minute quiet hours end.
+- HAL Zero remembers where the brain was. For a few minutes after your computer wakes, or
+  after either end restarts, its name often can't be looked up on the network; he now uses
+  the address that last worked instead of saying his higher functions are offline.
+- The desk HAL tries twice to reach the brain for a line before giving up, so the first
+  conversation after your computer wakes no longer breaks off with "the desk unit lost the
+  thread".
 - `tools/brain.sh autostart off` works even after the voice tool has been removed, `autostart`
   says when the login item points at a folder that has since moved, and starting at login
   allows the brain a minute to come up.

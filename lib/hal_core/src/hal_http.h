@@ -44,6 +44,12 @@ struct BrainReply {
 
 BrainReply parseBrainReply(const HttpResponse& response);
 
+// HAL Zero keeps the brain's last working address in a small file, for when his computer's name
+// won't resolve (the lookup by name on a home network can go quiet for minutes after either end
+// restarts). This reads that file's text: the address, if it is one on the home network (or
+// 127.0.0.1, for the simulator), else "".
+std::string rememberedBrainAddress(const std::string& fileText);
+
 // The body of POST /ask and POST /debate: facts, a blank line, the question.
 std::string askBody(const std::string& facts, const std::string& question);
 

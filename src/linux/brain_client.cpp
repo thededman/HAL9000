@@ -10,6 +10,7 @@
 #include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdio>
 #include <cstring>
 
 #include "hal_log.h"
@@ -32,11 +33,22 @@ BrainEvent failed(const std::string& error) {
 
 }  // namespace
 
-void BrainClient::start(const std::string& host, int port, const std::string& key) {
+void BrainClient::start(const std::string& host, int port, const std::string& key, const std::string& rememberFile) {
   stop();
   host_ = host;
   port_ = port;
   key_ = key;
+  rememberFile_ = rememberFile;
+  remembered_.clear();
+  byMemory_ = false;
+  if (!rememberFile_.empty()) {
+    if (FILE* f = std::fopen(rememberFile_.c_str(), "r")) {
+      char text[64] = "";
+      const size_t n = std::fread(text, 1, sizeof text - 1, f);
+      std::fclose(f);
+      remembered_ = hal::rememberedBrainAddress(std::string(text, n));
+    }
+  }
   std::signal(SIGPIPE, SIG_IGN);  // a brain that hangs up mid-send is an error, not a crash
   running_ = true;
   worker_ = std::thread([this] { run(); });
@@ -253,7 +265,21 @@ std::string BrainClient::http(int generation, const std::string& method, const s
   hints.ai_family = AF_INET;  // the desk HAL is told this address too, and he speaks IPv4
   hints.ai_socktype = SOCK_STREAM;
   addrinfo* found = nullptr;
-  if (getaddrinfo(host_.c_str(), std::to_string(port_).c_str(), &hints, &found) != 0 || !found) return "offline";
+  const std::string port = std::to_string(port_);
+  if (getaddrinfo(host_.c_str(), port.c_str(), &hints, &found) != 0 || !found) {
+    // The name didn't resolve. On a home network that happens: the lookup by name can go quiet
+    // for minutes after either end restarts, while the computer is there all along. The address
+    // that last worked is tried instead; if the computer has moved, that fails as before.
+    found = nullptr;
+    addrinfo numeric = hints;
+    numeric.ai_flags = AI_NUMERICHOST;
+    if (remembered_.empty() || getaddrinfo(remembered_.c_str(), port.c_str(), &numeric, &found) != 0 || !found) return "offline";
+    if (!byMemory_) halLog("brain: %s isn't resolving; trying the address that last worked (%s)", host_.c_str(), remembered_.c_str());
+    byMemory_ = true;
+  } else if (byMemory_) {
+    halLog("brain: %s resolves again", host_.c_str());
+    byMemory_ = false;
+  }
   char dotted[INET_ADDRSTRLEN] = "";
   inet_ntop(AF_INET, &reinterpret_cast<sockaddr_in*>(found->ai_addr)->sin_addr, dotted, sizeof dotted);
 
@@ -324,7 +350,18 @@ std::string BrainClient::http(int generation, const std::string& method, const s
   if (cancelled()) return "cancelled";
   if (!ok) return error.empty() ? "offline" : error;
   if (!hal::parseHttpResponse(raw, out)) return "bad-reply";
-  std::lock_guard<std::mutex> lock(mu_);
-  address_ = dotted;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    address_ = dotted;
+  }
+  if (remembered_ != dotted && !rememberFile_.empty()) {  // it answered there: remember it for another day
+    remembered_ = dotted;
+    const std::string fresh = rememberFile_ + ".new";
+    if (FILE* f = std::fopen(fresh.c_str(), "w")) {
+      std::fprintf(f, "%s\n", dotted);
+      std::fclose(f);
+      std::rename(fresh.c_str(), rememberFile_.c_str());
+    }
+  }
   return "";
 }

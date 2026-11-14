@@ -358,6 +358,18 @@ void test_debate_facts() {
   TEST_ASSERT_EQUAL_STRING("", hal::debateFacts({}, nullptr, nullptr).c_str());
 }
 
+void test_remembered_brain_address() {
+  // What HAL Zero keeps in a file for the day his computer's name won't resolve: one address on
+  // the home network (or this computer itself, for the simulator). Anything else is not used.
+  TEST_ASSERT_EQUAL_STRING("172.16.0.14", hal::rememberedBrainAddress("172.16.0.14\n").c_str());
+  TEST_ASSERT_EQUAL_STRING("192.168.1.20", hal::rememberedBrainAddress("192.168.1.20").c_str());
+  TEST_ASSERT_EQUAL_STRING("10.0.0.7", hal::rememberedBrainAddress("  10.0.0.7 \r\n").c_str());
+  TEST_ASSERT_EQUAL_STRING("127.0.0.1", hal::rememberedBrainAddress("127.0.0.1\n").c_str());
+  for (const char* bad : {"", "\n", "8.8.8.8\n", "my-computer.local\n", "10.0.0.7\n10.0.0.8\n", "10.0.0.7 extra",
+                          "10.0.0\n", "010.0.0.7\n", "127.0.0.2\n", "::1\n"})
+    TEST_ASSERT_EQUAL_STRING_MESSAGE("", hal::rememberedBrainAddress(bad).c_str(), bad);
+}
+
 // ----- the cast (v0.7) -----
 
 void test_reply_for_a_hal_with_no_voice() {
@@ -489,6 +501,7 @@ int main() {
   RUN_TEST(test_facts_from_readings);
   RUN_TEST(test_desk_facts);
   RUN_TEST(test_debate_facts);
+  RUN_TEST(test_remembered_brain_address);
   RUN_TEST(test_reply_for_a_hal_with_no_voice);
   RUN_TEST(test_reply_cast_rejects);
   RUN_TEST(test_cast_facts_for_five);

@@ -12,14 +12,18 @@ class ClipFetch {
  public:
   enum class State { Idle, Fetching, Done, Failed };
   static constexpr size_t kMaxBytes = 1536000;
-  static constexpr uint32_t kConnectMs = 400;  // the one wait that holds the loop up: keep it short
+  static constexpr uint32_t kConnectMs = 500;  // the one wait that holds the loop up: keep it short
+  static constexpr int kTries = 2;             // ... and try twice: the first connection to a computer that
+  static constexpr uint32_t kTryGapMs = 1500;  // has just woken is often slow, and the second isn't
   static constexpr uint32_t kRetryMs = 2000;   // after nobody answered, don't try (and wait) again for this long
   static constexpr uint32_t kStallMs = 3000;   // no progress for this long: give up
   static constexpr uint32_t kTotalMs = 7000;   // the whole download: HAL Zero stops waiting after 8 s
   static constexpr uint32_t kSliceMs = 5;      // reading time per loop pass
 
   ~ClipFetch() { abort(); }
-  // Starts the download (drops one in progress). False if the brain can't be reached.
+  // Starts the download (drops one in progress). False if it can't even be tried (an address
+  // that isn't ours to fetch from, or nobody answered a moment ago); whether the brain was
+  // reached comes from poll().
   bool begin(const std::string& host, int port, const std::string& token);
   State poll();                              // call every loop pass
   State state() const { return state_; }
@@ -32,6 +36,11 @@ class ClipFetch {
 
   WiFiClient client_;
   State state_ = State::Idle;
+  std::string host_, request_;
+  int port_ = 0;
+  bool connected_ = false;
+  int tries_ = 0;
+  uint32_t nextTryMs_ = 0;
   std::string head_;        // the response head, until its blank line
   uint8_t* buf_ = nullptr;  // the body, in PSRAM
   size_t len_ = 0, got_ = 0;

@@ -23,22 +23,21 @@ bool ClipFetch::begin(const std::string& host, int port, const std::string& toke
   // Connecting is the one step that holds the loop (and the eye) up. If nobody answered a moment
   // ago, don't wait again so soon: a peer can't freeze him by naming dead addresses in a row.
   if (refusedMs_ && millis() - refusedMs_ < kRetryMs) return refuse("the brain didn't answer a moment ago");
-  if (!client_.connect(host.c_str(), port, kConnectMs)) {
-    refusedMs_ = millis() ? millis() : 1;
-    return refuse("can't reach the brain");
-  }
-  refusedMs_ = 0;
-  client_.setNoDelay(true);
-  client_.print(request.c_str());
+  host_ = host;
+  port_ = port;
+  request_ = request;
+  connected_ = false;
+  tries_ = 0;
   head_.clear();
-  progressMs_ = startedMs_ = millis();
-  state_ = State::Fetching;
+  progressMs_ = startedMs_ = nextTryMs_ = millis();
+  state_ = State::Fetching;  // poll() connects: at once, and once more a little later if that fails
   return true;
 }
 
 ClipFetch::State ClipFetch::fail(const char* why) {
   Serial.printf("clip: %s\n", why);
   client_.stop();
+  connected_ = false;
   if (buf_) free(buf_);
   buf_ = nullptr;
   len_ = got_ = 0;
@@ -49,6 +48,26 @@ ClipFetch::State ClipFetch::fail(const char* why) {
 
 ClipFetch::State ClipFetch::poll() {
   if (state_ != State::Fetching) return state_;
+  if (!connected_) {
+    if (static_cast<int32_t>(millis() - nextTryMs_) < 0) return state_;  // waiting to try again
+    ++tries_;
+    if (client_.connect(host_.c_str(), port_, kConnectMs)) {
+      connected_ = true;
+      refusedMs_ = 0;
+      client_.setNoDelay(true);
+      client_.print(request_.c_str());
+      progressMs_ = millis();
+    } else {
+      client_.stop();
+      if (tries_ >= kTries) {
+        refusedMs_ = millis() ? millis() : 1;
+        return fail("can't reach the brain");
+      }
+      Serial.println("clip: the brain didn't answer; one more try in a moment");
+      nextTryMs_ = millis() + kTryGapMs;
+    }
+    return state_;
+  }
   const uint32_t started = millis();
   while (client_.available() > 0 && millis() - started < kSliceMs) {
     progressMs_ = millis();
@@ -96,6 +115,7 @@ bool ClipFetch::take(uint8_t** data, size_t* len) {
 
 void ClipFetch::abort() {
   client_.stop();
+  connected_ = false;
   if (buf_) free(buf_);
   buf_ = nullptr;
   len_ = got_ = 0;

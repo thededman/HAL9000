@@ -427,10 +427,17 @@ struct App {
     halLog("ask: %s", question.c_str());
   }
 
+  // For --ask-desk, --argue and --chat, which start as soon as they can: the desk HAL has said
+  // hello (being connected isn't enough: his HELLO, and with it his version, comes a moment
+  // later), or 8 seconds have gone by without him.
+  bool deskHeardFrom(uint32_t now) const { return (link.connected() && peerVersion > 0) || now - startMs > 8000; }
+
   // The desk HAL can only speak the brain's lines with firmware that knows how to fetch them.
   bool deskCanThink(uint32_t now) {
     if (cfg.link && link.connected() && peerVersion >= 3) return true;
-    gloatText = !cfg.link || !link.connected() ? "THE DESK UNIT ISN'T ANSWERING" : "THE DESK UNIT IS TOO OLD TO THINK";
+    // (Connected but not yet heard from, in the moment before his HELLO: that isn't "too old".)
+    gloatText = !cfg.link || !link.connected() || peerVersion == 0 ? "THE DESK UNIT ISN'T ANSWERING"
+                                                                    : "THE DESK UNIT IS TOO OLD TO THINK";
     gloatUntil = now + 5000;
     halLog("desk unit: %s", gloatText.c_str());
     return false;
@@ -654,6 +661,7 @@ struct App {
   void handleFeed(const hal::FeedOut& o, uint32_t now) {
     if (o.send && !link.send(o.msg)) return talkFailed("THE DESK UNIT ISN'T ANSWERING", now);
     if (o.failed) {
+      halLog("live line %d: the desk unit %s", o.n, o.reason == "timeout" ? "never said he had it" : "couldn't fetch it");
       return talkFailed(o.reason == "timeout" ? "THE DESK UNIT IS TAKING TOO LONG" : "THE DESK UNIT LOST THE THREAD", now);
     }
     if (!o.append) return;
@@ -972,13 +980,13 @@ struct App {
     if (!autoAsk.empty() && canAsk()) {
       submitQuestion(autoAsk);
       autoAsk.clear();
-    } else if (!autoAskDesk.empty() && canAsk() && (link.connected() || now - startMs > 8000)) {
+    } else if (!autoAskDesk.empty() && canAsk() && deskHeardFrom(now)) {
       submitDeskQuestion(autoAskDesk, now);
       autoAskDesk.clear();
-    } else if (!autoArgue.empty() && canAsk() && (link.connected() || now - startMs > 8000)) {
+    } else if (!autoArgue.empty() && canAsk() && deskHeardFrom(now)) {
       submitTopic(autoArgue, now);
       autoArgue.clear();
-    } else if (autoChat && canAsk() && (link.connected() || now - startMs > 8000)) {
+    } else if (autoChat && canAsk() && deskHeardFrom(now)) {
       startChat(now, false);
       autoChat = false;
     }
@@ -1612,7 +1620,7 @@ int main(int argc, char** argv) {
     if (app.cfg.brainKey.empty()) app.cfg.brainKey = std::string(32, '0');
   }
   if (hal::brainReady(app.cfg)) {  // the AI brain on the computer (never log the key)
-    app.brainClient.start(app.cfg.brainHost, app.cfg.brainPort, app.cfg.brainKey);
+    app.brainClient.start(app.cfg.brainHost, app.cfg.brainPort, app.cfg.brainKey, rootDir + "/brain-address.txt");
     app.chatTimer.configure(app.cfg.chat && app.cfg.link, app.cfg.chatMinMinutes, app.cfg.chatMaxMinutes);
     app.chatTimer.restart(nowMs(), app.dice());
     if (app.chatTimer.on()) halLog("chats of their own: every %d to %d minutes", app.cfg.chatMinMinutes, app.cfg.chatMaxMinutes);

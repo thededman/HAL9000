@@ -35,7 +35,9 @@ class BrainClient {
   static constexpr size_t kMaxClipBytes = 1536 * 1024;
 
   ~BrainClient() { stop(); }
-  void start(const std::string& host, int port, const std::string& key);
+  // `rememberFile`: where the brain's last working address is kept, for when its name won't
+  // resolve ("" keeps none).
+  void start(const std::string& host, int port, const std::string& key, const std::string& rememberFile = "");
   void stop();
   bool started() const { return running_.load(); }
 
@@ -88,4 +90,6 @@ class BrainClient {
   std::deque<Job> jobs_;
   std::deque<BrainEvent> done_;
   std::string address_;
+  std::string rememberFile_, remembered_;  // the last address that worked, kept across restarts (worker thread only)
+  bool byMemory_ = false;                  // the name isn't resolving just now (for the log, once each way)
 };

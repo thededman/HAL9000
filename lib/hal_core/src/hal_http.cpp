@@ -1,6 +1,7 @@
 #include "hal_http.h"
 
 #include "hal_cast.h"
+#include "hal_link.h"
 
 #include <cctype>
 #include <map>
@@ -219,6 +220,14 @@ BrainReply parseBrainReply(const HttpResponse& r) {
   }
   reply.ok = true;
   return reply;
+}
+
+std::string rememberedBrainAddress(const std::string& fileText) {
+  size_t a = 0, b = fileText.size();
+  while (a < b && (fileText[a] == ' ' || fileText[a] == '\r' || fileText[a] == '\n')) ++a;
+  while (b > a && (fileText[b - 1] == ' ' || fileText[b - 1] == '\r' || fileText[b - 1] == '\n')) --b;
+  const std::string address = fileText.substr(a, b - a);
+  return address == "127.0.0.1" || isPrivateIpv4(address) ? address : "";
 }
 
 std::string askBody(const std::string& facts, const std::string& question) {
