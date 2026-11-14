@@ -476,6 +476,27 @@ void test_guard_takes_all_hal_zero_can_send_before_he_gives_up() {
   TEST_ASSERT_TRUE(2 * zero.bytesRead <= size_t(kBytes));
 }
 
+// The same guard stands at HAL Zero's end. The desk HAL only answers, so the most he can have
+// sent while HAL Zero was held up is his answers to the lines above, each at its longest.
+void test_guard_takes_all_the_desk_hal_can_answer_at_once() {
+  hal::Message state;
+  state.type = MsgType::State;
+  state.status = {999999999, 9999999, 99999999, 100, 9999999, "speaking", -127, "10.10.10", 64, 9999};
+  hal::Message sensors;
+  sensors.type = MsgType::Sensors;
+  sensors.sensors = {100, 65535, 180, 100, true, -40};
+  hal::LinkGuard g;
+  FakePeer desk;
+  std::vector<Message> inbox;
+  desk.waiting = "HELLO OLD 3\n" + times(3, "PONG\n") + times(3, hal::formatMessage(state) + "\n") +
+                 "READY 99\nPLAYING 99 600000\nDONE 99\n" + hal::formatMessage(sensors) + "\nEND interrupted\n";
+  TEST_ASSERT_TRUE(g.take(1000, desk.reader(), &inbox));
+  TEST_ASSERT_EQUAL(12, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[11].type == MsgType::End);
+  TEST_ASSERT_TRUE(2 * 12 <= kLines);
+  TEST_ASSERT_TRUE_MESSAGE(2 * desk.bytesRead <= size_t(kBytes), std::to_string(desk.bytesRead).c_str());
+}
+
 void test_guard_allows_a_full_second_of_lines() {
   hal::LinkGuard g;
   FakePeer peer;
@@ -673,6 +694,7 @@ int main() {
   RUN_TEST(test_guard_skips_lines_that_mean_nothing);
   RUN_TEST(test_guard_stops_when_nothing_is_waiting);
   RUN_TEST(test_guard_takes_all_hal_zero_can_send_before_he_gives_up);
+  RUN_TEST(test_guard_takes_all_the_desk_hal_can_answer_at_once);
   RUN_TEST(test_guard_allows_a_full_second_of_lines);
   RUN_TEST(test_guard_hangs_up_on_one_line_too_many);
   RUN_TEST(test_guard_counts_lines_across_the_passes_of_one_second);

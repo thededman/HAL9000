@@ -17,6 +17,8 @@ Modes (how the desk HAL answers):
   slowfetch  like ok, but a FETCH is never answered
   freeze     like ok, then after --freeze-after seconds goes silent without hanging up
              (like the CoreS3 losing power: no answers, no FIN)
+  flood      says HELLO, then pours PONGs out without end (HAL Zero should hang up at once,
+             carry on unharmed, and try again within 5 s)
 Every message in and out is printed. Stdlib only.
 """
 import argparse
@@ -100,6 +102,20 @@ async def serve(reader, writer, mode, line_ms, freeze_after=10.0):
     await send(f"HELLO OLD {version}")
     loop = asyncio.get_running_loop()
     started = loop.time()
+    if mode == "flood":
+        print("  (flooding: PONG after PONG, as fast as they go)", flush=True)
+        poured = 0
+        try:
+            while True:
+                writer.write(b"PONG\n" * 200)
+                await writer.drain()
+                poured += 200
+        except OSError:  # he hung up
+            pass
+        finally:
+            writer.close()
+            print(f"disconnected after about {poured} lines in {loop.time() - started:.1f} s", flush=True)
+        return
     try:
         while True:
             raw = await reader.readline()
@@ -168,7 +184,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=9000)
     ap.add_argument("--mode", default="ok", choices=["ok", "busy", "slow", "drop", "missing", "old", "v2", "nofetch",
-                                                     "slowfetch", "freeze"])
+                                                     "slowfetch", "freeze", "flood"])
     ap.add_argument("--freeze-after", type=float, default=10.0, help="seconds before freeze mode goes silent")
     ap.add_argument("--line-ms", type=int, default=1500)
     args = ap.parse_args()

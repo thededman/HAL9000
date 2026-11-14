@@ -13,6 +13,9 @@ and versions follow [Semantic Versioning](https://semver.org/).
   little from the link on each pass, never waits for the other end, and hangs up on anything
   that sends far more than HAL Zero ever does (over 24 lines or 1024 bytes in a second),
   letting nobody back in for 3 seconds. HAL Zero himself notices no difference.
+- HAL Zero is protected the same way: if whatever answers at the desk HAL's address pours data
+  at him, he hangs up and tries again a few seconds later, instead of freezing and running out
+  of memory.
 
 ## [0.6.0] - 2026-11-13
 
