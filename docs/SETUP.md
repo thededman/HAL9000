@@ -395,8 +395,11 @@ tools/brain.sh pair
 - A keyboard that types the wrong characters: `tools/cardputer.sh run --keys` shows and logs
   the code of every key you press.
 
-**Claude or ChatGPT instead of the local model (optional).** The brain can have Anthropic's
-Claude or OpenAI's ChatGPT write the HALs' lines. Either needs an account with that company
+**Claude or ChatGPT instead of the local model (optional, experimental).** The brain can have
+Anthropic's Claude or OpenAI's ChatGPT write the HALs' lines. This part is new in v0.6.0 and
+was written and tested against the two companies' published interfaces, with stand-ins for
+their services: it has not yet been run against the live services, so tell us if it trips
+(`brain/.run/brain.log` says what went wrong). Either needs an account with that company
 and an API key, and is paid for by use: roughly a cent a line with the default Claude model at
 November 2026 prices, so an argument costs eight of those. The HALs' own chats are paid for
 too, and with the usual settings there are two or three an hour, of four or six lines each,
