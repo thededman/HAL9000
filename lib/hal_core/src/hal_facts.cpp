@@ -133,6 +133,19 @@ std::string valueOf(const std::string& facts, const std::string& name) {
 
 }  // namespace
 
+std::string memberFacts(int who, const PeerStatus* status, const PeerSensors* sensors) {
+  if (who == kDesk) return deskFacts(status, sensors);
+  if (!castValid(who) || who == kZero) return "";
+  const std::string all = deskFacts(status, sensors);
+  std::string out;
+  for (const Wanted& w : kWanted[who]) {
+    if (!w.name) break;
+    const std::string value = valueOf(all, w.name);
+    if (!value.empty()) add(&out, w.as ? w.as : w.name, value);
+  }
+  return out;
+}
+
 std::string castFacts(const std::vector<Reading>& zero, const std::vector<MemberFacts>& others, int maxLines) {
   std::string out;
   for (const Reading& r : zero)

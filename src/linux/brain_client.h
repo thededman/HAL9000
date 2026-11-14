@@ -41,15 +41,18 @@ class BrainClient {
   void stop();
   bool started() const { return running_.load(); }
 
-  // Ask `who` ("zero" or "desk"); `body` is facts, a blank line, the question (hal::askBody).
-  // The answer arrives through poll(). HAL Zero's comes with its audio already downloaded; the
-  // desk HAL downloads his own (see hal_livefeed.h).
+  // Ask `who` (a cast id: "zero", "desk", "nano"...); `body` is facts, a blank line, the question
+  // (hal::askBody). The answer arrives through poll(). HAL Zero's comes with its audio already
+  // downloaded; another voiced HAL downloads his own (see hal_livefeed.h); one with no voice has none.
   void ask(const std::string& who, const std::string& body);
   // Start an argument about the topic in `body`; then ask for its lines one at a time, from 0.
   void debate(const std::string& body, int turns);
   // The same for a chat nobody asked for: `body` is the facts (and a subject, or none: the brain
   // then picks one), `first` who opens ("zero" or "desk"). Its lines are collected the same way.
   void chat(const std::string& body, int turns, const std::string& first);
+  // A talk among the HALs named in `cast` ("zero,desk,nano": hal::castQuery): `kind` is argue,
+  // chat or roll (a roll call: one line each). The brain decides how long it runs and who opens.
+  void talk(const std::string& kind, const std::string& cast, const std::string& body);
   void debateLine(const std::string& id, int n);  // waits while the brain is still writing it (60 s at most)
   void stopDebate(const std::string& id);         // tell the brain to stop writing; no event comes back
   void hear(std::vector<uint8_t> wav);            // a 16 kHz mono recording: what was said?
@@ -64,7 +67,7 @@ class BrainClient {
     int generation = 0;
     std::string who, body, id;  // body also carries a recording's bytes (Hear)
     std::string extra;          // Debate: more of the request's query ("&kind=chat&first=desk")
-    int n = 0;  // DebateLine: which line; Debate: how many turns
+    int n = 0;  // DebateLine: which line; Debate: how many turns (0: the brain decides)
   };
   void push(Job job);
   void run();

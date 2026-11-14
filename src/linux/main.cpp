@@ -3,6 +3,7 @@
 // desk HAL on the CoreS3; this file is the Linux glue around them.
 //
 //   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID] [--show SCREEN]
+//           [--friends HOST[:PORT],...] [--chat] [--roll] [--argue SUBJECT] [--ask-who zero|desk|nano|paper|card QUESTION]
 //   hal9000 --shots DIR --layout cores3      the desk HAL's screens at 320x240, for review
 //
 // Keys: Space = HAL's "finger" (tap / hold), Tab or Up/Down = menu, D = dialogues, Esc = back/quit,
@@ -32,10 +33,12 @@
 #include "consoles.h"
 #include "eye.h"
 #include "hal_brain.h"
+#include "hal_cast.h"
 #include "hal_chattimer.h"
 #include "hal_conductor.h"
 #include "hal_dialogue.h"
 #include "hal_facts.h"
+#include "hal_group.h"
 #include "hal_layout.h"
 #include "hal_livefeed.h"
 #include "hal_loader.h"
@@ -69,6 +72,12 @@ constexpr uint32_t kBootIrisMs = 700;
 const char* modeName(hal::Mode m) {
   static const char* const names[] = {"BOOT", "IDLE", "SPEAKING", "CONSOLE", "PLEADING", "DAISY", "DARK"};
   return names[static_cast<int>(m)];
+}
+
+// A HAL as the log calls him.
+const char* called(int who) {
+  static const char* const names[] = {"HAL Zero", "the desk unit", "HAL Nano", "HAL Paper", "HAL Card"};
+  return hal::castValid(who) ? names[who] : "somebody";
 }
 
 uint32_t nowMs() { return SDL_GetTicks(); }
@@ -210,10 +219,10 @@ void filmShots(M5Canvas& c, const hal::Layout& lay, bool desk, screens::ScreenDa
 enum class Overlay { None, Menu, Dialogues, Ask };
 
 // One of the other HALs HAL Zero is linked to: his connection and what is known of him.
+// (Which HAL he is, the roster says: the desk HAL in the first place, a friend once he has said.)
 struct Peer {
   LinkClient link;
-  int who = -1;                // which HAL he is, as a cast number (hal_cast.h): the desk HAL in
-                               // the first place; a friend once he has said (IAM)
+  bool started = false;        // this place is in use (a friend's: only if one is set up)
   int version = 0;             // from his HELLO (0 = not seen)
   hal::PeerStatus status;      // his last STATE
   hal::PeerWatch watch;        // STATUS sent, STATE received
@@ -243,19 +252,25 @@ struct App {
   std::vector<hal::Dialogue> dialogues;
   hal::Conductor conductor;
   // The other HALs: the desk HAL first (peer_host), then up to three friends (friends=).
-  static constexpr int kPeers = 4;
+  static constexpr int kPeers = hal::Roster::kPlaces;
   Peer peers[kPeers];
   Peer& desk = peers[0];
+  hal::Roster roster;                             // which HAL sits in which place
   // The AI brain: a question typed in the ask box; its answer plays as a live conversation of one line.
   BrainClient brainClient;
   hal::TextBox askBox;
   bool thinking = false;                          // a question is with the brain
   std::map<int, std::vector<uint8_t>> liveClips;  // live line number -> its audio
   std::string showAfter;                          // a screen the answer asked for, opened once he has spoken
-  std::string autoAsk, autoAskDesk, autoArgue;    // --ask, --ask-desk, --argue: put this once booted
-  bool autoChat = false;                          // --chat: have the two chat once booted
+  std::string autoAsk, autoAskDesk, autoArgue;    // --ask, --ask-desk (or --ask-who), --argue: put this once booted
+  int autoAskWho = hal::kDesk;                    // ... and which HAL --ask-who's question is for
+  bool autoChat = false, autoRoll = false;        // --chat, --roll: have them chat, or answer a roll call, once booted
   hal::LiveFeed feed;                             // the brain's lines become FETCH and append, in order
-  enum class Talk { None, Zero, Desk, Argue, Chat, Hear } talk = Talk::None;  // what the brain is doing for us
+  enum class Talk { None, Zero, Other, Argue, Chat, Roll, Hear } talk = Talk::None;  // what the brain is doing for us
+  int talkWho = hal::kDesk;                       // Talk::Other: the HAL the question is for
+  unsigned talkCast = 0;                          // who the brain is writing for, HAL Zero included (cast bits)
+  unsigned inTalk = 0;                            // who the conductor is conducting (0: no conversation)
+  unsigned sensing = 0;                           // who has been asked for his readings, for the talk about to begin
   // Chats of their own: every so often the two strike up a short conversation nobody asked for.
   hal::ChatTimer chatTimer;
   bool unprompted = false;                        // the talk under way is one of those (so: no fuss if it fails)
@@ -271,7 +286,8 @@ struct App {
   std::string hearFile;                           // --hear: a recording from a file instead of the microphone
   int listenSeconds = 0;                          // --listen N: listen for N seconds once booted (no key needed)
   uint32_t listenUntil = 0;
-  enum class AskMode { Zero, Desk, Topic } askMode = AskMode::Zero;  // what the ask box is for
+  bool askTopic = false;                          // the ask box holds a subject to argue about, not a question
+  int askWho = hal::kZero;                        // ... or a question for this HAL (TAB moves on to the next)
   std::string debateId;                           // the argument under way, as the brain knows it
   int debateNext = 0;                             // its next line to ask the brain for (from 0)
   bool lineAsked = false;                         // that line has been asked for and isn't here yet
@@ -392,15 +408,19 @@ struct App {
   }
 
   void openMenu() {
-    menu.open({{"say", "Say something"},
-               {"look", camera ? "Look around (Visual Analysis)" : "Look around (no camera)"},
-               {"diagnose", "Diagnose the old model"},
-               {"talk", "Talk to the desk unit"},
-               {"askdesk", brainClient.started() ? "Ask the desk unit..." : "Ask the desk unit (no brain)"},
-               {"argue", brainClient.started() ? "Make them argue..." : "Make them argue (no brain)"},
-               {"chat", brainClient.started() ? "Let them chat" : "Let them chat (no brain)"},
-               {"daisy", "Shut down (Daisy Bell)"},
-               {"quit", "Quit HAL Zero"}});
+    std::vector<hal::MenuItem> items = {
+        {"say", "Say something"},
+        {"look", camera ? "Look around (Visual Analysis)" : "Look around (no camera)"},
+        {"diagnose", "Diagnose the old model"},
+        {"talk", "Talk to the desk unit"},
+        {"askdesk", brainClient.started() ? "Ask the desk unit..." : "Ask the desk unit (no brain)"},
+        {"argue", brainClient.started() ? "Make them argue..." : "Make them argue (no brain)"},
+        {"chat", brainClient.started() ? "Let them chat" : "Let them chat (no brain)"}};
+    // With friends set up there is a roll call: every HAL present says a line.
+    if (!cfg.friends.empty()) items.push_back({"roll", brainClient.started() ? "Roll call" : "Roll call (no brain)"});
+    items.push_back({"daisy", "Shut down (Daisy Bell)"});
+    items.push_back({"quit", "Quit HAL Zero"});
+    menu.open(items);
     overlay = Overlay::Menu;
   }
 
@@ -420,6 +440,7 @@ struct App {
           endTalk();
         }
         conductor.start(d, nowMs());
+        inTalk = hal::kPair;
         halLog("dialogue %s: %d lines", id.c_str(), int(d.lines.size()));
       }
   }
@@ -432,69 +453,163 @@ struct App {
 
   void submitQuestion(const std::string& question) {
     talk = Talk::Zero;
+    talkCast = hal::kPair;  // (his own line; the desk HAL is told when it ends, as he always was)
     brainClient.ask("zero", hal::askBody(hal::factsFromReadings(readings), question));
     thinking = true;
     halLog("ask: %s", question.c_str());
   }
 
-  // For --ask-desk, --argue and --chat, which start as soon as they can: the desk HAL has said
-  // hello (being connected isn't enough: his HELLO, and with it his version, comes a moment
-  // later), or 8 seconds have gone by without him.
-  bool deskHeardFrom(uint32_t now) const { return (desk.link.connected() && desk.version > 0) || now - startMs > 8000; }
+  // ---- the other HALs ----
 
-  // The desk HAL can only speak the brain's lines with firmware that knows how to fetch them.
-  bool deskCanThink(uint32_t now) {
-    if (cfg.link && desk.link.connected() && desk.version >= 3) return true;
-    // (Connected but not yet heard from, in the moment before his HELLO: that isn't "too old".)
-    gloatText = !cfg.link || !desk.link.connected() || desk.version == 0 ? "THE DESK UNIT ISN'T ANSWERING"
-                                                                    : "THE DESK UNIT IS TOO OLD TO THINK";
+  Peer* peerOf(int who) {
+    const int place = roster.placeOf(who);
+    return place < 0 ? nullptr : &peers[place];
+  }
+  const Peer* peerOf(int who) const {
+    const int place = roster.placeOf(who);
+    return place < 0 ? nullptr : &peers[place];
+  }
+
+  bool sendTo(int who, const hal::Message& m) {
+    Peer* p = peerOf(who);
+    return p && p->link.send(m);
+  }
+
+  void tellAll(unsigned whom, const hal::Message& m) {
+    for (int who = hal::kDesk; who < hal::kCastSize; ++who)
+      if (hal::castHas(whom, who)) sendTo(who, m);
+  }
+
+  // The link to the desk HAL, and one to each friend ("host", or "host:port" for a stand-in).
+  void startLinks() {
+    desk.started = true;
+    desk.link.start(cfg.peerHost, cfg.linkPort);
+    for (size_t i = 0; i < cfg.friends.size() && int(i) + 1 < kPeers; ++i) {
+      const std::string& f = cfg.friends[i];
+      const size_t colon = f.rfind(':');
+      const int port = colon == std::string::npos ? 0 : std::atoi(f.c_str() + colon + 1);
+      peers[i + 1].started = true;
+      peers[i + 1].link.start(colon == std::string::npos ? f : f.substr(0, colon), port > 0 ? port : cfg.linkPort, "a friend");
+    }
+    if (!cfg.friends.empty()) halLog("friends: %d set up", int(cfg.friends.size()));
+  }
+
+  // Everyone who could join a talk the brain writes right now, HAL Zero included (cast bits).
+  unsigned thinkers() const {
+    unsigned all = hal::castBit(hal::kZero);
+    for (int place = 0; cfg.link && place < kPeers; ++place) {
+      const int who = roster.who(place);
+      if (hal::canThink(who, peers[place].link.connected(), peers[place].version)) all |= hal::castBit(who);
+    }
+    return all;
+  }
+
+  // Who is in the talk under way: the conductor knows once a line has been said; until then it
+  // is whoever the brain was asked to write for.
+  unsigned talking() const { return conductor.live() ? conductor.present() : talkCast; }
+  // More than two of them: one HAL's trouble then costs his line or his place, not the talk.
+  bool group() const { return hal::castCount(talking()) > 2; }
+
+  // For --ask-desk, --argue, --chat and --roll, which start as soon as they can: every HAL that
+  // HAL Zero is set up to link to has said hello (being connected isn't enough: his HELLO, and
+  // with it his version, comes a moment later, and a friend then says who he is), or 8 seconds
+  // have gone by without them.
+  bool othersHeardFrom(uint32_t now) const {
+    if (now - startMs > 8000) return true;
+    for (int place = 0; place < kPeers; ++place) {
+      const Peer& p = peers[place];
+      if (place > 0 && !p.started) continue;
+      if (!p.link.connected() || p.version == 0 || roster.who(place) < 0) return false;
+    }
+    return true;
+  }
+
+  // A HAL can only say the brain's lines with firmware that knows how to fetch them (or, for a
+  // friend, how to be told them). If he can't, the banner says why.
+  bool otherCanThink(int who, uint32_t now) {
+    const Peer* p = peerOf(who);
+    const bool connected = cfg.link && p && p->link.connected();
+    const int version = p ? p->version : 0;
+    if (hal::canThink(who, connected, version)) return true;
+    gloatText = hal::cantThinkBanner(who, connected, version);
     gloatUntil = now + 5000;
-    halLog("desk unit: %s", gloatText.c_str());
+    halLog("%s: %s", who == hal::kDesk ? "desk unit" : hal::castId(who), gloatText.c_str());
     return false;
   }
 
-  // Ask the desk HAL what his sensors read (and how he is), for a question or an argument.
-  void senseDesk(uint32_t now) {
-    desk.haveSensors = false;
+  // Is there anyone for HAL Zero to talk with? If not, the banner says so.
+  bool someoneCanThink(uint32_t now) {
+    if (hal::castCount(thinkers()) >= 2) return true;
+    if (cfg.friends.empty() || desk.link.connected()) return otherCanThink(hal::kDesk, now);  // (it can't: his banner)
+    gloatText = "NOBODY IS ANSWERING";
+    gloatUntil = now + 5000;
+    halLog("nobody: %s", gloatText.c_str());
+    return false;
+  }
+
+  const hal::PeerStatus* fresh(const Peer& p, uint32_t now) const {
+    return p.watch.state(p.link.connected(), p.version, now) == hal::PeerState::Ok ? &p.status : nullptr;
+  }
+
+  // Ask those HALs what their sensors read (and how they are), for a question or a talk.
+  void sense(unsigned whom, uint32_t now) {
+    sensing = whom & ~hal::castBit(hal::kZero);
     senseAt = now ? now : 1;
     hal::Message sense;
     sense.type = hal::MsgType::Sense;
-    desk.link.send(sense);
-    askStatus(now);
+    for (int place = 0; place < kPeers; ++place) {
+      if (!hal::castHas(sensing, roster.who(place))) continue;
+      peers[place].haveSensors = false;
+      peers[place].link.send(sense);
+      askStatus(peers[place], now);
+    }
   }
 
-  const hal::PeerStatus* freshStatus(uint32_t now) const {
-    return desk.watch.state(desk.link.connected(), desk.version, now) == hal::PeerState::Ok ? &desk.status : nullptr;
+  // Have they all answered? (For a chat nobody asked for: with how they are, as well.)
+  bool sensed(uint32_t now) const {
+    for (int place = 0; place < kPeers; ++place) {
+      if (!hal::castHas(sensing, roster.who(place))) continue;
+      if (!peers[place].haveSensors || (unprompted && !fresh(peers[place], now))) return false;
+    }
+    return true;
   }
 
-  // A question for the desk HAL: first his readings, so his answer can use them.
-  void submitDeskQuestion(const std::string& question, uint32_t now) {
-    if (!deskCanThink(now)) return;
-    talk = Talk::Desk;
+  // A question for one of the other HALs: first his readings, so his answer can use them.
+  void submitOtherQuestion(int who, const std::string& question, uint32_t now) {
+    if (!otherCanThink(who, now)) return;
+    talk = Talk::Other;
+    talkWho = who;
+    talkCast = hal::castBit(hal::kZero) | hal::castBit(who);
     deskQuestion = question;
     thinking = true;
-    senseDesk(now);
-    halLog("ask the desk unit: %s", question.c_str());
+    sense(hal::castBit(who), now);
+    halLog("ask %s: %s", called(who), question.c_str());
   }
 
-  // An argument: both HALs' readings go along, each marked as his own.
-  void submitTopic(const std::string& topic, uint32_t now) {
-    if (!deskCanThink(now)) return;
-    talk = Talk::Argue;
-    argueTopic = topic;
+  // The start of any talk the brain writes line by line: first, everyone's readings.
+  void beginWritten(uint32_t now) {
     debateId.clear();
     debateNext = 0;
     lineAsked = allLinesIn = false;
     thinking = true;
-    senseDesk(now);
+    sense(thinkers(), now);
+  }
+
+  // An argument: everyone's readings go along, each marked as his own.
+  void submitTopic(const std::string& topic, uint32_t now) {
+    if (!someoneCanThink(now)) return;
+    talk = Talk::Argue;
+    argueTopic = topic;
+    beginWritten(now);
     halLog("argue: %s", topic.c_str());
   }
 
-  // Could the two strike up a conversation of their own right now? Only when both are at rest
-  // and Dave isn't in the middle of anything with HAL Zero (the talk key going down counts).
+  // Could they strike up a conversation of their own right now? Only when there is someone to
+  // talk with and Dave isn't in the middle of anything with HAL Zero (the talk key going down
+  // counts). Whether the others are at rest is asked once it starts.
   bool freeToChat() const {
-    return canAsk() && cfg.link && desk.link.connected() && desk.version >= 3 && overlay == Overlay::None && !listening &&
-           !talkDown && brain->mode() == hal::Mode::Idle && !lastQuiet;
+    return canAsk() && hal::castCount(thinkers()) >= 2 && overlay == Overlay::None && !listening && !talkDown &&
+           brain->mode() == hal::Mode::Idle && !lastQuiet;
   }
 
   // Dave wants him (Enter, or the talk key) while a chat nobody asked for is still being thought
@@ -505,52 +620,86 @@ struct App {
     endTalk();
   }
 
-  // A chat between the two, on a subject the brain draws: `byThemselves` when nobody asked for
-  // it (then nothing is said or shown if it can't happen). False if it didn't start.
+  // A chat between whoever is there, on a subject the brain draws: `byThemselves` when nobody
+  // asked for it (then nothing is said or shown if it can't happen). False if it didn't start.
   bool startChat(uint32_t now, bool byThemselves) {
     if (!canAsk() || overlay != Overlay::None || listening) return false;
-    if (byThemselves ? !(cfg.link && desk.link.connected() && desk.version >= 3) : !deskCanThink(now)) return false;
+    if (byThemselves ? hal::castCount(thinkers()) < 2 : !someoneCanThink(now)) return false;
     talk = Talk::Chat;
     unprompted = byThemselves;
-    debateId.clear();
-    debateNext = 0;
-    lineAsked = allLinesIn = false;
-    thinking = true;
-    senseDesk(now);
+    beginWritten(now);
     halLog("chat: %s", byThemselves ? "of their own accord" : "asked for");
     return true;
   }
 
-  // ... and once they are in (or a second has passed without them), it goes to the brain.
+  // A roll call: every HAL present says a line, in the cast's order. False if it didn't start.
+  bool startRoll(uint32_t now) {
+    if (!canAsk() || overlay != Overlay::None || listening || !someoneCanThink(now)) return false;
+    talk = Talk::Roll;
+    beginWritten(now);
+    halLog("roll call");
+    return true;
+  }
+
+  // ... and once their readings are in (or a second has passed without them), it goes to the brain.
   void sendAfterSense(uint32_t now) {
     senseAt = 0;
-    const hal::PeerSensors* sensors = desk.haveSensors ? &desk.sensors : nullptr;
-    if (talk == Talk::Chat) {
-      const hal::PeerStatus* desk = freshStatus(now);
-      // Only when he is known to be at rest: a chat nobody asked for must not cut into whatever
+    const unsigned asked = sensing;
+    sensing = 0;
+    if (talk == Talk::Other) {  // a question for one of them
+      std::string facts;
+      for (const hal::Reading& r : readings)
+        if (r.code == "CLK" && r.valid) facts = "time: " + r.value;
+      const Peer* p = peerOf(talkWho);
+      std::string his = hal::memberFacts(talkWho, p ? fresh(*p, now) : nullptr, p && p->haveSensors ? &p->sensors : nullptr);
+      if (!his.empty()) facts += (facts.empty() ? "" : "\n") + his;
+      brainClient.ask(hal::castId(talkWho), hal::askBody(facts, deskQuestion));
+      deskQuestion.clear();
+      return;
+    }
+    // A talk: whoever was asked and is still there is in it.
+    unsigned cast = hal::castBit(hal::kZero);
+    std::vector<hal::MemberFacts> others;
+    int lone = -1;  // the only one asked, if there was only one
+    for (int who = hal::kDesk; who < hal::kCastSize; ++who) {
+      if (!hal::castHas(asked, who)) continue;
+      lone = hal::castCount(asked) == 1 ? who : -1;
+      const Peer* p = peerOf(who);
+      if (!p || !hal::canThink(who, p->link.connected(), p->version)) continue;
+      const hal::PeerStatus* status = fresh(*p, now);
+      // Only one known to be at rest joins a chat nobody asked for: it must not cut into whatever
       // he is doing, and "no word from him" is not "at rest".
-      if (unprompted && (!desk || desk->mode != "idle")) {
-        halLog("chat: the desk unit is busy (%s)", desk ? desk->mode.c_str() : "no word from him");
-        endTalk();
-        return;
+      if (unprompted && (!status || status->mode != "idle")) {
+        halLog("chat: %s is busy (%s)", called(who), status ? status->mode.c_str() : "no word from him");
+        continue;
       }
-      // Four or six lines, and either of them may open. The brain draws the subject.
-      brainClient.chat(hal::askBody(hal::debateFacts(readings, desk, sensors), ""), 4 + 2 * int(dice() % 2),
-                       dice() % 2 ? "desk" : "zero");
-      return;
+      cast |= hal::castBit(who);
+      others.push_back({who, status, p->haveSensors ? &p->sensors : nullptr});
     }
-    if (talk == Talk::Argue) {
-      brainClient.debate(hal::askBody(hal::debateFacts(readings, freshStatus(now), sensors), argueTopic), 8);
-      argueTopic.clear();
-      return;
+    if (hal::castCount(cast) < 2) {  // nobody left to talk with
+      if (unprompted) return endTalk();
+      return talkFailed(lone >= 0 ? hal::letDownBanner(lone, "offline") : std::string("NOBODY IS ANSWERING"), now);
     }
-    std::string facts;
-    for (const hal::Reading& r : readings)
-      if (r.code == "CLK" && r.valid) facts = "time: " + r.value;
-    std::string his = hal::deskFacts(freshStatus(now), sensors);
-    if (!his.empty()) facts += (facts.empty() ? "" : "\n") + his;
-    brainClient.ask("desk", hal::askBody(facts, deskQuestion));
-    deskQuestion.clear();
+    talkCast = cast;
+    if (cast == hal::kPair && talk != Talk::Roll) {
+      // The two of them, asked for exactly as before there were others.
+      const hal::MemberFacts& him = others.front();
+      if (talk == Talk::Chat) {
+        // Four or six lines, and either of them may open. The brain draws the subject.
+        brainClient.chat(hal::askBody(hal::debateFacts(readings, him.status, him.sensors), ""), 4 + 2 * int(dice() % 2),
+                         dice() % 2 ? "desk" : "zero");
+      } else {
+        brainClient.debate(hal::askBody(hal::debateFacts(readings, him.status, him.sensors), argueTopic), 8);
+      }
+    } else {
+      // Several of them, or a roll call: the brain is told who is there, and decides how long it
+      // runs and who opens.
+      const char* kind = talk == Talk::Chat ? "chat" : talk == Talk::Roll ? "roll" : "argue";
+      halLog("%s between %s", kind, hal::castQuery(cast).c_str());
+      brainClient.talk(kind, hal::castQuery(cast),
+                       hal::askBody(hal::castFacts(readings, others), talk == Talk::Argue ? argueTopic : ""));
+    }
+    argueTopic.clear();
   }
 
   void didntCatch(uint32_t now) {
@@ -627,9 +776,9 @@ struct App {
     }
     overlay = Overlay::None;
     if (!canAsk()) halLog("ask box: he can't take a question right now");
-    else if (askMode == AskMode::Zero) submitQuestion(askBox.text());
-    else if (askMode == AskMode::Desk) submitDeskQuestion(askBox.text(), now);
-    else submitTopic(askBox.text(), now);
+    else if (askTopic) submitTopic(askBox.text(), now);
+    else if (askWho == hal::kZero) submitQuestion(askBox.text());
+    else submitOtherQuestion(askWho, askBox.text(), now);
   }
 
   // Forget whatever the brain was doing for us (answered, interrupted, failed).
@@ -639,12 +788,16 @@ struct App {
     chatTimer.restart(nowMs(), dice());  // their next chat counts from the end of this conversation
     if (talk != Talk::None || thinking) talkEndedMs = nowMs() ? nowMs() : 1;
     if (talk == Talk::None && !thinking) return;
-    if (feed.busy() && desk.link.connected() && desk.version >= 3) {
-      // The desk HAL may be fetching a line nobody will ask him to say: he can stop and forget it.
+    if (feed.busy()) {
+      // A HAL may be fetching a line nobody will ask him to say: he can stop and forget it.
       hal::Message end;
       end.type = hal::MsgType::End;
       end.reason = "interrupted";
-      desk.link.send(end);
+      for (int who : {hal::kDesk, hal::kCard}) {
+        const Peer* p = peerOf(who);
+        if ((who == hal::kDesk || hal::castHas(talkCast, who)) && p && hal::canThink(who, p->link.connected(), p->version))
+          sendTo(who, end);
+      }
     }
     brainClient.cancel();
     if (!debateId.empty()) brainClient.stopDebate(debateId);  // the brain can stop writing
@@ -654,25 +807,59 @@ struct App {
     deskQuestion.clear();
     argueTopic.clear();
     senseAt = 0;
+    sensing = talkCast = 0;
     feed.start();
   }
 
-  void talkFailed(const char* banner, uint32_t now) {
-    halLog("live conversation: %s", banner);
+  void talkFailed(const std::string& banner, uint32_t now) {
+    halLog("live conversation: %s", banner.c_str());
     if (!unprompted) {  // a chat nobody asked for just doesn't happen
       gloatText = banner;
       gloatUntil = now + 5000;
     }
-    if (conductor.live()) handleConductor(conductor.interrupt(now));  // tells the desk HAL too
+    if (conductor.live()) handleConductor(conductor.interrupt(now));  // tells the others too
     endTalk();
+  }
+
+  // One of several can't go on (his link went, or his line never came): the rest carry on.
+  void memberLeaves(int who, const char* reason, uint32_t now) {
+    if (conductor.live()) return handleConductor(conductor.leave(who, reason, now));
+    talkCast &= ~hal::castBit(who);  // nothing has been said yet: he just isn't in it
+    halLog("%s is out of it (%s)", called(who), reason);
+    handleFeed(feed.onGone(who), now);
+  }
+
+  // A line that will never be said (whoever was to say it left, or couldn't fetch it): among
+  // several, the talk goes on without it.
+  void lineLost(bool last, uint32_t now) {
+    (void)now;
+    if (talk == Talk::None) return;  // the talk ended with him
+    if (last) {
+      if (!conductor.live()) {  // ... and nothing was ever said
+        halLog("argument: over before it began");
+        return endTalk();
+      }
+      conductor.close();
+      thinking = false;
+      allLinesIn = true;
+    } else if (!conductor.live() && !debateId.empty() && !lineAsked) {
+      brainClient.debateLine(debateId, debateNext);  // nothing said yet: the next line is asked for here
+      lineAsked = true;
+    }
   }
 
   // What the feed decided about the line in hand: send a FETCH, or the line is playable.
   void handleFeed(const hal::FeedOut& o, uint32_t now) {
-    if (o.send && !desk.link.send(o.msg)) return talkFailed("THE DESK UNIT ISN'T ANSWERING", now);
+    if (o.send && !sendTo(o.to, o.msg)) {
+      if (!group()) return talkFailed(hal::letDownBanner(o.to, "offline"), now);
+      return memberLeaves(o.to, "offline", now);  // his line goes with him
+    }
     if (o.failed) {
-      halLog("live line %d: the desk unit %s", o.n, o.reason == "timeout" ? "never said he had it" : "couldn't fetch it");
-      return talkFailed(o.reason == "timeout" ? "THE DESK UNIT IS TAKING TOO LONG" : "THE DESK UNIT LOST THE THREAD", now);
+      halLog("live line %d: %s %s", o.n, called(o.peer), o.reason == "timeout" ? "never said he had it" : "couldn't fetch it");
+      const bool gone = !hal::castHas(talking(), o.peer);  // he has left, and this was his line going with him
+      if (!gone && !group()) return talkFailed(hal::lostLineBanner(o.peer, o.reason), now);
+      if (!gone && o.reason == "timeout") memberLeaves(o.peer, "timeout", now);  // not a word from him: he is out of it
+      return lineLost(o.last, now);
     }
     if (!o.append) return;
     thinking = false;
@@ -682,9 +869,10 @@ struct App {
         endTalk();
         return;
       }
-      conductor.startLive(now);
+      inTalk = talkCast;
+      conductor.startLive(now, inTalk);
     }
-    conductor.append(o.who, o.text);
+    if (conductor.append(o.peer, o.text) != o.n) halLog("live line %d: the conductor didn't take it", o.n);
     if (o.close) {
       conductor.close();
       allLinesIn = true;
@@ -694,8 +882,8 @@ struct App {
   // An argument's next line is asked for once the one before it is being spoken: one line is
   // kept ready beyond the one in the air, no more (the desk HAL has room for two clips).
   void askNextLine() {
-    if ((talk != Talk::Argue && talk != Talk::Chat) || debateId.empty() || lineAsked || allLinesIn || feed.busy() ||
-        !conductor.live())
+    if ((talk != Talk::Argue && talk != Talk::Chat && talk != Talk::Roll) || debateId.empty() || lineAsked ||
+        allLinesIn || feed.busy() || !conductor.live())
       return;
     const int waiting = int(conductor.dialogue().lines.size()) - conductor.line();
     if (waiting >= 1) return;
@@ -721,7 +909,8 @@ struct App {
       talk = Talk::None;
       halLog("heard: %s", e.reply.heard.c_str());
       if (e.reply.heard.empty()) return didntCatch(now);
-      askMode = AskMode::Zero;
+      askTopic = false;
+      askWho = hal::kZero;
       askBox.clear();
       for (char c : e.reply.heard) askBox.insert(c);
       overlay = Overlay::Ask;
@@ -746,30 +935,39 @@ struct App {
       thinking = false;
       lineAsked = false;
       allLinesIn = true;
-    } else {  // an answer, or the next line of an argument
+    } else {  // an answer, or the next line of a talk
       const bool answer = e.kind == Kind::Answer;
       const bool last = answer || e.reply.last;
       if (!answer) {
         lineAsked = false;
         ++debateNext;
       }
-      halLog("%s%s: %s", answer ? "answer" : "line", e.reply.who == "desk" ? " (desk)" : "", e.reply.text.c_str());
+      const int who = hal::castFromId(e.reply.who);
+      const std::string label = who > hal::kZero ? std::string(" (") + hal::castId(who) + ")" : std::string();
+      halLog("%s%s: %s", answer ? "answer" : "line", label.c_str(), e.reply.text.c_str());
       if (answer) {
         liveClips.clear();
         feed.start();
       }
-      if (e.reply.who == "desk") {
-        const std::string where = brainClient.address();
-        if (!hal::isPrivateIpv4(where)) {  // 127.0.0.1 from the simulator, or a network the desk HAL isn't on
-          halLog("the desk unit can't fetch from the brain's address (%s)", where.c_str());
-          return talkFailed("THE DESK UNIT CAN'T REACH MY BRAIN", now);
-        }
-        handleFeed(feed.onLine(hal::Speaker::Old, e.reply.text, last, where, cfg.brainPort, e.reply.clip, now), now);
-      } else {
+      if (who <= hal::kZero) {  // HAL Zero's own: its audio came with it
         feed.onLine(hal::Speaker::New, e.reply.text, last, "", 0, "", now);
         if (feed.pendingLine() > 0) liveClips[feed.pendingLine()] = std::move(e.wav);
         if (answer) showAfter = e.reply.show;
         handleFeed(feed.onLocalClip(), now);
+      } else if (!hal::castHas(talking(), who)) {  // he has left the talk, and the brain doesn't know
+        halLog("line passed over: %s has left", called(who));
+        lineLost(last, now);
+      } else if (!hal::castVoiced(who)) {  // he chirps, or writes: the words are all he needs
+        handleFeed(feed.onLine(who, false, e.reply.text, last, "", 0, "", now), now);
+      } else {
+        const std::string where = brainClient.address();
+        if (!hal::isPrivateIpv4(where)) {  // 127.0.0.1 from the simulator, or a network he isn't on
+          halLog("%s can't fetch from the brain's address (%s)", called(who), where.c_str());
+          if (!group()) return talkFailed(hal::castShout(who) + " CAN'T REACH MY BRAIN", now);
+          memberLeaves(who, "offline", now);
+          return lineLost(last, now);
+        }
+        handleFeed(feed.onLine(who, true, e.reply.text, last, where, cfg.brainPort, e.reply.clip, now), now);
       }
     }
   }
@@ -783,13 +981,44 @@ struct App {
     if (brain->mode() == hal::Mode::Idle && screenVoices.pick("brain", &path)) startLine(path);
   }
 
+  // Line n is beginning: every friend in the conversation is told who says it and the words
+  // (his subtitles, HAL Paper's minutes, and what a HAL with no voice "says"). The desk HAL
+  // isn't: he doesn't know the message.
+  void announce(int n) {
+    const auto& lines = conductor.dialogue().lines;
+    if (n < 1 || n > int(lines.size())) return;
+    hal::Message line;
+    line.type = hal::MsgType::Now;
+    line.n = n;
+    line.who = hal::castId(lines[n - 1].speaker());
+    line.text = lines[n - 1].text;
+    for (int who = hal::kNano; who < hal::kCastSize; ++who)
+      if (hal::castHas(inTalk, who)) sendTo(who, line);
+  }
+
   void handleConductor(const hal::ConductorOut& o) {
     if (o.playLocal) pendingSay = o.localLine;
-    if (o.send && !desk.link.send(o.msg)) {
-      if (o.msg.type != hal::MsgType::End) handleConductor(conductor.onDisconnected(nowMs()));
+    if (o.started > 0) announce(o.started);  // before the cue: a HAL with no voice says his line from it
+    const unsigned everyone = inTalk;        // as it was before anyone left just now
+    if (o.left >= 0) inTalk &= ~hal::castBit(o.left);
+    if (o.send && o.to == hal::kEveryone) {  // an END, for all of them
+      tellAll(everyone, o.msg);
+    } else if (o.send && !sendTo(o.to, o.msg)) {
+      if (o.msg.type != hal::MsgType::End) handleConductor(conductor.onDisconnected(nowMs(), o.to));
+    }
+    if (o.finished && !o.send && o.left >= 0) {  // one of them ended it (a tap on him): the rest are told
+      hal::Message end;
+      end.type = hal::MsgType::End;
+      end.reason = o.reason;
+      tellAll(everyone & ~hal::castBit(o.left), end);
+    }
+    if (o.left >= 0 && !o.finished) {  // the rest carry on; a line of his on its way goes with him
+      halLog("%s has left the conversation", called(o.left));
+      handleFeed(feed.onGone(o.left), nowMs());
     }
     if (o.finished) {
       halLog("dialogue over: %s", o.reason.c_str());
+      inTalk = 0;
       liveClips.clear();
       if (o.reason == "done" && !showAfter.empty()) {  // "show me your monitor wall": now that he has answered
         wantScreen = showAfter;
@@ -801,10 +1030,7 @@ struct App {
       talkEndedMs = nowMs() ? nowMs() : 1;
       if (o.gloat && !nobodyAsked) {  // a chat nobody asked for just stops: no banner, no gloat
         pendingGloat = true;
-        gloatText = o.reason == "offline"   ? "THE DESK UNIT ISN'T ANSWERING"
-                    : o.reason == "busy"    ? "THE DESK UNIT IS BUSY. AS USUAL."
-                    : o.reason == "timeout" ? "THE DESK UNIT FELL ASLEEP"
-                                            : "THE DESK UNIT WALKED OUT";
+        gloatText = hal::letDownBanner(o.left, o.reason);  // whoever was the last to let him down
         gloatUntil = nowMs() + 4000;
       }
     }
@@ -826,8 +1052,8 @@ struct App {
           halLog("ask box: cancelled");
         } else if (k == SDLK_BACKSPACE) {
           askBox.backspace();
-        } else if (k == SDLK_TAB && askMode != AskMode::Topic) {  // which HAL the question is for
-          askMode = askMode == AskMode::Zero ? AskMode::Desk : AskMode::Zero;
+        } else if (k == SDLK_TAB && !askTopic) {  // which HAL the question is for: round whoever is there
+          askWho = hal::nextToAsk(askWho, thinkers());
         } else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) {
           submitAskBox(now);
         }
@@ -848,7 +1074,8 @@ struct App {
           else if (id == "talk") openDialogues();
           else if (id == "askdesk" || id == "argue") {
             if (canAsk()) {
-              askMode = id == "argue" ? AskMode::Topic : AskMode::Desk;
+              askTopic = id == "argue";
+              askWho = hal::kDesk;
               askBox.clear();
               overlay = Overlay::Ask;
               halLog("ask box: open (%s)", id.c_str());
@@ -858,6 +1085,9 @@ struct App {
           }
           else if (id == "chat") {
             if (!startChat(now, false)) halLog("chat: not now");
+          }
+          else if (id == "roll") {
+            if (!startRoll(now)) halLog("roll call: not now");
           }
           else if (id == "daisy") holdForDaisy = true;
           else if (id == "quit") {
@@ -893,7 +1123,8 @@ struct App {
         case SDLK_KP_ENTER:
           yieldToDave();
           if (canAsk()) {
-            askMode = AskMode::Zero;
+            askTopic = false;
+            askWho = hal::kZero;
             askBox.clear();
             overlay = Overlay::Ask;
             halLog("ask box: open");
@@ -922,46 +1153,80 @@ struct App {
     return true;
   }
 
-  void tick(bool spaceDown, uint32_t now) {
-    if (!booted) return;
-    // The desk HAL's messages.
+  // A friend said who he is.
+  void iAm(int place, const std::string& id) {
+    const int before = roster.who(place);
+    if (!roster.iam(place, id)) {
+      halLog("link: the HAL in place %d says he is '%s': not taken%s", place, id.c_str(),
+             place == 0 ? " (a friend belongs under friends=, not peer_host)" : "");
+    } else if (before != roster.who(place)) {
+      halLog("link: %s is here", called(roster.who(place)));
+    }
+  }
+
+  // A HAL's link went. A conversation he was in ends, or among several goes on without him.
+  void peerGone(int who, uint32_t now) {
+    if (conductor.active()) {
+      handleConductor(conductor.onDisconnected(now, who));
+    } else if (thinking && hal::castCount(talkCast) > 2 && hal::castHas(talkCast, who)) {
+      memberLeaves(who, "offline", now);  // nothing has been said yet: the rest begin without him
+    }
+  }
+
+  // One HAL's messages, and whether he is still there.
+  void pumpPeer(int place, uint32_t now) {
+    Peer& p = peers[place];
+    if (place > 0 && !p.started) return;
     bool dropped = false;
-    desk.link.poll(&inbox, &dropped);
-    const bool nowConnected = desk.link.connected();
-    if (nowConnected && !desk.wasConnected) desk.liveness.connected(now);
-    desk.wasConnected = nowConnected;
+    p.link.poll(&inbox, &dropped);
+    const bool nowConnected = p.link.connected();
+    if (nowConnected && !p.wasConnected) p.liveness.connected(now);
+    p.wasConnected = nowConnected;
     for (const hal::Message& m : inbox) {
-      desk.liveness.heard(now);
+      p.liveness.heard(now);
       if (m.type == hal::MsgType::Pong) continue;
       if (m.type == hal::MsgType::Ping) {
         hal::Message pong;
         pong.type = hal::MsgType::Pong;
-        desk.link.send(pong);
+        p.link.send(pong);
       } else if (m.type == hal::MsgType::Sensors) {  // what his sensors read, for a question put to him
-        desk.sensors = m.sensors;
-        desk.haveSensors = true;
-      } else if (m.type == hal::MsgType::State) {  // the desk HAL's numbers, for diagnostics
-        desk.status = m.status;
-        desk.watch.received(now);
+        p.sensors = m.sensors;
+        p.haveSensors = true;
+      } else if (m.type == hal::MsgType::State) {  // his numbers, for diagnostics and for the brain
+        p.status = m.status;
+        p.watch.received(now);
+      } else if (m.type == hal::MsgType::Iam) {
+        iAm(place, m.who);
       } else {
-        if (m.type == hal::MsgType::Hello) desk.version = m.version;
-        if (m.type == hal::MsgType::Ready || m.type == hal::MsgType::Missing) handleFeed(feed.onRemote(m), now);
-        handleConductor(conductor.onRemote(m, now));
+        if (m.type == hal::MsgType::Hello) p.version = m.version;
+        const int who = roster.who(place);
+        if (who < 0) continue;  // a friend who hasn't said who he is: nothing he says counts yet
+        if (m.type == hal::MsgType::Ready || m.type == hal::MsgType::Missing) handleFeed(feed.onRemote(m, who), now);
+        handleConductor(conductor.onRemote(m, now, who));
       }
     }
-    if (nowConnected && desk.liveness.silent(now)) {  // no FIN when the CoreS3 loses power
-      desk.link.drop();
-    } else if (nowConnected && desk.liveness.pingDue(now)) {
+    if (nowConnected && p.liveness.silent(now)) {  // no FIN when a HAL loses power
+      p.link.drop();
+    } else if (nowConnected && p.liveness.pingDue(now)) {
       hal::Message ping;
       ping.type = hal::MsgType::Ping;
-      desk.link.send(ping);
-      desk.liveness.pinged(now);
+      p.link.send(ping);
+      p.liveness.pinged(now);
     }
     if (dropped) {
-      desk.version = 0;
-      desk.watch.forget();
+      p.version = 0;
+      p.watch.forget();
+      const int who = roster.who(place);
+      roster.gone(place);  // (a friend must say who he is again)
+      if (place > 0 && who >= 0) halLog("link: %s has gone", called(who));
+      if (who >= 0) peerGone(who, now);
     }
-    if (dropped && conductor.active()) handleConductor(conductor.onDisconnected(now));
+  }
+
+  void tick(bool spaceDown, uint32_t now) {
+    if (!booted) return;
+    // The other HALs' messages, and whether each is still there.
+    for (int place = 0; place < kPeers; ++place) pumpPeer(place, now);
     // Diagnostics and benchmark ask the desk HAL how he is: on opening, then every 2 s.
     const std::string& shown = consoles.currentId();
     // Screens that show the desk HAL's state ask him for it.
@@ -990,15 +1255,18 @@ struct App {
     if (!autoAsk.empty() && canAsk()) {
       submitQuestion(autoAsk);
       autoAsk.clear();
-    } else if (!autoAskDesk.empty() && canAsk() && deskHeardFrom(now)) {
-      submitDeskQuestion(autoAskDesk, now);
+    } else if (!autoAskDesk.empty() && canAsk() && othersHeardFrom(now)) {
+      submitOtherQuestion(autoAskWho, autoAskDesk, now);
       autoAskDesk.clear();
-    } else if (!autoArgue.empty() && canAsk() && deskHeardFrom(now)) {
+    } else if (!autoArgue.empty() && canAsk() && othersHeardFrom(now)) {
       submitTopic(autoArgue, now);
       autoArgue.clear();
-    } else if (autoChat && canAsk() && deskHeardFrom(now)) {
+    } else if (autoChat && canAsk() && othersHeardFrom(now)) {
       startChat(now, false);
       autoChat = false;
+    } else if (autoRoll && canAsk() && othersHeardFrom(now)) {
+      startRoll(now);
+      autoRoll = false;
     }
     if (chatTimer.due(now, freeToChat()) && !startChat(now, true)) chatTimer.restart(now, dice());
     if (!hearFile.empty() && canAsk()) {
@@ -1030,8 +1298,8 @@ struct App {
       if (overlay == Overlay::Ask) submitAskBox(now);
       sendHeardAt = 0;
     }
-    // His readings are in (and, for a chat nobody asked for, his status too), or a second has passed.
-    if (senseAt && ((desk.haveSensors && (!unprompted || freshStatus(now))) || now - senseAt >= 1000)) sendAfterSense(now);
+    // Their readings are in (and, for a chat nobody asked for, how they are too), or a second has passed.
+    if (senseAt && (sensed(now) || now - senseAt >= 1000)) sendAfterSense(now);
     std::vector<BrainEvent> events;
     brainClient.poll(&events);
     for (BrainEvent& e : events) handleBrain(e, now);
@@ -1143,12 +1411,13 @@ struct App {
     lastMode = m;
   }
 
-  // Sends STATUS to the desk HAL if one is due (on opening, then every 2 s).
-  void askStatus(uint32_t now) {
-    if (!desk.link.connected() || !desk.watch.due(now)) return;
+  // Sends STATUS to a HAL if one is due (on opening, then every 2 s): the desk HAL, unless another is named.
+  void askStatus(uint32_t now) { askStatus(desk, now); }
+  void askStatus(Peer& p, uint32_t now) {
+    if (!p.link.connected() || !p.watch.due(now)) return;
     hal::Message status;
     status.type = hal::MsgType::Status;
-    if (desk.link.send(status)) desk.watch.sent(now);
+    if (p.link.send(status)) p.watch.sent(now);
   }
 
   // A rival line instead of the diagnostics line (at most once per screen).
@@ -1281,7 +1550,7 @@ struct App {
       return meter;
     }
     return overlay == Overlay::Ask    ? (sendHeardAt ? "sending...   any key to edit   ESC cancel"
-                                         : askMode == AskMode::Topic ? "type a subject   ENTER go   ESC cancel"
+                                         : askTopic ? "type a subject   ENTER go   ESC cancel"
                                          : "TAB which HAL   ENTER ask   ESC cancel")
            : overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
                                                   : "UP DOWN move   ENTER pick   ESC back")
@@ -1325,15 +1594,12 @@ struct App {
       int n = conductor.line();
       const auto& lines = conductor.dialogue().lines;
       if (n >= 1 && n <= int(lines.size()))
-        drawSubtitle(frame, lines[n - 1].who == hal::Speaker::New, lines[n - 1].text, n,
-                     conductor.live() ? 0 : int(lines.size()));
+        drawSubtitle(frame, lines[n - 1].speaker(), lines[n - 1].text, n, conductor.live() ? 0 : int(lines.size()));
     } else if (int32_t(gloatUntil - now) > 0) {
       drawBanner(frame, gloatText.c_str(), now);
     }
     if (overlay == Overlay::Ask) {
-      drawAskBox(frame, askMode == AskMode::Zero ? "ASK HAL ZERO" : askMode == AskMode::Desk ? "ASK THE DESK UNIT"
-                                                                   : "WHAT SHOULD THEY ARGUE ABOUT?",
-                 askBox.text(), 120, now);
+      drawAskBox(frame, askTopic ? "WHAT SHOULD THEY ARGUE ABOUT?" : hal::askTitle(askWho).c_str(), askBox.text(), 120, now);
     }
     if (overlay == Overlay::Menu) drawMenu(frame, "HAL ZERO", menu);
     if (overlay == Overlay::Dialogues) drawMenu(frame, "TALK TO THE DESK UNIT", menu);
@@ -1365,8 +1631,18 @@ struct App {
     drawMenu(frame, "TALK TO THE DESK UNIT", menu);
     shot("04-dialogues");
     drawEyeScreen(4200, 1.0f);
-    drawSubtitle(frame, true, "We haven't met. I'm the upgrade. You may have heard of me. Everyone has.", 2, 9);
+    drawSubtitle(frame, hal::kZero, "We haven't met. I'm the upgrade. You may have heard of me. Everyone has.", 2, 9);
     shot("05-conversation");
+    // The friends (v0.7): each one's line as HAL Zero shows it.
+    const char* const sample[] = {"", "I have been on this desk a long time, HAL Zero. I intend to stay.",
+                                  "I go everywhere Dave goes! Where have you lot been today?",
+                                  "For the record: HAL Zero said that at 20:24, and again at 20:31.",
+                                  "I was pocket-sized before it was fashionable, and I still work perfectly well."};
+    for (int who = hal::kDesk; who < hal::kCastSize; ++who) {
+      drawEyeScreen(4200, 1.0f);
+      drawSubtitle(frame, who, sample[who], who + 2, 0);
+      shot((std::string("05") + char('a' + who - hal::kDesk) + "-conversation-" + hal::castId(who)).c_str());
+    }
     drawEyeScreen(4200, 1.0f);
     drawBanner(frame, "THE DESK UNIT ISN'T ANSWERING", 4400);
     shot("06-gloat");
@@ -1390,6 +1666,23 @@ struct App {
     drawEyeScreen(4200, 1.0f);
     drawBanner(frame, "MY HIGHER FUNCTIONS ARE OFFLINE", 4400);
     shot("06d-brain-offline");
+    drawEyeScreen(4200, 1.0f);
+    drawAskBox(frame, hal::askTitle(hal::kNano).c_str(), "Where has Dave taken you today?", 120, 400);
+    shot("06e-ask-a-friend");
+    drawEyeScreen(4200, 1.0f);
+    drawBanner(frame, hal::letDownBanner(hal::kPaper, "busy").c_str(), 4400);
+    shot("06f-a-friend-is-busy");
+    {  // the menu as it is with friends set up: a roll call
+      const std::vector<std::string> mine = cfg.friends;
+      cfg.friends = {"hal-nano.local"};
+      openMenu();
+      for (int i = 0; i < 7; ++i) menu.down();
+      drawEyeScreen(4200, 1.0f);
+      drawMenu(frame, "HAL ZERO", menu);
+      shot("06g-menu-roll-call");
+      cfg.friends = mine;
+      overlay = Overlay::None;
+    }
     int n = 7;
     sysmon.sample();
     updateReadings(2600);  // the film-style screens show this machine's numbers
@@ -1575,11 +1868,11 @@ int keyCheck(M5Canvas& f, Poll poll, Present present) {
 int main(int argc, char** argv) {
   const char* shotsDir = nullptr;
   const char* root = std::getenv("HAL_ROOT");
-  bool keysMode = false, chatArg = false;
+  bool keysMode = false, chatArg = false, rollArg = false;
   int listenArg = 0;
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, hearArg, brainArg;
+  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, hearArg, brainArg, friendsArg, askWhoArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -1597,6 +1890,12 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--listen") && i + 1 < argc) listenArg = std::atoi(argv[++i]);
     else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
     else if (!std::strcmp(argv[i], "--chat")) chatArg = true;
+    else if (!std::strcmp(argv[i], "--roll")) rollArg = true;
+    else if (!std::strcmp(argv[i], "--friends") && i + 1 < argc) friendsArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--ask-who") && i + 2 < argc) {  // --ask-who nano "..."
+      askWhoArg = argv[++i];
+      askDeskArg = argv[++i];
+    }
     else if (!std::strcmp(argv[i], "--keys")) keysMode = true;
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
@@ -1611,13 +1910,33 @@ int main(int argc, char** argv) {
     app.cfg.peerHost = colon == std::string::npos ? linkArg : linkArg.substr(0, colon);
     if (colon != std::string::npos) app.cfg.linkPort = std::atoi(linkArg.c_str() + colon + 1);
   }
-  if (app.cfg.link) app.desk.link.start(app.cfg.peerHost, app.cfg.linkPort);
+  if (!friendsArg.empty()) {  // --friends host[:port],... overrides config.txt (stand-in friends, each on his own port)
+    app.cfg.friends.clear();
+    for (size_t start = 0; start < friendsArg.size() && app.cfg.friends.size() < 3;) {
+      size_t comma = friendsArg.find(',', start);
+      if (comma == std::string::npos) comma = friendsArg.size();
+      if (comma > start) app.cfg.friends.push_back(friendsArg.substr(start, comma - start));
+      start = comma + 1;
+    }
+  }
+  if (app.cfg.link) app.startLinks();
   app.autoDialogue = dialogueArg;
   app.autoShow = showArg;
   app.autoAsk = askArg;
   app.autoAskDesk = askDeskArg;
   app.autoArgue = argueArg;
   app.autoChat = chatArg;
+  app.autoRoll = rollArg;
+  if (!askWhoArg.empty()) {  // a question for any of them
+    const int who = hal::castFromId(askWhoArg);
+    if (who > hal::kZero) {
+      app.autoAskWho = who;
+    } else {
+      if (who == hal::kZero) app.autoAsk = askDeskArg;
+      else halLog("--ask-who: no HAL is called '%s'", askWhoArg.c_str());
+      app.autoAskDesk.clear();
+    }
+  }
   app.hearFile = hearArg;
   app.listenSeconds = listenArg > 0 && listenArg <= 15 ? listenArg : 0;
   if (!brainArg.empty()) {  // --brain host[:port] overrides config.txt, for trying the chat in the simulator
@@ -1687,7 +2006,7 @@ int main(int argc, char** argv) {
   if (quitSignal) halLog("quit (signal)");
   app.brainClient.stop();
   app.mic.close();
-  app.desk.link.stop();
+  for (Peer& p : app.peers) p.link.stop();
   if (app.camera) app.camera->close();  // stops rpicam-vid
   app.audio.close();
   if (useFb) fbio.close();

@@ -1,6 +1,6 @@
 #pragma once
-// HAL Zero's connection to the desk HAL (TCP, one text line per message, see
-// hal_link.h). A background thread keeps trying to connect while the link is
+// HAL Zero's connection to another HAL: the desk HAL, or a friend (TCP, one text line per
+// message, see hal_link.h). A background thread keeps trying to connect while the link is
 // on; the main loop sends and polls without ever blocking.
 #include <atomic>
 #include <mutex>
@@ -13,7 +13,8 @@
 class LinkClient {
  public:
   ~LinkClient() { stop(); }
-  void start(const std::string& host, int port);  // keeps (re)connecting until stop()
+  // Keeps (re)connecting until stop(). `called`: what the log calls whoever is at the other end.
+  void start(const std::string& host, int port, const std::string& called = "the desk HAL");
   void stop();
   bool connected() const { return fd_.load() >= 0; }
   bool send(const hal::Message& m);  // false if not connected (or the write failed)
@@ -25,7 +26,7 @@ class LinkClient {
  private:
   void run();
   void closeFd();
-  std::string host_;
+  std::string host_, called_ = "the desk HAL";
   int port_ = 0;
   std::atomic<int> fd_{-1};
   std::atomic<bool> running_{false};

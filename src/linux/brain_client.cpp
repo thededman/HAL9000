@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "hal_cast.h"
 #include "hal_log.h"
 #include "hal_wav.h"
 
@@ -94,6 +95,18 @@ void BrainClient::chat(const std::string& body, int turns, const std::string& fi
   job.body = body;
   job.n = turns;
   job.extra = "&kind=chat&first=" + std::string(first == "desk" ? "desk" : "zero");
+  push(std::move(job));
+}
+
+void BrainClient::talk(const std::string& kind, const std::string& cast, const std::string& body) {
+  Job job;
+  job.kind = Job::Kind::Debate;
+  job.body = body;
+  // Both go into the request's address: only what they can properly be.
+  const bool knownKind = kind == "argue" || kind == "chat" || kind == "roll";
+  bool plain = !cast.empty() && cast.size() <= 40;
+  for (char c : cast) plain = plain && ((c >= 'a' && c <= 'z') || c == ',');
+  job.extra = "&kind=" + std::string(knownKind ? kind : "chat") + "&cast=" + (plain ? cast : "zero,desk");
   push(std::move(job));
 }
 
@@ -188,7 +201,8 @@ BrainEvent BrainClient::doAsk(const Job& job) {
   if (!error.empty()) return failed(error);
   event.reply = hal::parseBrainReply(response);
   if (!event.reply.ok) return failed(event.reply.error);
-  if (event.reply.text.empty() || event.reply.clip.empty()) return failed("bad-reply");
+  // (A HAL with no voice has words and no clip: he chirps them, or writes them.)
+  if (event.reply.text.empty() || (event.reply.clip.empty() && hal::castVoiced(hal::castFromId(job.who)))) return failed("bad-reply");
   if (job.who == "zero") {  // his own line: the audio is needed here
     error = fetchClip(job.generation, event.reply.clip, &event.wav);
     if (!error.empty()) return failed(error);
@@ -213,8 +227,9 @@ BrainEvent BrainClient::doHear(const Job& job) {
 BrainEvent BrainClient::doDebate(const Job& job) {
   BrainEvent event;
   hal::HttpResponse response;
-  std::string error = http(job.generation, "POST", "/debate?turns=" + std::to_string(job.n) + job.extra, "text/plain",
-                           job.body, kAskMs, 4096, &response);
+  // (`extra` begins with "&"; with no number of turns it is the whole query.)
+  const std::string query = job.n > 0 ? "turns=" + std::to_string(job.n) + job.extra : job.extra.substr(job.extra.empty() ? 0 : 1);
+  std::string error = http(job.generation, "POST", "/debate?" + query, "text/plain", job.body, kAskMs, 4096, &response);
   if (!error.empty()) return failed(error);
   event.reply = hal::parseBrainReply(response);
   if (!event.reply.ok) return failed(event.reply.error);
@@ -242,7 +257,8 @@ BrainEvent BrainClient::doDebateLine(const Job& job) {
     if (!event.reply.wait) break;
     if (Clock::now() >= giveUp || generation != generation_.load()) return failed("timeout");
   }
-  if (event.reply.text.empty() || event.reply.clip.empty() || event.reply.who.empty()) return failed("bad-reply");
+  const int who = hal::castFromId(event.reply.who);
+  if (event.reply.text.empty() || who < 0 || (event.reply.clip.empty() && hal::castVoiced(who))) return failed("bad-reply");
   if (event.reply.who == "zero") {
     std::string error = fetchClip(generation, event.reply.clip, &event.wav);
     if (!error.empty()) return failed(error);

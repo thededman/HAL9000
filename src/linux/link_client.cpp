@@ -53,9 +53,10 @@ int connectTo(const std::string& host, int port, int timeoutMs) {
 
 }  // namespace
 
-void LinkClient::start(const std::string& host, int port) {
+void LinkClient::start(const std::string& host, int port, const std::string& called) {
   stop();
   host_ = host;
+  called_ = called;
   port_ = port;
   running_ = true;
   worker_ = std::thread(&LinkClient::run, this);
@@ -93,7 +94,7 @@ void LinkClient::run() {
 
 void LinkClient::drop() {
   if (fd_.load() < 0) return;
-  halLog("link: the desk HAL went quiet");
+  halLog("link: %s went quiet", called_.c_str());
   closeFd();
   dropped_ = true;
 }
@@ -145,7 +146,7 @@ void LinkClient::poll(std::vector<hal::Message>* in, bool* dropped) {
     const bool flooded = !guard_.take(nowMs, read, in);
     if (flooded || gone) {
       // After a flood the worker thread tries again in its own time, at most every 5 s.
-      halLog(flooded ? "link: the desk HAL sent more than he ever does: hanging up" : "link: the desk HAL hung up");
+      halLog(flooded ? "link: %s sent more than he ever does: hanging up" : "link: %s hung up", called_.c_str());
       closeFd();
       dropped_ = true;
     }

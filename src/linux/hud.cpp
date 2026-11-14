@@ -4,6 +4,7 @@
 
 #include <cstdio>
 
+#include "hal_cast.h"
 #include "hal_subtitle.h"
 #include "screens/screens.h"
 
@@ -144,13 +145,20 @@ void drawMenu(M5Canvas& f, const char* title, hal::Menu& menu) {
   }
 }
 
-void drawSubtitle(M5Canvas& f, bool halZero, const std::string& text, int n, int total) {
+void drawSubtitle(M5Canvas& f, int who, const std::string& text, int n, int total) {
   const int x = 4, y = 112, w = f.width() - 8, h = 44;
+  // HAL Zero red and the desk HAL blue, as always; each friend a colour of his own: HAL Nano
+  // green, HAL Paper the grey of his page, HAL Card amber.
+  const uint16_t colour = who == hal::kZero    ? red()
+                          : who == hal::kNano  ? lgfx::color565(64, 208, 112)
+                          : who == hal::kPaper ? lgfx::color565(176, 176, 168)
+                          : who == hal::kCard  ? lgfx::color565(255, 168, 32)
+                                               : blue();
   f.fillRoundRect(x, y, w, h, 4, TFT_BLACK);
-  f.drawRoundRect(x, y, w, h, 4, halZero ? red() : blue());
+  f.drawRoundRect(x, y, w, h, 4, colour);
   f.setTextDatum(top_left);
-  f.setTextColor(halZero ? red() : blue());
-  f.drawString(halZero ? "HAL ZERO" : "DESK UNIT", x + 6, y + 4, &fonts::Font0);
+  f.setTextColor(colour);
+  f.drawString(hal::castValid(who) && who != hal::kDesk ? hal::castName(who) : "DESK UNIT", x + 6, y + 4, &fonts::Font0);
   char buf[16];
   if (total > 0) snprintf(buf, sizeof buf, "LINE %d/%d", n, total);
   else snprintf(buf, sizeof buf, "LIVE %d", n);

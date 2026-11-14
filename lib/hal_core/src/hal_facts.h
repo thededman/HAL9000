@@ -22,6 +22,11 @@ std::string deskFacts(const PeerStatus* status, const PeerSensors* sensors);
 // well under the brain's 24 lines.
 std::string debateFacts(const std::vector<Reading>& zero, const PeerStatus* status, const PeerSensors* sensors);
 
+// What one of the other HALs knows, for a question put to him: his own readings, with no name
+// in front. The desk HAL's are deskFacts; a friend's are only what his device can really tell
+// (as in castFacts), most telling first. "" for HAL Zero (his come from his readings) or nobody.
+std::string memberFacts(int who, const PeerStatus* status, const PeerSensors* sensors);
+
 // One of the other HALs in a conversation, and what he has reported (either may be null).
 struct MemberFacts {
   int who = kDesk;  // a cast number (hal_cast.h)
