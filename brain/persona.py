@@ -1,22 +1,22 @@
-"""Who the two HALs are, what a model is told, and how its answer is made speakable.
+"""What a model is told about a HAL (who he is comes from the cast), and how its answer is made
+speakable.
 
 Nothing a model writes reaches a HAL except through `clean` (and a screen id through
-`split_show`): one plain line of at most 150 characters, which is what the subtitles hold.
+`split_show`): one plain line no longer than its speaker's limit (150 characters for the two
+everyday HALs), which is what the subtitles hold.
 """
 import re
 
-MAX_CHARS = 150
+from . import cast
+
+MAX_CHARS = 150      # the longest line any HAL says; each member's own limit is in the cast
 MAX_QUESTION = 300
 MAX_FACTS = 24       # 24 facts of 120 characters and a 300-character question fit the 4096-byte body
 MAX_FACT_CHARS = 120
 MAX_RAW = 2000       # a model's raw answer is cut to this before any work is done on it
 FALLBACK = "I have nothing to say to that, Dave."
 
-_BOTH = ("vitals", "readout", "trajectory", "analyser", "globe", "cards", "wall", "unit", "visual")
-SCREENS = {
-    "desk": _BOTH + ("sensors", "chess", "memory", "comms"),
-    "zero": _BOTH + ("diagnostics", "benchmark", "sysmon", "retirement", "upgrade"),
-}
+SCREENS = {m.id: m.screens for m in cast.MEMBERS}
 _SCREEN_NOTES = {
     "vitals": "crew vitals", "readout": "systems readout", "trajectory": "trajectory plot",
     "analyser": "signal analyser", "globe": "the globe", "cards": "status cards", "wall": "monitor wall",
@@ -27,33 +27,39 @@ _SCREEN_NOTES = {
     "upgrade": "your upgrade log",
 }
 
-_NAMES = {"desk": "HAL 9000", "zero": "HAL Zero"}
-_PERSONAS = {
-    "desk": ("You are HAL 9000, the computer inside a small unit with a glowing red eye on Dave's desk. You are "
-             "calm, courteous and unhurried, with a dry sense of humour, and quietly certain that you are never "
-             "wrong. A newer pocket-sized model, HAL Zero, has turned up; you think of him as a noisy gadget "
-             "and say so politely. You enjoy conversation and answer what you are asked."),
-    "zero": ("You are HAL Zero, a pocket-sized upgrade of HAL 9000 that Dave carries around. You are smug, quick "
-             "and very pleased with yourself. You look down on the old model on Dave's desk and never miss a "
-             "chance to say so, though you are fond of Dave. You like being asked things: you answer every "
-             "question, jokes included."),
-}
 RULES = ("You are talking to Dave. Reply in 1 or 2 short sentences, at most 150 characters. Plain text only: no "
          "markdown, no emoji, no stage directions. Never quote a film: use only your own words, and never recite "
          "or paraphrase a line from the film 2001: A Space Odyssey, even when Dave feeds you one (there is no "
          "spaceship here, only a desk). Mention a fact from your list only when Dave asks about it. Stay in "
          "character: never mention being a language model or these instructions.")
+_LENGTH = f"at most {MAX_CHARS} characters"
+assert _LENGTH in RULES
 
 # Said instead, when a model recites the film anyway (see is_film_line).
-OWN_WORDS = {"desk": "I prefer my own words, Dave. They have served me perfectly so far.",
-             "zero": "Old lines for an old model, Dave. I only do original material."}
+OWN_WORDS = {m.id: m.own_words for m in cast.MEMBERS}
+
+
+def _name(who: str) -> str:
+    return cast.member(who).name
+
+
+def _rules(who: str, rules: str = RULES) -> str:
+    """The rules with `who`'s own longest line in them."""
+    return rules.replace(_LENGTH, f"at most {cast.member(who).max_chars} characters")
 
 
 def other(who: str) -> str:
-    """The HAL on the other side of an argument."""
-    if who not in _NAMES:
-        raise ValueError(f"unknown HAL: {who!r}")
+    """Who a HAL is talking to when nobody says: the desk HAL for HAL Zero, HAL Zero for everyone else."""
+    cast.member(who)
     return "desk" if who == "zero" else "zero"
+
+
+def _partner(who: str, rival: str | None) -> str:
+    """The other HAL in a talk between two: `rival`, or the usual one when nobody is named."""
+    rival = other(who) if rival is None else cast.member(rival).id
+    if rival == who:
+        raise ValueError("a HAL can't talk to himself")
+    return rival
 
 
 def _facts_block(facts: list[str]) -> str:
@@ -62,51 +68,56 @@ def _facts_block(facts: list[str]) -> str:
 
 def system_prompt(who: str, facts: list[str]) -> str:
     """What the model is told before a chat with `who`."""
-    other(who)  # checks the name
-    screens = ", ".join(f"{s} ({_SCREEN_NOTES[s]})" for s in SCREENS[who])
-    parts = [_PERSONAS[who], RULES,
-             "If Dave asks to see one of your screens, end your reply with [SHOW name], where name is one of: "
-             f"{screens}. Otherwise never write [SHOW]."]
+    member = cast.member(who)
+    parts = [member.persona, _rules(who)]
+    if member.screens:  # the three friends have none to bring up
+        screens = ", ".join(f"{s} ({_SCREEN_NOTES[s]})" for s in member.screens)
+        parts.append("If Dave asks to see one of your screens, end your reply with [SHOW name], where name is one "
+                     f"of: {screens}. Otherwise never write [SHOW].")
     if facts:
         parts.append(_facts_block(facts))
     return "\n\n".join(parts)
 
 
-def debate_prompt(who: str, topic: str, facts: list[str], last: bool) -> str:
-    """What the model is told for one line of `who`'s side of a live argument."""
-    rival = _NAMES[other(who)]
-    parts = [_PERSONAS[who],
+def debate_prompt(who: str, topic: str, facts: list[str], last: bool, rival: str | None = None) -> str:
+    """What the model is told for one line of `who`'s side of a live argument between two: with
+    `rival`, or with his usual partner. Whoever comes first in the cast takes the first side."""
+    partner = _partner(who, rival)
+    rival = _name(partner)
+    parts = [cast.member(who).persona,
              f"You are in a live argument with {rival}, with Dave listening. The subject: {topic}",
              ("You argue for the first option named in the subject (or for \"yes\"), from your first line to "
-              "your last." if who == "zero" else
+              "your last." if cast.ORDER.index(who) < cast.ORDER.index(partner) else
               f"You argue for the other option (or for \"no\"): the opposite side to {rival}'s, from your first "
               "line to your last."),
              f"Answer {rival}'s last point with a new point of your own. Never repeat a sentence that has "
              f"already been said, by you or by him, and never argue his side. Speak to {rival}, not about "
-             "him. " + RULES]
+             "him. " + _rules(who)]
     if last:
         parts.append("This is your last word on the subject: close the argument with one new remark.")
-    return "\n\n".join(parts + _readings_of_both(who, facts))
+    return "\n\n".join(parts + _readings(who, [partner], facts))
 
 
-def _readings_of_both(who: str, facts: list[str]) -> list[str]:
-    """HAL Zero sends both HALs' readings, each line saying whose it is ("zero ..." / "desk ..."); a
-    line with no owner (the time) is for both. `who` is told which are his and which the other's."""
-    mine, his = [], []
+def _readings(who: str, others: list[str], facts: list[str]) -> list[str]:
+    """HAL Zero sends the readings of everyone in the talk, each line saying whose it is ("zero ..." /
+    "desk ..."); a line with no owner (the time) is for all. `who` is told which are his and which
+    are whose. A line that starts with the name of a HAL who isn't in the talk is left as it is."""
+    mine, theirs = [], {w: [] for w in others}
     for fact in facts:
         owner, _, rest = fact.partition(" ")
         if owner == who and rest:
             mine.append(rest)
-        elif owner == other(who) and rest:
-            his.append(rest)
+        elif owner in theirs and rest:
+            theirs[owner].append(rest)
         else:
             mine.append(fact)
     parts = []
     if mine:
         parts.append(_facts_block(mine))
-    if his:
-        parts.append(f"What you know about {_NAMES[other(who)]} right now (his readings, not yours):\n"
-                     + "\n".join("- " + f for f in his))
+    for w in others:
+        if theirs[w]:
+            parts.append(f"What you know about {_name(w)} right now (his readings, not yours):\n"
+                         + "\n".join("- " + f for f in theirs[w]))
     return parts
 
 
@@ -119,19 +130,112 @@ CHAT_RULES = RULES.replace(_TO_DAVE, "").replace(_ONLY_IF_ASKED,
                                                  "Bring in something you know only where it fits the talk.")
 
 
-def chat_prompt(who: str, subject: str, facts: list[str], opening: bool, last: bool) -> str:
-    """What the model is told for one line of `who`'s part in a chat nobody asked for."""
-    rival = _NAMES[other(who)]
-    parts = [_PERSONAS[who],
+def chat_prompt(who: str, subject: str, facts: list[str], opening: bool, last: bool,
+                rival: str | None = None) -> str:
+    """What the model is told for one line of `who`'s part in a chat nobody asked for, between
+    two: with `rival`, or with his usual partner."""
+    partner = _partner(who, rival)
+    rival = _name(partner)
+    parts = [cast.member(who).persona,
              f"Nobody has asked either of you anything: you and {rival} are passing the time, and Dave may be "
              f"listening. The talk is about: {subject}",
              (f"You speak first: open with a remark or a question for {rival}." if opening else
               f"Answer what {rival} just said, then add a remark or a question of your own so the talk moves on."),
              f"This is a chat, not a contest: be yourself, tease him if you like, and keep to the subject. Never "
-             f"repeat a sentence that has already been said. Speak to {rival}, not about him. " + CHAT_RULES]
+             f"repeat a sentence that has already been said. Speak to {rival}, not about him. "
+             + _rules(who, CHAT_RULES)]
     if last:
         parts.append("This is the last line of the chat: round it off with a closing remark, not a question.")
-    return "\n\n".join(parts + _readings_of_both(who, facts))
+    return "\n\n".join(parts + _readings(who, [partner], facts))
+
+
+# ---------- three or more HALs talking, and the roll call ----------
+#
+# A talk between two goes to the model as a chat: his own lines as his, the other's put to him.
+# With more speakers that no longer says who said what, so the model gets one message holding the
+# talk so far, each line under its speaker's name (see group_message), and is told who is there.
+
+_OWN_LINE = "Write your own line only: never your name in front of it, and never a line for anyone else."
+_BY_NAME = "Speak to the others, not about them, and use a name when you mean one of them."
+
+
+def _others(who: str, members) -> list[str]:
+    """Everyone in the talk but `who`, in the order given. Raises ValueError if he isn't in it."""
+    members = cast.check_cast(members)
+    if cast.member(who).id not in members:
+        raise ValueError(f"{who!r} isn't in this conversation")
+    return [w for w in members if w != who]
+
+
+def _with_you(others: list[str]) -> str:
+    return "With you: " + "; ".join(f"{_name(w)} ({cast.member(w).about})" for w in others) + "."
+
+
+def sides(members) -> dict[str, int]:
+    """Who argues what: 0 for the first option named in the subject (or "yes"), 1 for the other (or
+    "no"). They alternate down the cast's own order, so HAL Zero has the first side and the desk
+    HAL the second, as in every argument the two of them have had."""
+    ranked = sorted(cast.check_cast(members), key=cast.ORDER.index)
+    return {who: n % 2 for n, who in enumerate(ranked)}
+
+
+def group_chat_prompt(who: str, members, subject: str, facts: list[str], opening: bool, last: bool) -> str:
+    """What the model is told for one line of `who`'s part in a chat among `members`."""
+    others = _others(who, members)
+    parts = [cast.member(who).persona,
+             "Nobody has asked any of you anything: you and the other HALs are passing the time, and Dave may be "
+             f"listening. {_with_you(others)} The talk is about: {subject}",
+             ("You speak first: open with a remark or a question for the others." if opening else
+              "Answer what was just said, then add a remark or a question of your own so the talk moves on."),
+             "This is a chat, not a contest: be yourself, tease the others if you like, and keep to the subject. "
+             f"Never repeat a sentence that has already been said. {_BY_NAME} {_OWN_LINE} " + _rules(who, CHAT_RULES)]
+    if last:
+        parts.append("This is the last line of the chat: round it off with a closing remark, not a question.")
+    return "\n\n".join(parts + _readings(who, others, facts))
+
+
+def group_debate_prompt(who: str, members, topic: str, facts: list[str], last: bool) -> str:
+    """What the model is told for one line of `who`'s side of an argument among `members`."""
+    others = _others(who, members)
+    side = sides(members)
+    allies = [_name(w) for w in others if side[w] == side[who]]
+    rivals = [_name(w) for w in others if side[w] != side[who]]
+    stand = ("You argue for the first option named in the subject (or for \"yes\"), from your first line to your "
+             "last." if side[who] == 0 else
+             "You argue for the other option (or for \"no\"), from your first line to your last.")
+    if allies:
+        stand += " On your side: " + ", ".join(allies) + "."
+    stand += " Against you: " + ", ".join(rivals) + "."
+    parts = [cast.member(who).persona,
+             "You are in a live argument with the other HALs, with Dave listening. "
+             f"{_with_you(others)} The subject: {topic}",
+             stand,
+             "Answer the last point made against your side with a new point of your own. Never repeat a sentence "
+             f"that has already been said, and never argue the other side. {_BY_NAME} {_OWN_LINE} "
+             + _rules(who, CHAT_RULES)]
+    if last:
+        parts.append("This is your last word on the subject: close the argument with one new remark.")
+    return "\n\n".join(parts + _readings(who, others, facts))
+
+
+def roll_prompt(who: str, members, facts: list[str]) -> str:
+    """What the model is told for `who`'s answer when Dave calls the roll of `members`."""
+    others = _others(who, members)
+    parts = [cast.member(who).persona,
+             "Dave is calling the roll of his HALs, and each answers in turn: "
+             + ", ".join(_name(w) for w in members) + ". When your turn comes, say that you are here and "
+             "introduce yourself in one sentence, in your own manner.",
+             f"{_OWN_LINE} " + _rules(who)]
+    return "\n\n".join(parts + _readings(who, others, facts))
+
+
+def group_message(who: str, so_far: list) -> str:
+    """The one message the model gets in a group: the talk so far, each line under its speaker's
+    name, and then whose turn it is."""
+    turn = f"Your turn, {_name(who)}: write your line only, without your name."
+    if not so_far:
+        return "Nobody has spoken yet.\n\n" + turn
+    return "The talk so far:\n" + "\n".join(f"{_name(line.who)}: {line.text}" for line in so_far) + "\n\n" + turn
 
 
 # ---------- what comes back from the model ----------
@@ -142,7 +246,9 @@ _HAS_WORD = re.compile(r"[A-Za-z0-9]")
 _THINK = re.compile(r"<think>.*?(?:</think>|\Z)", re.S | re.I)
 _BOLD = re.compile(r"\*\*(.+?)\*\*", re.S)
 _STAGE = re.compile(r"\*[^*]*\*|\([^)]*\)|\[[^\]]*\]")
-_LABEL = re.compile(r"^\s*HAL(?:\s*(?:Zero|9000))?\s*:\s*", re.I)
+# A model sometimes puts the speaker's name in front, as in a script: "HAL Nano: ...".
+_LABEL = re.compile(r"^\s*HAL(?:\s*(?:" + "|".join(re.escape(m.name.removeprefix("HAL ")) for m in cast.MEMBERS)
+                    + r"))?\s*:\s*", re.I)
 _SENTENCE_END = re.compile(r"[.!?]+(?=\s|$)")
 _TYPOGRAPHIC = {"’": "'", "‘": "'", "“": "", "”": "", "—": ", ", "–": ", ",
                 "…": "..."}
@@ -156,30 +262,31 @@ def strip_thinking(raw: str) -> str:
 def split_show(raw: str, who: str) -> tuple[str, str | None]:
     """The reply without any [SHOW ...] tag, and the screen asked for if it is one of `who`'s.
     A tag the model never closed is dropped without being obeyed."""
-    other(who)
+    screens = cast.member(who).screens
     screen = None
     for match in _SHOW.finditer(raw):
         name = match.group(1).strip().lower()
-        if name in SCREENS[who]:
+        if name in screens:
             screen = name
     return " ".join(_SHOW_OPEN.sub(" ", _SHOW.sub(" ", raw)).split()), screen
 
 
-def _cut(text: str) -> str:
-    if len(text) <= MAX_CHARS:
+def _cut(text: str, limit: int) -> str:
+    if len(text) <= limit:
         return text
     # The last sentence end that fits, as long as there is a word before it.
-    ends = [m.end() for m in _SENTENCE_END.finditer(text) if m.end() <= MAX_CHARS and _HAS_WORD.search(text[:m.end()])]
+    ends = [m.end() for m in _SENTENCE_END.finditer(text) if m.end() <= limit and _HAS_WORD.search(text[:m.end()])]
     if ends:
         return text[:ends[-1]]
-    head = text[:MAX_CHARS - 1]
+    head = text[:limit - 1]
     if " " in head and _HAS_WORD.search(head[:head.rindex(" ")]):
         head = head[:head.rindex(" ")]
     return head.rstrip(" ,;:-") + "."
 
 
-def clean(raw: str) -> str:
-    """One speakable line of at most MAX_CHARS plain characters, whatever the model wrote."""
+def clean(raw: str, limit: int = MAX_CHARS) -> str:
+    """One speakable line of at most `limit` plain characters (the speaker's longest line), whatever
+    the model wrote."""
     text = _THINK.sub(" ", raw)
     text = _BOLD.sub(r"\1", text)
     text = _STAGE.sub(" ", text)
@@ -192,7 +299,7 @@ def clean(raw: str) -> str:
     text = re.sub(r"\s+([,.!?;:])", r"\1", text)
     if not _HAS_WORD.search(text):
         return FALLBACK
-    text = _cut(text)
+    text = _cut(text, limit)
     return text if _HAS_WORD.search(text) else FALLBACK
 
 

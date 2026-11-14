@@ -20,15 +20,16 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import persona
+from . import cast, persona
 from .config import valid_key
+from .debate import default_turns
 from .providers import ProviderError
 from .stt import SttError
 from .voice import VoiceError
 
 MAX_TEXT_BODY = 4096
 MAX_AUDIO_BODY = 1024 * 1024
-MIN_TURNS, MAX_TURNS, DEFAULT_TURNS = 2, 12, 8
+MIN_TURNS, MAX_TURNS, DEFAULT_TURNS = 2, 12, 8  # (the default for the everyday pair; a named cast gets about two lines each)
 READ_DEADLINE_S = 15   # a whole request (headers and body) must arrive within this
 MAX_HANDLERS = 16      # requests handled at once; HAL Zero and the desk HAL need three or four
 MAX_LOG_CHARS = 200
@@ -221,8 +222,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(204)
         if status == "failed":  # the model or the voice gave out: not the same as finished
             return self._refuse(503, said)
-        self._reply({"who": said.who, "text": said.text, "clip": said.clip, "ms": said.ms,
-                     "last": int(n == debate.turns - 1)})
+        self._reply({"who": said.who, "text": said.text, "clip": said.clip or None, "ms": said.ms,
+                     "last": int(n == debate.turns - 1)})  # no clip: his words are shown, not spoken
 
     def _post(self):
         try:
@@ -252,16 +253,21 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError:
                     return self._refuse(400, "bad-audio")
             kind = query.get("kind", ["argue"])[0] if url.path == "/debate" else ""
-            facts, question = persona.parse_body(body, need_question=kind != "chat")  # the brain can pick a chat's subject
+            # The brain can pick a chat's subject, and a roll call has none.
+            facts, question = persona.parse_body(body, need_question=kind not in ("chat", "roll"))
             if url.path == "/ask":
                 said = self.server.hal_brain.ask(query.get("who", [""])[0], facts, question)
-                return self._reply({"text": said.text, "clip": said.clip, "ms": said.ms, "show": said.show})
-            turns = int(query.get("turns", [str(DEFAULT_TURNS)])[0])
+                return self._reply({"who": said.who, "text": said.text, "clip": said.clip or None, "ms": said.ms,
+                                    "show": said.show})
+            # Who is talking: cast=zero,desk,nano names them; without it, the everyday pair.
+            members = cast.parse_cast(query["cast"][0]) if "cast" in query else None
+            turns = int(query.get("turns", [str(default_turns(members) if members else DEFAULT_TURNS)])[0])
             if not MIN_TURNS <= turns <= MAX_TURNS:
                 raise ValueError("turns out of range")
-            first = query.get("first", ["zero"])[0]
-            self._reply({"debate": self.server.hal_debates.start(question, facts, turns, kind=kind, first=first)})
-        except ValueError:  # an unknown HAL, no question, not text, a bad number of turns, kind or opener
+            first = query.get("first", [None])[0]
+            self._reply({"debate": self.server.hal_debates.start(question, facts, turns, kind=kind, first=first,
+                                                                 cast=members)})
+        except ValueError:  # an unknown HAL, no question, not text, a bad number of turns, kind, cast or opener
             self._refuse(400, "bad-request")
         except ProviderError as e:
             self._refuse(503, "no-model", str(e))
