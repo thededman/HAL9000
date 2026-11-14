@@ -100,14 +100,17 @@ class Debate:
         """What the model is told, and the talk so far as it is put to him, for line `n`."""
         opening, last = n == 0, n == self.turns - 1
         if self._group:  # too many voices for "his lines and mine": one transcript with a name on every line
+            reminder = ""
             if self._kind == "roll":
                 system = persona.roll_prompt(who, self._cast, self._facts)
             elif self._kind == "chat":
                 ask = self._order[n + 1] if self._asks[n] and not last else None
-                system = persona.group_chat_prompt(who, self._cast, self._topic, self._facts, opening, last, next_up=ask)
+                system = persona.group_chat_prompt(who, self._cast, self._topic, self._facts, opening, last,
+                                                   next_up=ask)
             else:
                 system = persona.group_debate_prompt(who, self._cast, self._topic, self._facts, last)
-            return system, [{"role": "user", "content": persona.group_message(who, so_far)}]
+                reminder = persona.side_reminder(who, self._cast)
+            return system, [{"role": "user", "content": persona.group_message(who, so_far, reminder)}]
         rival = self._cast[1] if who == self._cast[0] else self._cast[0]
         if self._kind == "chat":
             system = persona.chat_prompt(who, self._topic, self._facts, opening=opening, last=last, rival=rival)

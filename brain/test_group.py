@@ -138,29 +138,53 @@ class GroupPromptTest(unittest.TestCase):
 
     def test_an_argument_gives_every_hal_a_side(self):
         sides = persona.sides(FIVE)
-        self.assertEqual((sides["zero"], sides["desk"]), (0, 1))  # as in every argument the two have had
-        self.assertEqual(set(sides), set(FIVE))
-        for members in itertools.chain.from_iterable(itertools.combinations(FIVE, n) for n in range(2, 6)):
-            self.assertEqual(set(persona.sides(members).values()), {0, 1}, members)  # nobody argues alone... or unopposed
+        # The new models against the old guard: HAL Card will not argue alongside the HAL who replaced him.
+        self.assertEqual(sides, {"zero": 0, "nano": 0, "desk": 1, "paper": 1, "card": 1})
+        for members in itertools.chain.from_iterable(itertools.permutations(FIVE, n) for n in range(2, 6)):
+            got = persona.sides(members)
+            self.assertEqual(set(got), set(members))
+            self.assertEqual(set(got.values()), {0, 1}, members)  # nobody argues unopposed
+            if "zero" in members:
+                self.assertEqual(got["zero"], 0, members)  # as in every argument he has had
+                if "desk" in members:
+                    self.assertEqual(got["desk"], 1, members)
+                if "card" in members:
+                    self.assertEqual(got["card"], 1, members)
+            if len(members) == 2:  # between two, whoever comes first in the cast has the first side
+                first, second = sorted(members, key=cast.ORDER.index)
+                self.assertEqual((got[first], got[second]), (0, 1), members)
+        # Three who would all be on one side: they alternate instead.
+        self.assertEqual(persona.sides(("desk", "paper", "card")), {"desk": 0, "paper": 1, "card": 0})
         for who in FIVE:
             p = persona.group_debate_prompt(who, FIVE, "tea or coffee", READINGS, last=False)
             with self.subTest(who=who):
                 self.assertTrue(p.startswith(cast.member(who).persona))
                 self.assertIn("tea or coffee", p)
-                self.assertEqual("first option" in p, sides[who] == 0)
-                self.assertEqual("other option" in p, sides[who] == 1)
-                allies = [name(w) for w in FIVE if w != who and sides[w] == sides[who]]
-                rivals = [name(w) for w in FIVE if sides[w] != sides[who]]
-                self.assertIn("On your side: " + ", ".join(allies), p)
-                self.assertIn("Against you: " + ", ".join(rivals), p)
+                # Both camps are spelt out, with "you" in his own: left to work it out, the model has a
+                # HAL take whichever side annoys the one he likes least.
+                camps = [", ".join("you" if w == who else name(w) for w in FIVE if sides[w] == side) for side in (0, 1)]
+                self.assertIn(f'For the first option named in the subject (or for "yes"): {camps[0]}.', p)
+                self.assertIn(f'For the other option (or for "no"): {camps[1]}.', p)
+                self.assertIn(persona.side_reminder(who, FIVE), p)
                 self.assertIn(f"at most {cast.member(who).max_chars} characters", p)
                 self.assertNotIn("last word", p)
         self.assertIn("last word", persona.group_debate_prompt("card", FIVE, "tea or coffee", [], last=True))
 
-    def test_a_side_of_one_has_no_allies_to_name(self):
+    def test_each_speaker_is_reminded_of_his_side(self):
+        self.assertIn("first option", persona.side_reminder("zero", FIVE))
+        self.assertNotIn("other option", persona.side_reminder("zero", FIVE))
+        self.assertIn("other option", persona.side_reminder("paper", FIVE))
+        self.assertNotIn("first option", persona.side_reminder("paper", FIVE))
+        # It is the last thing he reads before he writes.
+        message = persona.group_message("paper", said(("zero", "Tea, obviously.")), persona.side_reminder("paper", FIVE))
+        self.assertTrue(message.splitlines()[-1].startswith("Your turn, HAL Paper"), message)
+        self.assertTrue(message.endswith(persona.side_reminder("paper", FIVE)), message)
+        self.assertNotIn("option", persona.group_message("paper", said(("zero", "Tea, obviously."))))
+
+    def test_a_camp_of_one(self):
         p = persona.group_debate_prompt("desk", ("zero", "desk", "nano"), "tea or coffee", [], last=False)
-        self.assertNotIn("On your side", p)
-        self.assertIn("Against you: HAL Zero, HAL Nano", p)
+        self.assertIn('For the other option (or for "no"): you.', p)
+        self.assertIn('For the first option named in the subject (or for "yes"): HAL Zero, HAL Nano.', p)
 
     def test_roll_call(self):
         for who in FIVE:
@@ -186,8 +210,8 @@ class GroupPromptTest(unittest.TestCase):
                                                      ("nano", "Nano chirps."), ("paper", "Paper notes it.")))
         lines = message.splitlines()
         at = lines.index("HAL Zero: Zero opens.")
-        self.assertEqual(lines[at:at + 4], ["HAL Zero: Zero opens.", "HAL 9000: Desk answers.", "HAL Nano: Nano chirps.",
-                                            "HAL Paper: Paper notes it."])
+        self.assertEqual(lines[at:at + 4], ["HAL Zero: Zero opens.", "HAL 9000: Desk answers.",
+                                            "HAL Nano: Nano chirps.", "HAL Paper: Paper notes it."])
         self.assertTrue(lines[-1].startswith("Your turn, HAL Nano"), lines[-1])
 
     def test_with_nothing_said_yet_there_is_no_transcript(self):
@@ -258,18 +282,19 @@ class GroupTalkTest(unittest.TestCase):
 
     def test_a_group_argument_gives_each_speaker_his_side(self):
         _, lines, provider, _ = self.talk(10, topic="tea or coffee", facts=READINGS, cast=FIVE, rng=random.Random(2))
-        sides = persona.sides(FIVE)
         for line, (system, messages) in zip(lines, provider.calls):
-            self.assertEqual("first option" in system, sides[line.who] == 0, line.who)
-            self.assertIn("tea or coffee", system)
+            self.assertEqual(system, persona.group_debate_prompt(line.who, FIVE, "tea or coffee", READINGS,
+                                                                 last=line is lines[-1]))
             self.assertEqual(len(messages), 1)
+            self.assertTrue(messages[0]["content"].endswith(persona.side_reminder(line.who, FIVE)))  # his side, last
         self.assertIn("last word", provider.calls[-1][0])
         self.assertNotIn("last word", provider.calls[0][0])
 
     def test_the_pair_named_as_a_cast_is_todays_conversation_to_the_letter(self):
         for kwargs in ({"kind": "argue"}, {"kind": "chat"}, {"kind": "chat", "first": "desk"}):
             _, plain_lines, plain, _ = self.talk(4, topic="tea or coffee", facts=READINGS, **kwargs)
-            _, cast_lines, named, _ = self.talk(4, topic="tea or coffee", facts=READINGS, cast=("zero", "desk"), **kwargs)
+            _, cast_lines, named, _ = self.talk(4, topic="tea or coffee", facts=READINGS, cast=("zero", "desk"),
+                                                **kwargs)
             self.assertEqual(named.calls, plain.calls, kwargs)
             self.assertEqual([line.who for line in cast_lines], [line.who for line in plain_lines])
         _, lines, _, _ = self.talk(4, kind="chat", cast=("desk", "zero"))  # the first one named opens
@@ -278,14 +303,17 @@ class GroupTalkTest(unittest.TestCase):
     def test_any_two_talk_the_way_the_everyday_two_do(self):
         _, lines, provider, _ = self.talk(4, kind="chat", cast=("nano", "card"))
         self.assertEqual([line.who for line in lines], ["nano", "card", "nano", "card"])
-        self.assertEqual(provider.calls[0][0], persona.chat_prompt("nano", "naps", [], opening=True, last=False, rival="card"))
-        self.assertEqual(provider.calls[1][0], persona.chat_prompt("card", "naps", [], opening=False, last=False, rival="nano"))
+        self.assertEqual(provider.calls[0][0],
+                         persona.chat_prompt("nano", "naps", [], opening=True, last=False, rival="card"))
+        self.assertEqual(provider.calls[1][0],
+                         persona.chat_prompt("card", "naps", [], opening=False, last=False, rival="nano"))
         self.assertEqual(provider.calls[0][1], [{"role": "user", "content": "Begin."}])
         self.assertEqual(provider.calls[2][1], [{"role": "user", "content": "Begin."},
                                                 {"role": "assistant", "content": "Line 0."},
                                                 {"role": "user", "content": "Line 1."}])
         _, _, provider, _ = self.talk(2, topic="tea or coffee", cast=("card", "nano"))
-        self.assertEqual(provider.calls[0][0], persona.debate_prompt("card", "tea or coffee", [], last=False, rival="nano"))
+        self.assertEqual(provider.calls[0][0],
+                         persona.debate_prompt("card", "tea or coffee", [], last=False, rival="nano"))
 
     def test_roll_call_is_one_line_each_in_the_order_given(self):
         debate, lines, provider, _ = self.talk(12, kind="roll", topic="", cast=FIVE)
@@ -327,7 +355,8 @@ class RepeatTest(unittest.TestCase):
                     "Ninety percent of what, exactly?", "Noted, and filed under noise.", "Not noted."):
             self.assertFalse(persona.repeats(new, before), new)
         # A line said before with a new sentence tacked on (or one taken off) is still said before.
-        earlier = said(("zero", "I predicted he'd ask about strawberries. My algorithms are simply superior to that relic."))
+        earlier = said(("zero", "I predicted he'd ask about strawberries. My algorithms are simply superior to "
+                                "that relic."))
         self.assertTrue(persona.repeats("I predicted he'd ask about strawberries. My algorithms are simply superior to "
                                         "that relic. HAL Nano, can you even read?", earlier))
         self.assertTrue(persona.repeats("My algorithms are simply superior to that relic.", earlier))
@@ -354,7 +383,8 @@ class RepeatTest(unittest.TestCase):
         self.assertEqual(again[1], {"role": "assistant", "content": "I was here first."})  # ...what he wrote...
         self.assertEqual(again[2]["role"], "user")                                         # ...and a nudge
         self.assertIn("already", again[2]["content"])
-        self.assertEqual([text for _, text in brain.voice.said], [line.text for line in lines])  # the repeat was never spoken
+        # The repeat was never spoken.
+        self.assertEqual([text for _, text in brain.voice.said], [line.text for line in lines])
 
     def test_a_second_repeat_is_let_through(self):
         brain, provider = make_brain(FakeProvider(["Same.", "Other.", "Same.", "Same.", "Next."]))

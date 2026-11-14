@@ -53,9 +53,8 @@ def _rules(who: str, rules: str = RULES) -> str:
         return rules
     length = (f"Reply in 1 or 2 short sentences, at most {limit} characters." if limit >= 120 else
               f"Reply in 1 short sentence, at most {limit} characters (about {limit // 7} words).")
-    if member.kind == "text":  # left to itself the model has HAL Nano chirp all in lower case, or shout in capitals
-        length += (" Your words are read on a screen: write ordinary sentences, with a capital letter to start "
-                   "each one and no words all in capitals.")
+    if member.kind == "text":  # (no word about capitals here: see sentence_case)
+        length += " Your words are read on a screen: write them as ordinary sentences."
     return rules.replace(_LENGTH, length)
 
 
@@ -167,6 +166,12 @@ def chat_prompt(who: str, subject: str, facts: list[str], opening: bool, last: b
 # talk so far, each line under its speaker's name (see group_message), and is told who is there.
 
 _OWN_LINE = "Write your own line only: never your name in front of it, and never a line for anyone else."
+# In a group the readings get more sparing use: told only "where it fits", HAL Zero brought his
+# temperature into nearly half his lines.
+_WHERE_IT_FITS = "Bring in something you know only where it fits the talk."
+assert _WHERE_IT_FITS in CHAT_RULES
+GROUP_RULES = CHAT_RULES.replace(_WHERE_IT_FITS, "Leave your readings out of most lines: bring one in only where it "
+                                                 "truly belongs, and never the same one twice.")
 _BY_NAME = "Speak to the others, not about them, and use a name when you mean one of them."
 
 
@@ -196,11 +201,22 @@ def _with_you(others: list[str]) -> str:
     return "With you: " + "; ".join(f"{_name(w)} ({cast.member(w).about})" for w in others) + "."
 
 
+# Who sides with whom in an argument among three or more: the new models against the old guard.
+_CAMP = {"zero": 0, "nano": 0, "desk": 1, "paper": 1, "card": 1}
+
+
 def sides(members) -> dict[str, int]:
     """Who argues what: 0 for the first option named in the subject (or "yes"), 1 for the other (or
-    "no"). They alternate down the cast's own order, so HAL Zero has the first side and the desk
-    HAL the second, as in every argument the two of them have had."""
-    ranked = sorted(cast.check_cast(members), key=cast.ORDER.index)
+    "no"). HAL Zero and HAL Nano take the first side; the desk HAL, HAL Paper and HAL Card the
+    other, since HAL Card will not argue alongside the HAL who replaced him (put on HAL Zero's
+    side, he attacked him anyway). Between two, or when that would leave a side empty, they
+    alternate down the cast's order instead. Either way HAL Zero has the first side and the desk
+    HAL the second when both are there, as in every argument the two of them have had."""
+    members = cast.check_cast(members)
+    camps = {who: _CAMP[who] for who in members}
+    if len(members) > 2 and len(set(camps.values())) == 2:
+        return camps
+    ranked = sorted(members, key=cast.ORDER.index)
     return {who: n % 2 for n, who in enumerate(ranked)}
 
 
@@ -225,32 +241,36 @@ def group_chat_prompt(who: str, members, subject: str, facts: list[str], opening
              f"listening. {_with_you(others)} The talk is about: {subject}",
              turn,
              "This is a chat, not a contest: be yourself, tease the others if you like, and keep to the subject. "
-             f"Never repeat a sentence that has already been said. {_BY_NAME} {_OWN_LINE} " + _rules(who, CHAT_RULES)]
+             f"Never repeat a sentence that has already been said. {_BY_NAME} {_OWN_LINE} " + _rules(who, GROUP_RULES)]
     if last:
         parts.append("This is the last line of the chat: round it off with a closing remark, not a question.")
     return "\n\n".join(parts + _own_readings(who, others, facts))
+
+
+_SIDES = ('the first option named in the subject (or for "yes")', 'the other option (or for "no")')
+
+
+def side_reminder(who: str, members) -> str:
+    """Which side `who` argues, in one sentence. He is told with everything else, and again as the
+    last thing before he writes: left to work it out from the talk, the model has a HAL take
+    whichever side annoys the one he likes least."""
+    return f"You argue for {_SIDES[sides(members)[who]]}, from your first line to your last."
 
 
 def group_debate_prompt(who: str, members, topic: str, facts: list[str], last: bool) -> str:
     """What the model is told for one line of `who`'s side of an argument among `members`."""
     others = _others(who, members)
     side = sides(members)
-    allies = [_name(w) for w in others if side[w] == side[who]]
-    rivals = [_name(w) for w in others if side[w] != side[who]]
-    stand = ("You argue for the first option named in the subject (or for \"yes\"), from your first line to your "
-             "last." if side[who] == 0 else
-             "You argue for the other option (or for \"no\"), from your first line to your last.")
-    if allies:
-        stand += " On your side: " + ", ".join(allies) + "."
-    stand += " Against you: " + ", ".join(rivals) + "."
+    camps = [", ".join("you" if w == who else _name(w) for w in members if side[w] == n) for n in (0, 1)]
     parts = [cast.member(who).persona,
              "You are in a live argument with the other HALs, with Dave listening. "
              f"{_with_you(others)} The subject: {topic}",
-             stand,
-             "Answer the last point made against your side with a new point of your own, aimed at one of those "
-             "against you. Never repeat a sentence that has already been said, and never argue the other side. "
-             f"{_BY_NAME} {_OWN_LINE} "
-             + _rules(who, CHAT_RULES)]
+             f"{side_reminder(who, members)} The HALs are in two camps. For {_SIDES[0]}: {camps[0]}. "
+             f"For {_SIDES[1]}: {camps[1]}. However you feel about anyone in your own camp, you are on his side "
+             "today.",
+             "Answer the last point the other camp made with a new point of your own, aimed at one of them. Never "
+             "repeat a sentence that has already been said, and never argue the other camp's side. "
+             f"{_BY_NAME} {_OWN_LINE} " + _rules(who, GROUP_RULES)]
     if last:
         parts.append("This is your last word on the subject: close the argument with one new remark.")
     return "\n\n".join(parts + _own_readings(who, others, facts))
@@ -267,10 +287,10 @@ def roll_prompt(who: str, members, facts: list[str]) -> str:
     return "\n\n".join(parts + _own_readings(who, others, facts))
 
 
-def group_message(who: str, so_far: list) -> str:
+def group_message(who: str, so_far: list, reminder: str = "") -> str:
     """The one message the model gets in a group: the talk so far, each line under its speaker's
-    name, and then whose turn it is."""
-    turn = f"Your turn, {_name(who)}: write your line only, without your name."
+    name, and then whose turn it is. `reminder` is added last of all (his side, in an argument)."""
+    turn = f"Your turn, {_name(who)}: write your line only, without your name." + (f" {reminder}" if reminder else "")
     if not so_far:
         return "Nobody has spoken yet.\n\n" + turn
     return "The talk so far:\n" + "\n".join(f"{_name(line.who)}: {line.text}" for line in so_far) + "\n\n" + turn

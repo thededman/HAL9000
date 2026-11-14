@@ -29,7 +29,8 @@ from .voice import VoiceError
 
 MAX_TEXT_BODY = 4096
 MAX_AUDIO_BODY = 1024 * 1024
-MIN_TURNS, MAX_TURNS, DEFAULT_TURNS = 2, 12, 8  # (the default for the everyday pair; a named cast gets about two lines each)
+MIN_TURNS, MAX_TURNS = 2, 12
+DEFAULT_TURNS = 8      # for the everyday pair; a cast that is named gets about two lines each
 READ_DEADLINE_S = 15   # a whole request (headers and body) must arrive within this
 MAX_HANDLERS = 16      # requests handled at once; HAL Zero and the desk HAL need three or four
 MAX_LOG_CHARS = 200

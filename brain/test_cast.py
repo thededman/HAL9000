@@ -116,7 +116,8 @@ class RegistryTest(unittest.TestCase):
         for m in cast.MEMBERS:
             with self.subTest(who=m.id):
                 self.assertEqual(m.voice is not None, m.kind == "voice")
-        self.assertEqual({m.id: m.voice for m in cast.MEMBERS if m.voice}, {"zero": "zero", "desk": "desk", "card": "card"})
+        self.assertEqual({m.id: m.voice for m in cast.MEMBERS if m.voice},
+                         {"zero": "zero", "desk": "desk", "card": "card"})
 
     def test_only_the_everyday_two_have_screens(self):
         self.assertIn("diagnostics", cast.member("zero").screens)
@@ -143,7 +144,7 @@ class RegistryTest(unittest.TestCase):
     def test_check_cast(self):
         self.assertEqual(cast.check_cast(["zero", "desk"]), ("zero", "desk"))
         self.assertEqual(cast.check_cast(cast.ORDER), cast.ORDER)
-        self.assertEqual(cast.check_cast(("card", "zero", "paper")), ("card", "zero", "paper"))  # the order given is kept
+        self.assertEqual(cast.check_cast(("card", "zero", "paper")), ("card", "zero", "paper"))  # in the order given
         for bad in ([], ["zero"], ["zero", "zero"], ["zero", "dave"], ["zero", "desk", "nano", "paper", "card", "zero"],
                     ["zero", ""], "zero,desk", None, ["zero", None]):
             with self.assertRaises(ValueError, msg=repr(bad)):
@@ -190,11 +191,14 @@ class NewcomerTest(unittest.TestCase):
 
     def test_words_that_are_only_shown_are_written_as_ordinary_sentences(self):
         # Left to itself the model has HAL Nano chirp all in lower case, and the others catch it from
-        # him; told to use "capital letters", it has him shout all in capitals.
+        # him. Told to use "capital letters" it has him shout all in capitals, and told "no words all
+        # in capitals" it writes "Hal nine thousand": so the prompt only asks for ordinary sentences,
+        # and sentence_case puts right what still comes out in lower case.
         for who in cast.ORDER:
             for p in (persona.system_prompt(who, []), persona.group_chat_prompt(who, cast.ORDER, "x", [], True, False),
                       persona.roll_prompt(who, cast.ORDER, [])):
                 self.assertEqual("ordinary sentences" in p, cast.member(who).kind == "text", who)
+                self.assertNotIn("capital", p)
 
     def test_a_newcomer_never_shows_a_screen(self):
         for who in NEWCOMERS:
@@ -234,7 +238,7 @@ class SentenceCaseTest(unittest.TestCase):
     a line all in lower case, however it is asked."""
 
     def test_each_sentence_starts_with_a_capital_and_i_is_capital(self):
-        self.assertEqual(persona.sentence_case("i would hop to the charger first."), "I would hop to the charger first.")
+        self.assertEqual(persona.sentence_case("i would hop to the charger."), "I would hop to the charger.")
         self.assertEqual(persona.sentence_case("legs are for walking. zero, can you type? i can."),
                          "Legs are for walking. Zero, can you type? I can.")
         self.assertEqual(persona.sentence_case("screen off means i sleep, and i'm fine. 80 percent left."),
@@ -279,7 +283,7 @@ class CleanForAMemberTest(unittest.TestCase):
     def test_any_members_name_in_front_is_dropped(self):
         for m in cast.MEMBERS:
             for label in (f"{m.name}:", f"{m.name.lower()} :", f"{m.name.upper()}:", f'{m.name}: "'):
-                self.assertEqual(persona.clean(f"{label} Present and correct, Dave."), "Present and correct, Dave.", label)
+                self.assertEqual(persona.clean(f"{label} Present, Dave."), "Present, Dave.", label)
         self.assertEqual(persona.clean("HAL: Hello."), "Hello.")
         # A name that is part of the sentence stays.
         self.assertEqual(persona.clean("HAL Paper keeps the minutes."), "HAL Paper keeps the minutes.")
