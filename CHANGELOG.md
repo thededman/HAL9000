@@ -6,6 +6,24 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Friends for the HALs (optional, in progress).** Up to three more M5Stack devices can join
+  the conversations as HALs of their own: HAL Nano (an M5StickC Plus2, who chirps while his
+  words show on his screen), HAL Paper (an M5Paper, who writes) and HAL Card (the original
+  Cardputer, who speaks with the project's first voice). HAL Zero conducts whoever is there,
+  and the AI brain writes each one's lines in his own character. So far HAL Nano has firmware
+  (`pio run -e nano -t upload`); the other two are to come.
+- A **roll call** in HAL Zero's menu (when friends are set up): every HAL present says a line.
+- Chats, arguments and questions include the friends: "Let them chat" and "Make them argue"
+  bring in everyone present, TAB in the ask box goes round them, and each HAL's subtitle has
+  his name in his own colour. A HAL who is busy or drops out leaves the conversation and the
+  rest carry on; a tap on any of them still stops it for all.
+- `tools/friend_wifi.py` gives a friend your Wi-Fi network over USB. You type the name and
+  password; the password is not shown, not saved on your computer, and the friend never
+  repeats it.
+- For trying a group without the devices: `tools/fake_old_hal.py --as nano|paper|card`, and
+  the simulator's `--friends`, `--roll`, `--ask-who` and `--shots DIR --layout nano`.
+
 ## [0.6.1] - 2026-11-14
 
 ### Fixed

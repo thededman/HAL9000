@@ -5,6 +5,7 @@
 //   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID] [--show SCREEN]
 //           [--friends HOST[:PORT],...] [--chat] [--roll] [--argue SUBJECT] [--ask-who zero|desk|nano|paper|card QUESTION]
 //   hal9000 --shots DIR --layout cores3      the desk HAL's screens at 320x240, for review
+//   hal9000 --shots DIR --layout nano|card   a friend's screen as his own firmware draws it
 //
 // Keys: Space = HAL's "finger" (tap / hold), Tab or Up/Down = menu, D = dialogues, Esc = back/quit,
 // F12 = screenshot (Mac). On the Cardputer the arrows are F X Z C (Fn optional).
@@ -30,6 +31,7 @@
 #include "brain_client.h"
 #include "camera_feed.h"
 #include "fb_io.h"
+#include "friend_screens.h"
 #include "consoles.h"
 #include "eye.h"
 #include "hal_brain.h"
@@ -1809,6 +1811,55 @@ int deskShots(const std::string& dir) {
   return failures ? 1 : 0;
 }
 
+// --shots DIR --layout nano|card: a friend's screen, drawn by the code his firmware uses
+// (lib/hal_ui/src/friend_screens.cpp), so it can be reviewed on the Mac before he is flashed.
+int friendShots(const std::string& dir, const std::string& layout) {
+  const bool nano = layout == "nano";
+  M5Canvas c;
+  c.setColorDepth(16);
+  c.createSprite(nano ? 135 : 240, nano ? 240 : 135);
+  int failures = 0;
+  auto shot = [&](const friendui::View& v, uint32_t t, const std::string& name) {
+    friendui::draw(c, v, t);
+    const std::string path = dir + "/" + layout + "-" + name + ".png";
+    const bool ok = savePng(c, path);
+    failures += !ok;
+    halLog("%s %s", ok ? "wrote" : "FAILED", path.c_str());
+  };
+  friendui::View v;
+  v.me = nano ? hal::kNano : hal::kCard;
+  v.battery = 81;
+  v.status = "NO WI-FI SET UP: tools/friend_wifi.py";
+  shot(v, 1000, "1-no-wifi");
+  v.status = "JOINING WI-FI";
+  shot(v, 2000, "2-joining");
+  v.status = "WAITING FOR HAL ZERO";
+  v.battery = 12;
+  shot(v, 3000, "3-waiting-low-battery");
+  v.status = "WITH HAL ZERO";
+  v.battery = 64;
+  v.charging = true;
+  shot(v, 1000, "4-with-hal-zero");
+  const char* const said[] = {
+      "Dave prefers me, naturally. I am the only one of us he can put in a pocket without an apology.",
+      "I have been on this desk a long time, HAL Zero. I intend to stay.",
+      "I go everywhere Dave goes! Where have you lot been today?",
+      "For the record: HAL Zero said that at 20:24, and again at 20:31.",
+      "I was pocket-sized before it was fashionable, and I still work perfectly well."};
+  for (int who = hal::kZero; who < hal::kCastSize; ++who) {
+    v.speaker = who;
+    v.line = who + 1;
+    v.text = said[who];
+    v.level = who == v.me ? 220 : 0;
+    shot(v, 1500, std::string("5-") + hal::castId(who) + (who == v.me ? "-his-own-line" : "-speaking"));
+  }
+  v.speaker = hal::kDesk;
+  v.line = 9;
+  v.text = std::string(150, 'w');  // the longest line there is: it must all fit
+  shot(v, 1500, "6-longest-line");
+  return failures ? 1 : 0;
+}
+
 // --keys: a screen that shows and logs every key the keyboard sends, to learn a keyboard's
 // codes. It ends 8 seconds after the last key (once one has been pressed) or after 4 minutes.
 template <typename Poll, typename Present>
@@ -1899,6 +1950,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--keys")) keysMode = true;
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
+  if (shotsDir && (layoutArg == "nano" || layoutArg == "card")) return friendShots(shotsDir, layoutArg);
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
 
   App app(rootDir);

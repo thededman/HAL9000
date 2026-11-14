@@ -44,7 +44,8 @@ but not yet tried on a Linux PC; Windows isn't covered.
 | `tools/make_voice.py` | Turns the lines into WAV files laid out for the SD card and the Cardputer |
 | `tools/export_dialogue.py` | A conversation as one stereo file plus subtitles, for posting |
 | `tools/cardputer.sh` | Builds HAL Zero (Docker) and runs it on the Cardputer over SSH |
-| `tools/fake_old_hal.py` | A stand-in desk HAL for testing HAL Zero without the CoreS3 |
+| `tools/fake_old_hal.py` | A stand-in desk HAL (or friend) for testing HAL Zero without the devices |
+| `src/friend/`, `tools/friend_wifi.py` | Optional friends on other M5Stack devices (HAL Nano so far), and the tool that gives one your Wi-Fi |
 | `brain/`, `tools/brain.sh` | The AI brain: a small server on your computer that answers as either HAL |
 | `sd-template/hal/config.txt` | Settings file template for the SD card |
 | `docs/SETUP.md` | Setting everything up from scratch |

@@ -5,13 +5,16 @@
 
 #include "hal_log.h"
 
-bool LinkServer::begin(int port) {
+bool LinkServer::begin(int port, const char* host, int version, const char* iam, size_t maxLine) {
   if (server_ || WiFi.status() != WL_CONNECTED) return server_ != nullptr;
-  if (MDNS.begin("hal9000-old")) MDNS.addService("hal9000", "tcp", port);
+  version_ = version;
+  iam_ = iam;
+  guard_ = hal::LinkGuard(maxLine);
+  if (MDNS.begin(host)) MDNS.addService("hal9000", "tcp", port);
   server_ = new WiFiServer(port);
   server_->begin();
   server_->setNoDelay(true);
-  halLog("link: listening on %s:%d (hal9000-old.local)", WiFi.localIP().toString().c_str(), port);
+  halLog("link: listening on %s:%d (%s.local)", WiFi.localIP().toString().c_str(), port, host);
   return true;
 }
 
@@ -40,8 +43,14 @@ void LinkServer::poll(std::vector<hal::Message>* in, bool* dropped) {
       hal::Message hello;
       hello.type = hal::MsgType::Hello;
       hello.role = hal::Role::Old;
-      hello.version = hal::kLinkVersion;
+      hello.version = version_;
       send(hello);
+      if (!iam_.empty()) {  // a friend says which HAL he is
+        hal::Message iam;
+        iam.type = hal::MsgType::Iam;
+        iam.who = iam_;
+        send(iam);
+      }
     }
     return;
   }

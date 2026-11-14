@@ -4,6 +4,7 @@
 
 #include <cstdio>
 
+#include "friend_screens.h"
 #include "hal_cast.h"
 #include "hal_subtitle.h"
 #include "screens/screens.h"
@@ -149,11 +150,7 @@ void drawSubtitle(M5Canvas& f, int who, const std::string& text, int n, int tota
   const int x = 4, y = 112, w = f.width() - 8, h = 44;
   // HAL Zero red and the desk HAL blue, as always; each friend a colour of his own: HAL Nano
   // green, HAL Paper the grey of his page, HAL Card amber.
-  const uint16_t colour = who == hal::kZero    ? red()
-                          : who == hal::kNano  ? lgfx::color565(64, 208, 112)
-                          : who == hal::kPaper ? lgfx::color565(176, 176, 168)
-                          : who == hal::kCard  ? lgfx::color565(255, 168, 32)
-                                               : blue();
+  const uint16_t colour = friendui::castColour(who);
   f.fillRoundRect(x, y, w, h, 4, TFT_BLACK);
   f.drawRoundRect(x, y, w, h, 4, colour);
   f.setTextDatum(top_left);

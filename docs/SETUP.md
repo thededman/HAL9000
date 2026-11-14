@@ -478,6 +478,64 @@ The brain's own tests need no model, voice, microphone, key or internet:
 tools/.venv/bin/python -m unittest discover -s brain -t . -p 'test_*.py'
 ```
 
+## 10. Friends for the HALs (optional, in progress)
+
+Three more M5Stack devices can join the conversations as HALs of their own. Each is optional,
+and they need HAL Zero and the AI brain (steps 6 and 9): HAL Zero conducts, and the brain
+writes a line for whoever is there.
+
+| Friend | Device | How he "speaks" |
+|---|---|---|
+| HAL Nano | M5StickC Plus2 | chirps, with his words on his screen |
+| HAL Paper | M5Paper (v1.0 or v1.1) | writes his lines on his e-ink page |
+| HAL Card | Cardputer (the original) | aloud, with the project's first voice |
+
+So far only **HAL Nano** has firmware; the other two are on their way.
+
+**10.1 Flash him.** Plug the StickC Plus2 in with a data cable:
+
+```bash
+~/.platformio/penv/bin/pio run -e nano -t upload
+```
+
+**10.2 Give him your Wi-Fi.** A friend has no SD card: his network name and password are
+kept in his own flash, and you type them into a small tool over USB. The password is not
+shown as you type, is not saved on your computer, and he never repeats it. He only joins
+2.4 GHz networks.
+
+```bash
+tools/friend_wifi.py
+```
+
+His screen says `WAITING FOR HAL ZERO` once he has joined.
+
+**10.3 Tell HAL Zero.** Add the friends you have to HAL Zero's `config.txt` (on the
+Cardputer: `~/hal/config.txt`), with commas between them, and restart him:
+
+```
+friends=hal-nano.local
+```
+
+A chat ("Let them chat"), an argument and the new **Roll call** in HAL Zero's menu then
+include every HAL who is there, and TAB in the ask box goes round them. Button A on HAL Nano
+stops a conversation for everyone; with nobody talking it makes him chirp.
+
+**Without the devices**, the simulator can talk to stand-in friends. Start one stand-in for
+each (and one for the desk HAL), each on its own port, then the simulator:
+
+```bash
+tools/.venv/bin/python tools/fake_old_hal.py --port 9011 &
+tools/.venv/bin/python tools/fake_old_hal.py --as nano --port 9012 &
+tools/.venv/bin/python tools/fake_old_hal.py --as paper --port 9013 &
+tools/.venv/bin/python tools/fake_old_hal.py --as card --port 9014 &
+.pio/build/sim/program --root build/new/hal --brain YOUR.COMPUTER.ADDRESS --link 127.0.0.1:9011 \
+    --friends 127.0.0.1:9012,127.0.0.1:9013,127.0.0.1:9014 --roll
+```
+
+`--roll` starts a roll call; `--chat`, `--argue "tea or coffee"` and
+`--ask-who nano "Where are we?"` start the other kinds of talk. A friend's own screen can be
+previewed too: `.pio/build/sim/program --shots /tmp/shots --layout nano`.
+
 ## Updating
 
 ```bash
