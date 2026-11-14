@@ -297,4 +297,51 @@ std::vector<std::string> LineSplitter::feed(const char* data, size_t len) {
   return lines;
 }
 
+bool LinkGuard::take(uint32_t nowMs, const Read& read, std::vector<Message>* inbox) {
+  inbox->clear();
+  if (flooded_) return false;
+  if (!counting_ || nowMs - windowMs_ >= 1000) {  // a new second: count afresh
+    counting_ = true;
+    windowMs_ = nowMs;
+    lines_ = bytes_ = 0;
+  }
+  std::string last;
+  char buf[128];
+  while (!flooded_) {
+    // One byte past the budget is asked for, because reading it is what proves the flood.
+    size_t want = kLinkFloodBytes + 1 - bytes_;
+    if (want > sizeof buf) want = sizeof buf;
+    int n = read(buf, want);
+    if (n <= 0) break;
+    bytes_ += size_t(n);
+    for (const std::string& line : splitter_.feed(buf, size_t(n))) {
+      if (++lines_ > kLinkFloodLines) break;
+      Message m = parseMessage(line);
+      if (m.type == MsgType::Invalid) continue;  // still counted: it took reading and parsing
+      inbox->push_back(m);
+      last = line;
+    }
+    flooded_ = lines_ > kLinkFloodLines || bytes_ > kLinkFloodBytes;
+  }
+  if (flooded_) {
+    inbox->clear();
+    cooling_ = true;
+    floodMs_ = nowMs;
+    return false;
+  }
+  if (!inbox->empty()) last_ = last;
+  return true;
+}
+
+bool LinkGuard::coolingOff(uint32_t nowMs) {
+  if (cooling_ && nowMs - floodMs_ >= kLinkCoolOffMs) cooling_ = false;
+  return cooling_;
+}
+
+void LinkGuard::newPeer() {
+  splitter_ = LineSplitter();
+  lines_ = bytes_ = 0;
+  counting_ = flooded_ = cooling_ = false;
+}
+
 }  // namespace hal
