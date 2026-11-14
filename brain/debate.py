@@ -6,7 +6,8 @@ import sys
 import threading
 import time
 
-from . import cast, persona
+from . import persona
+from .cast import PAIR, check_cast  # (not the module by name: "cast" is what a conversation's members are called here)
 from .providers import ProviderError
 from .subjects import Subjects
 from .voice import VoiceError
@@ -47,7 +48,7 @@ def check_talk(kind: str, members, first: str | None) -> tuple[tuple[str, ...], 
     of conversation, a bad cast, or an opener who isn't in it."""
     if kind not in KINDS:
         raise ValueError(f"unknown kind of conversation: {kind!r}")
-    members = cast.PAIR if members is None else cast.check_cast(members)
+    members = PAIR if members is None else check_cast(members)
     if first is not None and first not in members:
         raise ValueError(f"{first!r} can't open a conversation he isn't in")
     if first is None and len(members) == 2:
@@ -68,11 +69,13 @@ class Debate:
                  cast=None, rng=None):
         self._cast, first = check_talk(kind, cast, first)
         self._kind = kind
-        if kind == "roll":
-            self._order = list(self._cast)
-        else:
-            self._order = plan_turns(self._cast, turns, rng or random.Random(), first)
+        rng = rng or random.Random()
+        self._order = list(self._cast) if kind == "roll" else plan_turns(self._cast, turns, rng, first)
         self.turns = len(self._order)
+        self._group = kind == "roll" or len(self._cast) > 2  # not the two-HAL way of talking
+        # In a group chat the opener and about half the lines after it end in a question for whoever
+        # speaks next; the rest are remarks. All questions reads as an interview, none as speeches.
+        self._asks = [n == 0 or rng.random() < 0.5 for n in range(self.turns)]
         self._brain, self._topic, self._facts = brain, topic, list(facts)
         self._idle, self._clock, self._poll = idle_s, clock, poll_s
         self._lines: list = []
@@ -96,13 +99,15 @@ class Debate:
     def _asked(self, who: str, n: int, so_far: list) -> tuple[str, list[dict]]:
         """What the model is told, and the talk so far as it is put to him, for line `n`."""
         opening, last = n == 0, n == self.turns - 1
-        group = [{"role": "user", "content": persona.group_message(who, so_far)}]
-        if self._kind == "roll":
-            return persona.roll_prompt(who, self._cast, self._facts), group
-        if len(self._cast) > 2:  # too many voices for "his lines and mine": one labelled transcript
-            if self._kind == "chat":
-                return persona.group_chat_prompt(who, self._cast, self._topic, self._facts, opening, last), group
-            return persona.group_debate_prompt(who, self._cast, self._topic, self._facts, last), group
+        if self._group:  # too many voices for "his lines and mine": one transcript with a name on every line
+            if self._kind == "roll":
+                system = persona.roll_prompt(who, self._cast, self._facts)
+            elif self._kind == "chat":
+                ask = self._order[n + 1] if self._asks[n] and not last else None
+                system = persona.group_chat_prompt(who, self._cast, self._topic, self._facts, opening, last, next_up=ask)
+            else:
+                system = persona.group_debate_prompt(who, self._cast, self._topic, self._facts, last)
+            return system, [{"role": "user", "content": persona.group_message(who, so_far)}]
         rival = self._cast[1] if who == self._cast[0] else self._cast[0]
         if self._kind == "chat":
             system = persona.chat_prompt(who, self._topic, self._facts, opening=opening, last=last, rival=rival)
@@ -125,7 +130,9 @@ class Debate:
             who = self._order[n]
             try:
                 system, messages = self._asked(who, n, so_far)
-                line = self._brain.speak(who, system, messages, allow_show=False)
+                # In a group the model sees its own earlier lines as part of a script, and now and
+                # then writes one again: there, a repeat is asked for once more.
+                line = self._brain.speak(who, system, messages, allow_show=False, said=so_far if self._group else ())
             except Exception as e:  # the model or the voice failed: the argument stops here, and says why
                 known = isinstance(e, (ProviderError, VoiceError))  # these explain themselves, without secrets
                 why = "".join(ch if " " <= ch <= "~" else " " for ch in (str(e) if known else type(e).__name__))

@@ -179,6 +179,23 @@ class NewcomerTest(unittest.TestCase):
                 self.assertNotIn("SHOW", p)  # he has no screens to bring up
                 self.assertNotIn("things you know", persona.system_prompt(who, []).lower())
 
+    def test_the_shorter_the_line_the_plainer_the_instruction(self):
+        # A model asked for "1 or 2 sentences" in 80 characters writes two and loses the second.
+        for who, sentences in (("nano", "1 short sentence"), ("paper", "1 short sentence"),
+                               ("card", "1 or 2 short sentences"), ("zero", "1 or 2 short sentences")):
+            for p in (persona.system_prompt(who, []), persona.group_chat_prompt(who, cast.ORDER, "x", [], True, False),
+                      persona.chat_prompt(who, "x", [], True, False, rival="desk" if who != "desk" else "zero")):
+                self.assertIn(f"Reply in {sentences}", p, who)
+                self.assertEqual(p.count("Reply in"), 1)
+
+    def test_words_that_are_only_shown_are_written_as_ordinary_sentences(self):
+        # Left to itself the model has HAL Nano chirp all in lower case, and the others catch it from
+        # him; told to use "capital letters", it has him shout all in capitals.
+        for who in cast.ORDER:
+            for p in (persona.system_prompt(who, []), persona.group_chat_prompt(who, cast.ORDER, "x", [], True, False),
+                      persona.roll_prompt(who, cast.ORDER, [])):
+                self.assertEqual("ordinary sentences" in p, cast.member(who).kind == "text", who)
+
     def test_a_newcomer_never_shows_a_screen(self):
         for who in NEWCOMERS:
             self.assertEqual(persona.split_show("Look. [SHOW wall]", who), ("Look.", None))
@@ -210,6 +227,32 @@ class NewcomerTest(unittest.TestCase):
                     lambda: persona.debate_prompt("dave", "x", [], False, rival="nano")):
             with self.assertRaises(ValueError):
                 bad()
+
+
+class SentenceCaseTest(unittest.TestCase):
+    """Words that are only shown get their capitals put right: now and then the model still writes
+    a line all in lower case, however it is asked."""
+
+    def test_each_sentence_starts_with_a_capital_and_i_is_capital(self):
+        self.assertEqual(persona.sentence_case("i would hop to the charger first."), "I would hop to the charger first.")
+        self.assertEqual(persona.sentence_case("legs are for walking. zero, can you type? i can."),
+                         "Legs are for walking. Zero, can you type? I can.")
+        self.assertEqual(persona.sentence_case("screen off means i sleep, and i'm fine. 80 percent left."),
+                         "Screen off means I sleep, and I'm fine. 80 percent left.")
+        self.assertEqual(persona.sentence_case("beep! here, dave... still here."), "Beep! Here, dave... Still here.")
+
+    def test_a_line_already_in_order_is_left_alone(self):
+        for line in ("Noted. Zero said so twice.", "I logged it at 21:40, e.g. on page 2.", "Wi-Fi is fine.",
+                     "HAL 9000, do you ever forget?", "80 percent. Plenty.", "It is, i.e., in the minutes.", ""):
+            self.assertEqual(persona.sentence_case(line), line)
+
+    def test_only_those_whose_words_are_shown(self):
+        from brain.test_group import make_brain
+        from brain.fakes import FakeProvider
+        for who, text in (("nano", "I would hop first. Then nap."), ("paper", "I would hop first. Then nap."),
+                          ("zero", "i would hop first. then nap."), ("card", "i would hop first. then nap.")):
+            brain, _ = make_brain(FakeProvider(["i would hop first. then nap."]))
+            self.assertEqual(brain.ask(who, [], "Legs?").text, text, who)
 
 
 class CleanForAMemberTest(unittest.TestCase):

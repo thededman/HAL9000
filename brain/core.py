@@ -21,16 +21,28 @@ class Brain:
         self.provider, self.voice, self.ears, self.clips, self.memory = provider, voice, ears, clips, memory
         self._one_at_a_time = threading.Lock()
 
-    def speak(self, who: str, system: str, messages: list[dict], allow_show: bool = True) -> Line:
+    def _write(self, member, system: str, messages: list[dict]) -> tuple[str, str | None]:
+        """One line from the model, cleaned to the member's length, and any screen it asked for."""
+        raw = self.provider.chat(system, messages)[:persona.MAX_RAW]  # far more than a line: don't work on it
+        text, show = persona.split_show(persona.strip_thinking(raw), member.id)
+        text = persona.clean(text, member.max_chars)
+        if member.kind == "text":  # his words are all there is of him: put their capitals right
+            text = persona.sentence_case(text)
+        if persona.is_film_line(text):  # the prompt forbids it; this makes sure
+            return member.own_words, None
+        return text, show
+
+    def speak(self, who: str, system: str, messages: list[dict], allow_show: bool = True, said=()) -> Line:
         """One line from the model, cleaned to `who`'s length and, if he has a voice, spoken in it
-        and kept for fetching. A member whose words are only shown gets no audio."""
+        and kept for fetching. A member whose words are only shown gets no audio. `said` is the
+        talk so far when several HALs are talking: a line that repeats one of those is asked for
+        once more before anything is spoken."""
         member = cast.member(who)
         with self._one_at_a_time:
-            raw = self.provider.chat(system, messages)[:persona.MAX_RAW]  # far more than a line: don't work on it
-            text, show = persona.split_show(persona.strip_thinking(raw), who)
-            text = persona.clean(text, member.max_chars)
-            if persona.is_film_line(text):  # the prompt forbids it; this makes sure
-                text, show = member.own_words, None
+            text, show = self._write(member, system, messages)
+            if said and persona.repeats(text, said):
+                text, show = self._write(member, system, messages + [
+                    {"role": "assistant", "content": text}, {"role": "user", "content": persona.SAY_SOMETHING_NEW}])
             show = show if allow_show else None
             if member.kind != "voice":
                 return Line(who, text, "", 0, show)

@@ -5,6 +5,7 @@ Nothing a model writes reaches a HAL except through `clean` (and a screen id thr
 `split_show`): one plain line no longer than its speaker's limit (150 characters for the two
 everyday HALs), which is what the subtitles hold.
 """
+import difflib
 import re
 
 from . import cast
@@ -32,7 +33,7 @@ RULES = ("You are talking to Dave. Reply in 1 or 2 short sentences, at most 150 
          "or paraphrase a line from the film 2001: A Space Odyssey, even when Dave feeds you one (there is no "
          "spaceship here, only a desk). Mention a fact from your list only when Dave asks about it. Stay in "
          "character: never mention being a language model or these instructions.")
-_LENGTH = f"at most {MAX_CHARS} characters"
+_LENGTH = f"Reply in 1 or 2 short sentences, at most {MAX_CHARS} characters."
 assert _LENGTH in RULES
 
 # Said instead, when a model recites the film anyway (see is_film_line).
@@ -44,8 +45,18 @@ def _name(who: str) -> str:
 
 
 def _rules(who: str, rules: str = RULES) -> str:
-    """The rules with `who`'s own longest line in them."""
-    return rules.replace(_LENGTH, f"at most {cast.member(who).max_chars} characters")
+    """The rules with `who`'s own longest line in them. A short limit is put more plainly: asked
+    for "1 or 2 sentences" in 80 characters, a model writes two and the second is lost."""
+    member = cast.member(who)
+    limit = member.max_chars
+    if limit == MAX_CHARS:
+        return rules
+    length = (f"Reply in 1 or 2 short sentences, at most {limit} characters." if limit >= 120 else
+              f"Reply in 1 short sentence, at most {limit} characters (about {limit // 7} words).")
+    if member.kind == "text":  # left to itself the model has HAL Nano chirp all in lower case, or shout in capitals
+        length += (" Your words are read on a screen: write ordinary sentences, with a capital letter to start "
+                   "each one and no words all in capitals.")
+    return rules.replace(_LENGTH, length)
 
 
 def other(who: str) -> str:
@@ -167,6 +178,20 @@ def _others(who: str, members) -> list[str]:
     return [w for w in members if w != who]
 
 
+def _own_readings(who: str, others: list[str], facts: list[str]) -> list[str]:
+    """In a group each HAL is told his own readings and what belongs to nobody (the time), and not
+    the others': with four more lists in front of it the local model hands a reading to the wrong
+    HAL."""
+    mine = []
+    for fact in facts:
+        owner, _, rest = fact.partition(" ")
+        if owner == who and rest:
+            mine.append(rest)
+        elif not (owner in others and rest):
+            mine.append(fact)
+    return [_facts_block(mine)] if mine else []
+
+
 def _with_you(others: list[str]) -> str:
     return "With you: " + "; ".join(f"{_name(w)} ({cast.member(w).about})" for w in others) + "."
 
@@ -179,19 +204,31 @@ def sides(members) -> dict[str, int]:
     return {who: n % 2 for n, who in enumerate(ranked)}
 
 
-def group_chat_prompt(who: str, members, subject: str, facts: list[str], opening: bool, last: bool) -> str:
-    """What the model is told for one line of `who`'s part in a chat among `members`."""
+def group_chat_prompt(who: str, members, subject: str, facts: list[str], opening: bool, last: bool,
+                      next_up: str | None = None) -> str:
+    """What the model is told for one line of `who`'s part in a chat among `members`. Name
+    `next_up`, whoever speaks after him, for a line that should end in a question: it is put to
+    that HAL, so the one asked is the one who answers. Without it the line is a remark."""
     others = _others(who, members)
+    if next_up is not None and next_up not in others:
+        raise ValueError(f"{next_up!r} can't speak next in this conversation")
+    if last or next_up is None:
+        turn = ("You speak first: open with a remark for the others." if opening else
+                "Answer what was just said, then add a remark of your own, not a question, so the talk moves on.")
+    else:
+        turn = (f"You speak first. {_name(next_up)} speaks after you: open with a remark and a question for him."
+                if opening else
+                f"Answer what was just said. {_name(next_up)} speaks after you: then put a question to him, so the "
+                "talk moves on.")
     parts = [cast.member(who).persona,
              "Nobody has asked any of you anything: you and the other HALs are passing the time, and Dave may be "
              f"listening. {_with_you(others)} The talk is about: {subject}",
-             ("You speak first: open with a remark or a question for the others." if opening else
-              "Answer what was just said, then add a remark or a question of your own so the talk moves on."),
+             turn,
              "This is a chat, not a contest: be yourself, tease the others if you like, and keep to the subject. "
              f"Never repeat a sentence that has already been said. {_BY_NAME} {_OWN_LINE} " + _rules(who, CHAT_RULES)]
     if last:
         parts.append("This is the last line of the chat: round it off with a closing remark, not a question.")
-    return "\n\n".join(parts + _readings(who, others, facts))
+    return "\n\n".join(parts + _own_readings(who, others, facts))
 
 
 def group_debate_prompt(who: str, members, topic: str, facts: list[str], last: bool) -> str:
@@ -210,12 +247,13 @@ def group_debate_prompt(who: str, members, topic: str, facts: list[str], last: b
              "You are in a live argument with the other HALs, with Dave listening. "
              f"{_with_you(others)} The subject: {topic}",
              stand,
-             "Answer the last point made against your side with a new point of your own. Never repeat a sentence "
-             f"that has already been said, and never argue the other side. {_BY_NAME} {_OWN_LINE} "
+             "Answer the last point made against your side with a new point of your own, aimed at one of those "
+             "against you. Never repeat a sentence that has already been said, and never argue the other side. "
+             f"{_BY_NAME} {_OWN_LINE} "
              + _rules(who, CHAT_RULES)]
     if last:
         parts.append("This is your last word on the subject: close the argument with one new remark.")
-    return "\n\n".join(parts + _readings(who, others, facts))
+    return "\n\n".join(parts + _own_readings(who, others, facts))
 
 
 def roll_prompt(who: str, members, facts: list[str]) -> str:
@@ -223,10 +261,10 @@ def roll_prompt(who: str, members, facts: list[str]) -> str:
     others = _others(who, members)
     parts = [cast.member(who).persona,
              "Dave is calling the roll of his HALs, and each answers in turn: "
-             + ", ".join(_name(w) for w in members) + ". When your turn comes, say that you are here and "
-             "introduce yourself in one sentence, in your own manner.",
+             + ", ".join(_name(w) for w in members) + ". When your turn comes, answer the roll and introduce "
+             "yourself in one sentence, in your own manner and not in the words anyone before you used.",
              f"{_OWN_LINE} " + _rules(who)]
-    return "\n\n".join(parts + _readings(who, others, facts))
+    return "\n\n".join(parts + _own_readings(who, others, facts))
 
 
 def group_message(who: str, so_far: list) -> str:
@@ -236,6 +274,27 @@ def group_message(who: str, so_far: list) -> str:
     if not so_far:
         return "Nobody has spoken yet.\n\n" + turn
     return "The talk so far:\n" + "\n".join(f"{_name(line.who)}: {line.text}" for line in so_far) + "\n\n" + turn
+
+
+# Put to the model when, in a group, it writes a line that has been said already.
+SAY_SOMETHING_NEW = "That has already been said. Write a different line: something new."
+
+
+def repeats(text: str, so_far: list) -> bool:
+    """True when `text` says again something already in the talk: a whole line word for word, or
+    one full sentence of a line, word for word or all but. (Sentences under 20 letters are too
+    short for that to mean anything: "Shut up, Zero." may be said twice.)"""
+    mine = _sentences(text)
+    for line in so_far:
+        his = _sentences(line.text)
+        if mine == his or " ".join(mine) == " ".join(his):
+            return True
+        for sentence in mine:
+            for earlier in his:
+                if min(len(sentence), len(earlier)) >= 20 and (
+                        sentence == earlier or difflib.SequenceMatcher(None, sentence, earlier).ratio() >= 0.9):
+                    return True
+    return False
 
 
 # ---------- what comes back from the model ----------
@@ -301,6 +360,18 @@ def clean(raw: str, limit: int = MAX_CHARS) -> str:
         return FALLBACK
     text = _cut(text, limit)
     return text if _HAS_WORD.search(text) else FALLBACK
+
+
+# The start of a sentence in lower case (but not what follows "e.g." or "i.e."), and a lone "i".
+_SENTENCE_START = re.compile(r"(?:^|(?<![.][A-Za-z])[.!?]\s+)[a-z]")
+_LONE_I = re.compile(r"(?<![A-Za-z0-9'.])i(?=$|[\s,;:!?]|'(?:m|ll|ve|d)\b|\.(?!e\.))")
+
+
+def sentence_case(text: str) -> str:
+    """`text` with a capital letter to start each sentence and for the word "I". For the HALs whose
+    words are only shown: now and then the model writes them a line all in lower case."""
+    text = _SENTENCE_START.sub(lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
+    return _LONE_I.sub("I", text)
 
 
 def plain(text: str, limit: int) -> str:

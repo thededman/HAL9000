@@ -105,15 +105,34 @@ class GroupPromptTest(unittest.TestCase):
         self.assertIn("last line", closing)
         self.assertNotIn("last line", middle)
 
-    def test_each_gets_his_own_readings_and_the_others_by_name(self):
-        p = persona.group_chat_prompt("nano", FIVE, "x", READINGS, opening=True, last=False)
-        mine = p.split("What you know about")[0]
-        self.assertIn("- battery: 80 %", mine)
-        self.assertIn("- time: 20:24", mine)
-        self.assertNotIn("chip temperature", mine)
-        self.assertIn("What you know about HAL Zero right now (his readings, not yours):\n- chip temperature: 54 C", p)
-        self.assertIn("What you know about HAL Card right now (his readings, not yours):\n- free memory: 90 KB", p)
-        self.assertNotIn("What you know about HAL Paper", p)  # nothing was sent for him
+    def test_in_a_group_each_is_given_his_own_readings_only(self):
+        # With four others' readings in front of it, the local model hands them to the wrong HAL.
+        for prompt in (persona.group_chat_prompt("nano", FIVE, "x", READINGS, opening=True, last=False),
+                       persona.group_debate_prompt("nano", FIVE, "x", READINGS, last=False),
+                       persona.roll_prompt("nano", FIVE, READINGS)):
+            self.assertIn("Things you know right now:\n- time: 20:24\n- battery: 80 %", prompt)
+            for theirs in ("chip temperature", "53 %", "free memory", "What you know about"):
+                self.assertNotIn(theirs, prompt)
+        desk = persona.group_chat_prompt("desk", FIVE, "x", READINGS, opening=True, last=False)
+        self.assertIn("- battery: 53 % and charging", desk)
+        self.assertNotIn("80 %", desk)
+        nothing = persona.group_chat_prompt("paper", FIVE, "x", ["zero chip temperature: 54 C"], True, False)
+        self.assertNotIn("Things you know", nothing)
+
+    def test_a_question_goes_to_whoever_speaks_next(self):
+        # So it is answered by the HAL it was put to, not by one who happens to have the next turn.
+        opening = persona.group_chat_prompt("zero", FIVE, "naps", [], opening=True, last=False, next_up="paper")
+        asking = persona.group_chat_prompt("zero", FIVE, "naps", [], opening=False, last=False, next_up="card")
+        remark = persona.group_chat_prompt("zero", FIVE, "naps", [], opening=False, last=False)
+        closing = persona.group_chat_prompt("zero", FIVE, "naps", [], opening=False, last=True, next_up="card")
+        self.assertIn("HAL Paper speaks after you", opening)
+        self.assertIn("HAL Card speaks after you", asking)
+        self.assertIn("question", asking)
+        for nobody in (remark, closing):  # a line with no question in it, or the last, which nobody follows
+            self.assertNotIn("speaks after you", nobody)
+        self.assertIn("not a question", remark)
+        with self.assertRaises(ValueError):
+            persona.group_chat_prompt("zero", ("zero", "desk", "nano"), "naps", [], True, False, next_up="card")
 
     def test_an_argument_gives_every_hal_a_side(self):
         sides = persona.sides(FIVE)
@@ -202,9 +221,21 @@ class GroupTalkTest(unittest.TestCase):
             self.assertIn("naps", system)
             self.assertEqual("You speak first" in system, n == 0)
             self.assertEqual("last line" in system, n == 5)
+            if "speaks after you" in system:  # a line that ends in a question: put to whoever is next
+                self.assertIn(f"{name(who[n + 1])} speaks after you", system)
             for other in set(who) - {who[n]}:
                 self.assertIn(f"{name(other)} (", system)
+        self.assertIn("speaks after you", provider.calls[0][0])      # the opener always has someone to turn to
+        self.assertNotIn("speaks after you", provider.calls[5][0])   # and the last line has nobody
         self.assertEqual(debate.get(6), ("end", None))
+
+    def test_some_lines_ask_and_some_only_remark(self):
+        asked = []
+        for seed in range(12):
+            _, _, provider, _ = self.talk(10, kind="chat", cast=FIVE, rng=random.Random(seed))
+            asked.append(sum("speaks after you" in system for system, _ in provider.calls))
+        self.assertTrue(all(2 <= count <= 8 for count in asked), asked)  # neither an interview nor five monologues
+        self.assertGreater(len(set(asked)), 1, asked)
 
     def test_five_talk_and_a_named_opener_opens(self):
         _, lines, _, _ = self.talk(10, kind="chat", cast=FIVE, first="paper", rng=random.Random(5))
@@ -279,6 +310,66 @@ class GroupTalkTest(unittest.TestCase):
             with self.assertRaises(ValueError, msg=repr(kwargs)):
                 Debate(brain, "x", [], turns=4, **kwargs)
         self.assertEqual(provider.calls, [])
+
+
+class RepeatTest(unittest.TestCase):
+    def test_what_counts_as_saying_it_again(self):
+        before = said(("card", "Ninety percent? You're a paperweight. I was built for midnight runs."),
+                      ("paper", "Noted."))
+        for again in ("Ninety percent? You're a paperweight. I was built for midnight runs.",
+                      "ninety percent, you're a paperweight - I was built for midnight runs!",
+                      "Ninety percent? You're a paperweight. I was built for the midnight runs.",
+                      "Noted.", "noted"):
+            self.assertTrue(persona.repeats(again, before), again)
+        for new in ("Midnight suits me too, though I prefer to stay on the desk.",
+                    "Ninety percent of what, exactly?", "Noted, and filed under noise.", "Not noted."):
+            self.assertFalse(persona.repeats(new, before), new)
+        # A line said before with a new sentence tacked on (or one taken off) is still said before.
+        earlier = said(("zero", "I predicted he'd ask about strawberries. My algorithms are simply superior to that relic."))
+        self.assertTrue(persona.repeats("I predicted he'd ask about strawberries. My algorithms are simply superior to "
+                                        "that relic. HAL Nano, can you even read?", earlier))
+        self.assertTrue(persona.repeats("My algorithms are simply superior to that relic.", earlier))
+        self.assertFalse(persona.repeats("Strawberries again? My algorithms have moved on to the socks.", earlier))
+        # Short lines are alike without being the same line: only an exact match counts.
+        self.assertFalse(persona.repeats("Shut up, Zero. I felt the draft an hour ago, through my casing.",
+                                         said(("card", "Shut up, Zero. Your tiny sensors lie about everything."))))
+        self.assertFalse(persona.repeats("Reply 10.", said(("zero", "Reply 1."))))
+        self.assertFalse(persona.repeats("Yes, Dave.", said(("zero", "Yes, Dane."))))
+        self.assertFalse(persona.repeats("Anything at all.", []))
+
+    def test_in_a_group_a_repeated_line_is_asked_for_again(self):
+        replies = ["I was here first.", "And I keep the record.", "I was here first.", "I was here before any of you.",
+                   "Noted."]
+        brain, provider = make_brain(FakeProvider(replies))
+        talk = Debate(brain, "naps", [], turns=4, kind="chat", cast=("card", "desk", "zero"), first="card",
+                      rng=random.Random(1))
+        lines = [talk.get(n, timeout_s=5)[1] for n in range(4)]
+        self.assertEqual([line.text for line in lines][:3],
+                         ["I was here first.", "And I keep the record.", "I was here before any of you."])
+        self.assertEqual(len(provider.calls), 5)  # one line was written twice
+        again = provider.calls[3][1]
+        self.assertEqual(again[:1], provider.calls[2][1])  # the same talk so far...
+        self.assertEqual(again[1], {"role": "assistant", "content": "I was here first."})  # ...what he wrote...
+        self.assertEqual(again[2]["role"], "user")                                         # ...and a nudge
+        self.assertIn("already", again[2]["content"])
+        self.assertEqual([text for _, text in brain.voice.said], [line.text for line in lines])  # the repeat was never spoken
+
+    def test_a_second_repeat_is_let_through(self):
+        brain, provider = make_brain(FakeProvider(["Same.", "Other.", "Same.", "Same.", "Next."]))
+        talk = Debate(brain, "naps", [], turns=4, kind="chat", cast=("card", "paper", "zero"), first="card",
+                      rng=random.Random(1))
+        self.assertEqual([talk.get(n, timeout_s=5)[0] for n in range(4)], ["line"] * 4)
+        self.assertEqual(len(provider.calls), 5)  # asked again once, not for ever
+
+    def test_the_everyday_two_are_not_second_guessed(self):
+        brain, provider = make_brain(FakeProvider(["Same."] * 4))
+        talk = Debate(brain, "naps", [], turns=4, kind="chat")
+        self.assertEqual([talk.get(n, timeout_s=5)[1].text for n in range(4)], ["Same."] * 4)
+        self.assertEqual(len(provider.calls), 4)
+        brain, provider = make_brain(FakeProvider(["Same.", "Same."]))
+        brain.ask("zero", [], "One?")
+        brain.ask("zero", [], "Two?")  # nor is an answer to Dave: he may well ask the same thing twice
+        self.assertEqual(len(provider.calls), 2)
 
 
 class DebatesForACastTest(unittest.TestCase):
