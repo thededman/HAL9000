@@ -11,9 +11,7 @@ uint32_t rd32(const uint8_t* p) {
   return uint32_t(p[0]) | (uint32_t(p[1]) << 8) | (uint32_t(p[2]) << 16) | (uint32_t(p[3]) << 24);
 }
 
-}  // namespace
-
-bool parseWav(const uint8_t* data, size_t len, WavInfo* out) {
+bool parse(const uint8_t* data, size_t len, bool eightBitToo, WavInfo* out) {
   if (!data || len < 12) return false;
   if (std::memcmp(data, "RIFF", 4) != 0 || std::memcmp(data + 8, "WAVE", 4) != 0) return false;
 
@@ -31,7 +29,8 @@ bool parseWav(const uint8_t* data, size_t len, WavInfo* out) {
       info.channels = rd16(data + body + 2);
       info.sampleRate = rd32(data + body + 4);
       info.bitsPerSample = rd16(data + body + 14);
-      if (format != 1 || info.bitsPerSample != 16 || info.channels == 0 || info.sampleRate == 0) {
+      const bool depthOk = info.bitsPerSample == 16 || (eightBitToo && info.bitsPerSample == 8);
+      if (format != 1 || !depthOk || info.channels == 0 || info.sampleRate == 0) {
         return false;
       }
       haveFmt = true;
@@ -39,7 +38,7 @@ bool parseWav(const uint8_t* data, size_t len, WavInfo* out) {
       if (!haveFmt) return false;
       size_t available = len - body;
       size_t bytes = size < available ? size : available;
-      size_t frameBytes = size_t(info.channels) * 2;
+      size_t frameBytes = size_t(info.channels) * (info.bitsPerSample / 8);
       bytes -= bytes % frameBytes;
       info.dataOffset = body;
       info.dataBytes = bytes;
@@ -55,6 +54,11 @@ bool parseWav(const uint8_t* data, size_t len, WavInfo* out) {
   return false;
 }
 
+}  // namespace
+
+bool parseWav(const uint8_t* data, size_t len, WavInfo* out) { return parse(data, len, false, out); }
+bool parseClipWav(const uint8_t* data, size_t len, WavInfo* out) { return parse(data, len, true, out); }
+
 bool playableClip(const WavInfo& info) {
   return info.channels >= 1 && info.channels <= 2 && info.sampleRate >= 8000 && info.sampleRate <= 48000 &&
          info.dataBytes > 0 && info.durationMs <= 60000;
@@ -62,8 +66,9 @@ bool playableClip(const WavInfo& info) {
 
 std::vector<uint8_t> loudnessEnvelope(const uint8_t* data, const WavInfo& info, uint32_t frameMs) {
   std::vector<uint8_t> env;
+  const bool eight = info.bitsPerSample == 8;
   size_t stride = info.channels;
-  size_t samples = info.dataBytes / (stride * 2);
+  size_t samples = info.dataBytes / (stride * (eight ? 1 : 2));
   size_t perFrame = static_cast<size_t>(info.sampleRate) * frameMs / 1000;
   if (perFrame == 0 || samples == 0) return env;
 
@@ -72,7 +77,8 @@ std::vector<uint8_t> loudnessEnvelope(const uint8_t* data, const WavInfo& info, 
     size_t end = start + perFrame < samples ? start + perFrame : samples;
     double sum = 0;
     for (size_t i = start; i < end; ++i) {
-      int16_t s = static_cast<int16_t>(rd16(pcm + i * stride * 2));
+      // Unsigned 8-bit rests at 128; brought up to the 16-bit scale it is measured on.
+      int s = eight ? (int(pcm[i * stride]) - 128) * 258 : static_cast<int16_t>(rd16(pcm + i * stride * 2));
       sum += double(s) * s;
     }
     double rms = std::sqrt(sum / double(end - start));

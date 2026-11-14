@@ -20,12 +20,16 @@ struct WavInfo {
 // Accepts PCM (format 1), 16-bit only. Never reads past `len`.
 bool parseWav(const uint8_t* data, size_t len, WavInfo* out);
 
+// The same for a line downloaded from the AI brain, which may also be unsigned 8-bit PCM:
+// that is how HAL Card's lines are made, small enough for a device with little memory.
+bool parseClipWav(const uint8_t* data, size_t len, WavInfo* out);
+
 // A downloaded line the HALs will play: mono or stereo at an ordinary rate, with something in it,
 // and no longer than a minute. (A megabyte that claims 50 Hz would otherwise "speak" for hours.)
 bool playableClip(const WavInfo& info);
 
 // RMS of the first channel per `frameMs` frame, scaled so a full-scale square
-// wave is 255. Length = ceil(samples / samplesPerFrame).
+// wave is 255. Length = ceil(samples / samplesPerFrame). 16-bit, or unsigned 8-bit.
 std::vector<uint8_t> loudnessEnvelope(const uint8_t* data, const WavInfo& info, uint32_t frameMs);
 
 }  // namespace hal

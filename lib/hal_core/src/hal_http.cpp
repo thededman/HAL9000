@@ -1,5 +1,7 @@
 #include "hal_http.h"
 
+#include "hal_cast.h"
+
 #include <cctype>
 #include <map>
 
@@ -175,9 +177,12 @@ BrainReply parseBrainReply(const HttpResponse& r) {
   }
   auto has = [&](const char* k) { return f.find(k) != f.end(); };
   bool good = true;
+  // A HAL with no voice (he chirps, or writes) is sent words and no audio; every other line
+  // comes with its clip and how long it plays.
+  const bool wordsOnly = has("who") && castFromId(f["who"]) >= 0 && !castVoiced(castFromId(f["who"]));
   if (has("text")) {
     reply.text = f["text"];
-    good = good && printable(reply.text, 1, 150) && has("clip") && has("ms");
+    good = good && printable(reply.text, 1, 150) && (wordsOnly ? !has("clip") : has("clip") && has("ms"));
   }
   if (has("clip")) {
     reply.clip = f["clip"];
@@ -196,7 +201,7 @@ BrainReply parseBrainReply(const HttpResponse& r) {
   }
   if (has("who")) {
     reply.who = f["who"];
-    good = good && (reply.who == "zero" || reply.who == "desk") && has("text");
+    good = good && castFromId(reply.who) >= 0 && has("text");
   }
   if (has("debate")) {
     reply.debate = f["debate"];

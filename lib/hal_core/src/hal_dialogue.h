@@ -9,14 +9,18 @@
 #include <string>
 #include <vector>
 
+#include "hal_cast.h"
+
 namespace hal {
 
-enum class Speaker { Old, New };
+enum class Speaker { Old, New };  // in a script: the desk HAL's line, or HAL Zero's
 
 struct DialogueLine {
   Speaker who;
   std::string text;
-  int pauseMs = 0;  // silence before this line; 0 = the conductor's normal gap
+  int pauseMs = 0;   // silence before this line; 0 = the conductor's normal gap
+  int peer = kDesk;  // which HAL says a line that isn't HAL Zero's (a script's are all the desk HAL's)
+  int speaker() const { return who == Speaker::New ? kZero : peer; }  // as a cast number (hal_cast.h)
 };
 
 struct Dialogue {

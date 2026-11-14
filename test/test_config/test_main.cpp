@@ -171,6 +171,38 @@ void test_link_settings() {
   TEST_ASSERT_EQUAL(0, w.size());
 }
 
+void test_friends() {
+  auto c = hal::parseConfig("", &w);
+  TEST_ASSERT_EQUAL(0, int(c.friends.size()));  // nobody, unless you say so
+  c = hal::parseConfig("friends=hal-nano.local, hal-paper.local ,192.168.1.44\n", &w);
+  TEST_ASSERT_EQUAL(3, int(c.friends.size()));
+  TEST_ASSERT_EQUAL_STRING("hal-nano.local", c.friends[0].c_str());
+  TEST_ASSERT_EQUAL_STRING("hal-paper.local", c.friends[1].c_str());
+  TEST_ASSERT_EQUAL_STRING("192.168.1.44", c.friends[2].c_str());
+  TEST_ASSERT_EQUAL(0, w.size());
+  c = hal::parseConfig("friends=hal-card.local\n", &w);
+  TEST_ASSERT_EQUAL(1, int(c.friends.size()));
+  c = hal::parseConfig("friends=\n", &w);  // an empty list is a list
+  TEST_ASSERT_EQUAL(0, int(c.friends.size()));
+  TEST_ASSERT_EQUAL(0, w.size());
+}
+
+void test_friends_bad_values() {
+  // One bad name doesn't cost the others; the same HAL twice is one HAL; three at most.
+  auto c = hal::parseConfig("friends=hal-nano.local,two words,,hal-nano.local,hal-card.local\n", &w);
+  TEST_ASSERT_EQUAL(2, int(c.friends.size()));
+  TEST_ASSERT_EQUAL_STRING("hal-card.local", c.friends[1].c_str());
+  TEST_ASSERT_EQUAL(1, w.size());  // "two words"
+  w.clear();
+  c = hal::parseConfig("friends=a.local,b.local,c.local,d.local\n", &w);
+  TEST_ASSERT_EQUAL(3, int(c.friends.size()));
+  TEST_ASSERT_EQUAL(1, w.size());
+  w.clear();
+  c = hal::parseConfig("peer_host=hal9000-old.local\nfriends=hal9000-old.local,hal-nano.local\n", &w);
+  TEST_ASSERT_EQUAL(1, int(c.friends.size()));  // the desk HAL is not also a friend
+  TEST_ASSERT_EQUAL_STRING("hal-nano.local", c.friends[0].c_str());
+}
+
 void test_link_bad_values() {
   auto c = hal::parseConfig("link=sometimes\nlink_port=80\npeer_host=two words\n", &w);
   TEST_ASSERT_FALSE(c.link);
@@ -281,6 +313,8 @@ int main() {
   RUN_TEST(test_link_defaults);
   RUN_TEST(test_link_settings);
   RUN_TEST(test_link_bad_values);
+  RUN_TEST(test_friends);
+  RUN_TEST(test_friends_bad_values);
   RUN_TEST(test_chat_defaults);
   RUN_TEST(test_chat_settings);
   RUN_TEST(test_chat_bad_values_warn);

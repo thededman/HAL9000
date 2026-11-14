@@ -660,6 +660,108 @@ void test_guard_survives_the_clock_wrapping() {  // millis() starts again from 0
   TEST_ASSERT_FALSE(g.coolingOff(0x00000100u + hal::kLinkCoolOffMs));
 }
 
+// ----- link version 4: the friends -----
+
+void test_versions() {
+  TEST_ASSERT_EQUAL(3, hal::kLinkVersion);         // what the desk HAL and HAL Zero say, unchanged
+  TEST_ASSERT_EQUAL(4, hal::kLinkVersionFriends);  // what a friend says
+  TEST_ASSERT_EQUAL(128, int(hal::kLinkMaxLine));
+  TEST_ASSERT_EQUAL(256, int(hal::kLinkMaxLineFriends));
+}
+
+void test_iam() {
+  for (const char* id : {"desk", "nano", "paper", "card"}) {
+    const std::string line = std::string("IAM ") + id;
+    Message m = hal::parseMessage(line);
+    TEST_ASSERT_TRUE_MESSAGE(m.type == MsgType::Iam, id);
+    TEST_ASSERT_EQUAL_STRING(id, m.who.c_str());
+    TEST_ASSERT_EQUAL_STRING(line.c_str(), hal::formatMessage(m).c_str());
+  }
+  // HAL Zero is the one being told, and strangers are nobody.
+  for (const char* bad : {"IAM", "IAM zero", "IAM dave", "IAM NANO", "IAM nano card", "IAM nano 4", "iam nano"})
+    TEST_ASSERT_TRUE_MESSAGE(hal::parseMessage(bad).type == MsgType::Invalid, bad);
+}
+
+void test_now() {
+  Message m = hal::parseMessage("NOW 3 paper Noted. For the record, that was his third complaint.");
+  TEST_ASSERT_TRUE(m.type == MsgType::Now);
+  TEST_ASSERT_EQUAL(3, m.n);
+  TEST_ASSERT_EQUAL_STRING("paper", m.who.c_str());
+  TEST_ASSERT_EQUAL_STRING("Noted. For the record, that was his third complaint.", m.text.c_str());
+  TEST_ASSERT_EQUAL_STRING("NOW 3 paper Noted. For the record, that was his third complaint.", hal::formatMessage(m).c_str());
+  // The words arrive exactly as they were written: spacing inside them is theirs.
+  m = hal::parseMessage("NOW 12 zero Two  spaces, and a tail?!");
+  TEST_ASSERT_EQUAL_STRING("Two  spaces, and a tail?!", m.text.c_str());
+  for (const char* who : {"zero", "desk", "nano", "paper", "card"})
+    TEST_ASSERT_TRUE_MESSAGE(hal::parseMessage(std::string("NOW 1 ") + who + " Hello.").type == MsgType::Now, who);
+  // A line ending carried over from another system is not part of the words.
+  TEST_ASSERT_EQUAL_STRING("Hello.", hal::parseMessage("NOW 1 nano Hello.\r").text.c_str());
+}
+
+void test_now_rejects() {
+  const std::string longest(150, 'x');
+  TEST_ASSERT_TRUE(hal::parseMessage("NOW 99 paper " + longest).type == MsgType::Now);
+  TEST_ASSERT_TRUE(hal::parseMessage("NOW 99 paper " + longest + "x").type == MsgType::Invalid);  // 151
+  for (const char* bad : {"NOW", "NOW 1", "NOW 1 nano", "NOW 1 nano ", "NOW 0 nano Hi.", "NOW 100 nano Hi.",
+                          "NOW x nano Hi.", "NOW 1 dave Hi.", "NOW 1 NANO Hi.", "NOW  1 nano Hi.", "NOW 1  nano Hi.",
+                          "NOW 1 nano  Leading space.", "NOW 1 nano Trailing space. ", "NOW 1 nano Tab\there.",
+                          "NOW 1 nano Caf\xc3\xa9.", "NOW 1 nano Bell\x07.", "NOW 1 nano Del\x7f.", "now 1 nano Hi."})
+    TEST_ASSERT_TRUE_MESSAGE(hal::parseMessage(bad).type == MsgType::Invalid, bad);
+}
+
+void test_the_longest_now_needs_a_friends_line() {
+  Message m;
+  m.type = MsgType::Now;
+  m.n = 99;
+  m.who = "paper";
+  m.text = std::string(150, 'w');
+  const std::string line = hal::formatMessage(m);
+  TEST_ASSERT_TRUE(line.size() > hal::kLinkMaxLine);          // which is why friends take longer lines
+  TEST_ASSERT_TRUE(line.size() <= 163);
+  hal::LineSplitter friendSide(hal::kLinkMaxLineFriends), deskSide;
+  const std::string wire = line + "\n";
+  auto got = friendSide.feed(wire.data(), wire.size());
+  TEST_ASSERT_EQUAL(1, int(got.size()));
+  TEST_ASSERT_TRUE(hal::parseMessage(got[0]).type == MsgType::Now);
+  TEST_ASSERT_EQUAL(0, int(deskSide.feed(wire.data(), wire.size()).size()));  // a v3 HAL just drops it
+}
+
+void test_a_friends_guard_takes_the_longer_line() {
+  hal::LinkGuard g(hal::kLinkMaxLineFriends);
+  FakePeer zero;
+  std::vector<Message> inbox;
+  const std::string now = "NOW 7 card " + std::string(150, 'k') + "\n";
+  zero.waiting = now;
+  TEST_ASSERT_TRUE(g.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[0].type == MsgType::Now);
+  g.newPeer();  // a new HAL Zero connects: the limit must not fall back to 128
+  zero.waiting = now;
+  TEST_ASSERT_TRUE(g.take(5000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  // The desk HAL's guard is as it was: a line that long means nothing to him, and is not a flood.
+  hal::LinkGuard desk;
+  zero.waiting = now + "PING\n";
+  TEST_ASSERT_TRUE(desk.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[0].type == MsgType::Ping);
+}
+
+void test_all_hal_zero_sends_a_friend_at_once_is_no_flood() {
+  // The most he can say to one friend in a single pass: the line being spoken, the next one to
+  // fetch, the cue, and his housekeeping. It must sit well inside the guard's second.
+  hal::LinkGuard g(hal::kLinkMaxLineFriends);
+  FakePeer zero;
+  std::vector<Message> inbox;
+  zero.waiting = "NOW 98 paper " + std::string(150, 'w') + "\n" +
+                 "FETCH 99 192.168.100.200 65535 0123456789abcdef0123456789abcdef\n" +
+                 "SAY live 98\nPING\nSTATUS\nSENSE\nEND interrupted\n";
+  TEST_ASSERT_TRUE(zero.waiting.size() < hal::kLinkFloodBytes / 3);
+  TEST_ASSERT_TRUE(g.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(7, int(inbox.size()));
+  TEST_ASSERT_FALSE(g.flooded());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_parse_examples);
@@ -707,5 +809,12 @@ int main() {
   RUN_TEST(test_guard_cools_off_after_a_flood);
   RUN_TEST(test_guard_a_new_peer_starts_clean);
   RUN_TEST(test_guard_survives_the_clock_wrapping);
+  RUN_TEST(test_versions);
+  RUN_TEST(test_iam);
+  RUN_TEST(test_now);
+  RUN_TEST(test_now_rejects);
+  RUN_TEST(test_the_longest_now_needs_a_friends_line);
+  RUN_TEST(test_a_friends_guard_takes_the_longer_line);
+  RUN_TEST(test_all_hal_zero_sends_a_friend_at_once_is_no_flood);
   return UNITY_END();
 }

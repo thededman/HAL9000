@@ -16,10 +16,18 @@
 //   SENSE                         (v3, HAL Zero) what do your sensors read?
 //   SENSORS light=<%> prox=<n> tilt=<deg> bat=<%> chg=<0|1> temp=<C>
 //                                 (v3, desk HAL) the answer: all six keys, any order
+//   IAM <desk|nano|paper|card>    (v4, a friend) which HAL this is, straight after his HELLO.
+//                                 A peer who never says is the desk HAL
+//   NOW <n> <who> <text>          (v4, HAL Zero, to every v4 peer) line n is beginning: who says
+//                                 it (zero|desk|nano|paper|card) and the words, 1..150 printable
+//                                 characters taken exactly as written. A HAL who has no voice
+//                                 "says" his line from this, at the SAY live <n> that follows
 //
 // Anything else is Invalid: the receiver ignores it. v3 messages are only sent to a peer
-// whose HELLO said 3 or more. A line is at most 128 bytes, and the desk HAL hangs up on a peer
-// who sends him more than 24 lines or 1024 bytes in a second (LinkGuard, below).
+// whose HELLO said 3 or more, v4 messages to one whose HELLO said 4. The desk HAL and HAL
+// Zero say 3 (kLinkVersion); the friends (HAL Nano, HAL Paper, HAL Card) say 4. A line is at
+// most 128 bytes, or 256 for what a friend reads (a NOW is up to 163), and a HAL hangs up on a
+// peer who sends him more than 24 lines or 1024 bytes in a second (LinkGuard, below).
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -28,12 +36,17 @@
 
 namespace hal {
 
-constexpr int kLinkVersion = 3;
+constexpr int kLinkVersion = 3;         // the desk HAL and HAL Zero
+constexpr int kLinkVersionFriends = 4;  // HAL Nano, HAL Paper, HAL Card
 constexpr int kLinkPort = 9000;
+constexpr size_t kLinkMaxLine = 128;         // the longest line a v3 HAL reads
+constexpr size_t kLinkMaxLineFriends = 256;  // ... and a friend, who is sent NOW
+constexpr size_t kLinkMaxText = 150;         // the longest spoken line (what the subtitles hold)
 
 enum class MsgType {
   Invalid, Hello, Ping, Pong, Say, Playing, Missing, Busy, Done, End, Status, State,
-  Fetch, Ready, Sense, Sensors  // v3
+  Fetch, Ready, Sense, Sensors,  // v3
+  Iam, Now                       // v4
 };
 enum class Role { Old, New };
 
@@ -78,6 +91,8 @@ struct Message {
   int port = 0;           // FETCH (1024..65535)
   std::string token;      // FETCH: 16..32 lower-case hex characters
   PeerSensors sensors;    // SENSORS
+  std::string who;        // IAM: which HAL this is. NOW: who is speaking (a cast id, hal_cast.h)
+  std::string text;       // NOW: the words
 };
 
 Message parseMessage(const std::string& line);
@@ -123,7 +138,7 @@ class LinkLiveness {
 // Turns TCP chunks into whole lines; lines longer than maxLine are dropped.
 class LineSplitter {
  public:
-  explicit LineSplitter(size_t maxLine = 128) : maxLine_(maxLine) {}
+  explicit LineSplitter(size_t maxLine = kLinkMaxLine) : maxLine_(maxLine) {}
   std::vector<std::string> feed(const char* data, size_t len);
 
  private:
@@ -150,6 +165,8 @@ constexpr uint32_t kLinkCoolOffMs = 3000;   // after a flood, nobody is let in f
 // A real one who was somehow caught by this reconnects by himself within 5 s.
 class LinkGuard {
  public:
+  // `maxLine`: the longest line taken (a friend takes kLinkMaxLineFriends; see NOW).
+  explicit LinkGuard(size_t maxLine = kLinkMaxLine) : maxLine_(maxLine), splitter_(maxLine) {}
   // Reads up to `max` bytes that have already arrived into `buf`, without waiting; returns how
   // many, or 0 (or less) when there are none.
   using Read = std::function<int(char* buf, size_t max)>;
@@ -165,6 +182,7 @@ class LinkGuard {
   const std::string& lastLine() const { return last_; }  // the last message handed over, as sent
 
  private:
+  size_t maxLine_;
   LineSplitter splitter_;
   std::string last_;
   size_t lines_ = 0, bytes_ = 0;  // taken in the second that began at windowMs_

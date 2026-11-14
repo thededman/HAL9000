@@ -358,6 +358,115 @@ void test_debate_facts() {
   TEST_ASSERT_EQUAL_STRING("", hal::debateFacts({}, nullptr, nullptr).c_str());
 }
 
+// ----- the cast (v0.7) -----
+
+void test_reply_for_a_hal_with_no_voice() {
+  // HAL Nano chirps and HAL Paper writes: their lines come as words, with no audio to fetch.
+  hal::BrainReply r = reply(200, "who=nano\ntext=Is it my turn?\nlast=0\n");
+  TEST_ASSERT_TRUE(r.ok);
+  TEST_ASSERT_EQUAL_STRING("nano", r.who.c_str());
+  TEST_ASSERT_EQUAL_STRING("Is it my turn?", r.text.c_str());
+  TEST_ASSERT_EQUAL_STRING("", r.clip.c_str());
+  r = reply(200, "who=paper\ntext=Noted.\nms=0\nlast=1\n");
+  TEST_ASSERT_TRUE(r.ok && r.last);
+  // HAL Card has a voice, like the two before him.
+  r = reply(200, std::string("who=card\ntext=I was first.\nclip=") + kClip + "\nms=4100\n");
+  TEST_ASSERT_TRUE(r.ok);
+  TEST_ASSERT_EQUAL_STRING("card", r.who.c_str());
+  TEST_ASSERT_EQUAL(4100, r.ms);
+}
+
+void test_reply_cast_rejects() {
+  const std::string bad[] = {
+      "who=card\ntext=No audio for a HAL who speaks.\n",
+      "who=desk\ntext=Nor for him.\nms=100\n",
+      std::string("who=nano\ntext=Audio for a HAL who can't play it.\nclip=") + kClip + "\nms=100\n",
+      "who=nano\n",                       // a speaker and nothing said
+      "who=wristwatch\ntext=Hello.\n",   // nobody we know
+      "text=Words, from nobody in particular.\n",
+  };
+  for (const std::string& body : bad) {
+    hal::BrainReply r = reply(200, body);
+    TEST_ASSERT_FALSE_MESSAGE(r.ok, body.c_str());
+    TEST_ASSERT_EQUAL_STRING("bad-reply", r.error.c_str());
+  }
+}
+
+static int countLines(const std::string& s) {
+  if (s.empty()) return 0;
+  int n = 1;
+  for (char c : s) n += c == '\n';
+  return n;
+}
+
+static int linesOf(const std::string& s, const std::string& owner) {
+  int n = 0;
+  size_t at = 0;
+  while (at < s.size()) {
+    if (s.compare(at, owner.size() + 1, owner + " ") == 0) ++n;
+    at = s.find('\n', at);
+    if (at == std::string::npos) break;
+    ++at;
+  }
+  return n;
+}
+
+void test_cast_facts_for_five() {
+  std::vector<hal::Reading> rs = {hal::cpuReading(8), hal::memoryReading(134144, 360448), hal::tempReading(54),
+                                  hal::netReading(-42), hal::linkReading(true, true), hal::cameraReading(true, 3),
+                                  hal::tiltReading(2), hal::audioReading(0, 4), hal::clockReading(20 * 3600 + 24 * 60),
+                                  hal::uptimeReading(600), hal::peerReading(hal::PeerState::Ok, "idle")};
+  hal::PeerStatus desk, nano, paper, card;
+  desk.upS = 3900; desk.heap = 99328; desk.cam = 12; desk.lines = 16; desk.mode = "idle"; desk.rssi = -47; desk.fw = "0.7.0";
+  nano = paper = card = desk;
+  nano.upS = 120; paper.upS = 86400; card.upS = 7300;
+  hal::PeerSensors deskS = {67, 19, 3, 53, true, 42};
+  hal::PeerSensors nanoS = {-1, 0, 38, 81, false, 44};   // no light sensor; tilted on a wrist
+  hal::PeerSensors paperS = {-1, 0, 0, 64, false, 22};   // 22 C is the room, from his own sensor
+  hal::PeerSensors cardS = {-1, 0, 0, 55, true, 48};
+  const std::string facts = hal::castFacts(rs, {{hal::kDesk, &desk, &deskS}, {hal::kNano, &nano, &nanoS},
+                                                 {hal::kPaper, &paper, &paperS}, {hal::kCard, &card, &cardS}});
+  TEST_ASSERT_EQUAL_STRING("time: 20:24", facts.substr(0, facts.find('\n')).c_str());
+  TEST_ASSERT_TRUE_MESSAGE(countLines(facts) <= 24, facts.c_str());  // what the brain accepts
+  for (const char* who : {"zero", "desk", "nano", "paper", "card"})
+    TEST_ASSERT_TRUE_MESSAGE(linesOf(facts, who) >= 3, who);  // nobody is squeezed out, the last least of all
+  // Each says what he can really tell.
+  TEST_ASSERT_TRUE(facts.find("nano battery: 81 %") != std::string::npos);
+  TEST_ASSERT_TRUE(facts.find("nano tilt: 38 degrees") != std::string::npos);
+  TEST_ASSERT_TRUE(facts.find("paper battery: 64 %") != std::string::npos);
+  TEST_ASSERT_TRUE(facts.find("paper room temperature: 22 C") != std::string::npos);
+  TEST_ASSERT_TRUE(facts.find("card battery: 55 % and charging") != std::string::npos);
+  TEST_ASSERT_TRUE(facts.find("card chip temperature: 48 C") != std::string::npos);
+  TEST_ASSERT_TRUE(facts.find("desk room light: 67 %") != std::string::npos);
+  TEST_ASSERT_TRUE(facts.find("zero chip temperature: 54 C") != std::string::npos);
+  // ... and nothing his device has no sensor for.
+  for (const char* nonsense : {"paper tilt", "card tilt", "nano room light", "paper room light", "card room light",
+                               "proximity", "camera motion", "paper chip temperature"})
+    TEST_ASSERT_TRUE_MESSAGE(facts.find(nonsense) == std::string::npos, nonsense);
+}
+
+void test_cast_facts_share_a_small_budget() {
+  std::vector<hal::Reading> rs = {hal::tempReading(54), hal::memoryReading(134144, 360448), hal::uptimeReading(600),
+                                  hal::clockReading(9 * 3600)};
+  hal::PeerStatus st;
+  st.upS = 60; st.mode = "idle"; st.fw = "0.7.0";
+  hal::PeerSensors se = {50, 0, 0, 90, false, 40};
+  const std::string facts = hal::castFacts(rs, {{hal::kDesk, &st, &se}, {hal::kNano, &st, &se}, {hal::kCard, &st, &se}}, 9);
+  TEST_ASSERT_TRUE(countLines(facts) <= 9);
+  for (const char* who : {"zero", "desk", "nano", "card"}) TEST_ASSERT_EQUAL_MESSAGE(2, linesOf(facts, who), who);
+}
+
+void test_cast_facts_with_gaps() {
+  std::vector<hal::Reading> rs = {hal::tempReading(54), hal::clockReading(9 * 3600)};
+  hal::PeerSensors se = {-1, 0, 0, 90, false, 40};
+  // A HAL who hasn't answered yet has nothing said about him; one with sensors only has those.
+  const std::string facts = hal::castFacts(rs, {{hal::kDesk, nullptr, nullptr}, {hal::kCard, nullptr, &se}, {9, nullptr, &se}});
+  TEST_ASSERT_EQUAL(0, linesOf(facts, "desk"));
+  TEST_ASSERT_TRUE(linesOf(facts, "card") >= 2);
+  TEST_ASSERT_TRUE(facts.find("zero chip temperature: 54 C") != std::string::npos);
+  TEST_ASSERT_EQUAL_STRING("", hal::castFacts({}, {}).c_str());
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_textbox_types_and_erases);
@@ -380,5 +489,10 @@ int main() {
   RUN_TEST(test_facts_from_readings);
   RUN_TEST(test_desk_facts);
   RUN_TEST(test_debate_facts);
+  RUN_TEST(test_reply_for_a_hal_with_no_voice);
+  RUN_TEST(test_reply_cast_rejects);
+  RUN_TEST(test_cast_facts_for_five);
+  RUN_TEST(test_cast_facts_share_a_small_budget);
+  RUN_TEST(test_cast_facts_with_gaps);
   return UNITY_END();
 }

@@ -343,6 +343,199 @@ void test_scripted_is_not_live() {
   TEST_ASSERT_TRUE(c.onLocalDone(7000).finished);
 }
 
+// ----- several HALs (v0.7): each line goes to its speaker, and one leaving doesn't end it -----
+
+namespace {
+const unsigned kThree = hal::castBit(hal::kZero) | hal::castBit(hal::kDesk) | hal::castBit(hal::kNano);
+const unsigned kFive = 0b11111;
+}  // namespace
+
+void test_pair_is_the_default() {
+  hal::Conductor c;
+  c.start(script("OLD: a.\nNEW: b.\n"), 0);
+  ConductorOut o = c.tick(0);
+  TEST_ASSERT_TRUE(sent(o, "SAY intro 1"));
+  TEST_ASSERT_EQUAL(hal::kDesk, o.to);  // a script's OLD lines are the desk HAL's
+  TEST_ASSERT_EQUAL(1, o.started);
+  TEST_ASSERT_EQUAL(-1, o.left);
+  TEST_ASSERT_EQUAL(int(hal::kPair), int(c.present()));
+}
+
+void test_group_lines_go_to_their_speakers() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  TEST_ASSERT_EQUAL(1, c.append(hal::kNano, "Is it my turn?"));
+  ConductorOut o = c.tick(0);
+  TEST_ASSERT_TRUE(sent(o, "SAY live 1"));
+  TEST_ASSERT_EQUAL(hal::kNano, o.to);
+  TEST_ASSERT_EQUAL(1, o.started);
+  c.onRemote(msg("PLAYING 1 2500"), 100, hal::kNano);
+  c.onRemote(msg("DONE 1"), 2600, hal::kNano);
+  TEST_ASSERT_EQUAL(2, c.append(hal::kDesk, "Nobody asked the wristwatch."));
+  o = c.tick(3000);
+  TEST_ASSERT_TRUE(sent(o, "SAY live 2"));
+  TEST_ASSERT_EQUAL(hal::kDesk, o.to);
+  TEST_ASSERT_EQUAL(2, o.started);
+  c.onRemote(msg("PLAYING 2 3000"), 3100, hal::kDesk);
+  c.onRemote(msg("DONE 2"), 6100, hal::kDesk);
+  TEST_ASSERT_EQUAL(3, c.append(hal::kZero, "He is small, not deaf."));
+  o = c.tick(6500);
+  TEST_ASSERT_TRUE(o.playLocal);
+  TEST_ASSERT_EQUAL(3, o.localLine);
+  TEST_ASSERT_EQUAL(3, o.started);  // the glue announces his own lines to the others too
+  TEST_ASSERT_FALSE(o.send);
+}
+
+void test_group_only_those_present_can_be_given_a_line() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  TEST_ASSERT_EQUAL(0, c.append(hal::kPaper, "Noted."));  // he isn't here
+  TEST_ASSERT_EQUAL(0, c.append(7, "Who?"));
+  TEST_ASSERT_EQUAL(1, c.append(hal::kNano, "Here!"));
+}
+
+void test_group_replies_count_only_from_the_speaker() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  c.append(hal::kNano, "Mine.");
+  c.tick(0);
+  // The desk HAL answers a cue that was not his (a stray, or mischief): nothing moves.
+  c.onRemote(msg("PLAYING 1 60000"), 100, hal::kDesk);
+  ConductorOut o = c.onRemote(msg("DONE 1"), 150, hal::kDesk);
+  TEST_ASSERT_FALSE(o.finished);
+  o = c.onRemote(msg("BUSY"), 200, hal::kDesk);
+  TEST_ASSERT_FALSE(o.finished);
+  TEST_ASSERT_EQUAL(-1, o.left);
+  // ... and HAL Nano, who never acknowledged, still runs out of time at 2 s.
+  o = c.tick(2001);
+  TEST_ASSERT_EQUAL(hal::kNano, o.left);
+}
+
+void test_group_a_busy_hal_leaves_and_the_rest_go_on() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  c.append(hal::kNano, "Mine.");
+  c.append(hal::kDesk, "And mine.");
+  c.tick(0);
+  ConductorOut o = c.onRemote(msg("BUSY"), 50, hal::kNano);
+  TEST_ASSERT_FALSE(o.finished);  // two are still talking
+  TEST_ASSERT_EQUAL(hal::kNano, o.left);
+  TEST_ASSERT_FALSE(o.gloat);
+  TEST_ASSERT_TRUE(c.active());
+  TEST_ASSERT_FALSE(hal::castHas(c.present(), hal::kNano));
+  o = c.tick(500);  // the next line, after the usual gap
+  TEST_ASSERT_TRUE(sent(o, "SAY live 2"));
+  TEST_ASSERT_EQUAL(hal::kDesk, o.to);
+  TEST_ASSERT_EQUAL(0, c.append(hal::kNano, "Wait for me!"));  // he is out for the rest of it
+}
+
+void test_group_down_to_one_ends_as_it_always_did() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  c.append(hal::kNano, "Mine.");
+  c.tick(0);
+  c.onRemote(msg("BUSY"), 50, hal::kNano);
+  c.append(hal::kDesk, "Just us, then.");
+  c.tick(500);
+  ConductorOut o = c.onRemote(msg("BUSY"), 550, hal::kDesk);
+  TEST_ASSERT_TRUE(o.finished);
+  TEST_ASSERT_EQUAL_STRING("busy", o.reason.c_str());
+  TEST_ASSERT_TRUE(o.gloat);
+  TEST_ASSERT_FALSE(o.send);
+  TEST_ASSERT_EQUAL(hal::kDesk, o.left);
+}
+
+void test_group_the_silent_one_is_dropped_and_told() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  c.append(hal::kNano, "Mine.");
+  c.append(hal::kZero, "Mine now.");
+  c.tick(0);
+  TEST_ASSERT_FALSE(c.tick(2000).send);
+  ConductorOut o = c.tick(2001);  // no PLAYING within 2 s
+  TEST_ASSERT_FALSE(o.finished);
+  TEST_ASSERT_EQUAL(hal::kNano, o.left);
+  TEST_ASSERT_TRUE(sent(o, "END timeout"));  // in case he is only slow: he must not speak later
+  TEST_ASSERT_EQUAL(hal::kNano, o.to);
+  o = c.tick(2500);
+  TEST_ASSERT_TRUE(o.playLocal);
+  TEST_ASSERT_EQUAL(2, o.localLine);
+}
+
+void test_group_a_bystander_hanging_up_changes_nothing_for_the_speaker() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  c.append(hal::kNano, "Mine.");
+  c.tick(0);
+  c.onRemote(msg("PLAYING 1 2500"), 100, hal::kNano);
+  ConductorOut o = c.onDisconnected(500, hal::kDesk);
+  TEST_ASSERT_FALSE(o.finished);
+  TEST_ASSERT_EQUAL(hal::kDesk, o.left);
+  o = c.onRemote(msg("DONE 1"), 2600, hal::kNano);
+  TEST_ASSERT_FALSE(o.finished);
+  // Someone who isn't in the conversation hanging up is nothing at all.
+  o = c.onDisconnected(2700, hal::kPaper);
+  TEST_ASSERT_EQUAL(-1, o.left);
+  TEST_ASSERT_TRUE(c.active());
+}
+
+void test_group_lines_of_someone_who_left_are_skipped() {
+  hal::Conductor c;
+  c.startLive(0, kFive);
+  c.append(hal::kCard, "One.");
+  c.append(hal::kDesk, "Two.");   // already written when the desk HAL goes
+  c.append(hal::kPaper, "Three.");
+  c.close();
+  c.tick(0);
+  c.onRemote(msg("PLAYING 1 1000"), 50, hal::kCard);
+  c.onDisconnected(500, hal::kDesk);
+  c.onRemote(msg("DONE 1"), 1050, hal::kCard);
+  ConductorOut o = c.tick(1450);  // line 2 was his: passed over
+  TEST_ASSERT_FALSE(o.send);
+  TEST_ASSERT_FALSE(o.playLocal);
+  TEST_ASSERT_EQUAL(0, o.started);
+  o = c.tick(1850);
+  TEST_ASSERT_TRUE(sent(o, "SAY live 3"));
+  TEST_ASSERT_EQUAL(hal::kPaper, o.to);
+}
+
+void test_group_end_from_anyone_ends_it_for_all() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  c.append(hal::kDesk, "Mine.");
+  c.tick(0);
+  ConductorOut o = c.onRemote(msg("END interrupted"), 300, hal::kNano);  // a tap on the wrist
+  TEST_ASSERT_TRUE(o.finished);
+  TEST_ASSERT_EQUAL_STRING("interrupted", o.reason.c_str());
+  TEST_ASSERT_FALSE(o.send);              // HAL Nano already knows:
+  TEST_ASSERT_EQUAL(hal::kNano, o.left);  // the glue tells everyone but him
+}
+
+void test_group_endings_are_for_everyone() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  c.append(hal::kZero, "Mine.");
+  c.close();
+  c.tick(0);
+  ConductorOut o = c.onLocalDone(1000);
+  TEST_ASSERT_TRUE(sent(o, "END done"));
+  TEST_ASSERT_EQUAL(hal::kEveryone, o.to);
+  hal::Conductor tapped;
+  tapped.startLive(0, kThree);
+  o = tapped.interrupt(10);
+  TEST_ASSERT_TRUE(sent(o, "END interrupted"));
+  TEST_ASSERT_EQUAL(hal::kEveryone, o.to);
+}
+
+void test_group_hal_zero_cannot_leave_his_own_conversation() {
+  hal::Conductor c;
+  c.startLive(0, kThree);
+  ConductorOut o = c.leave(hal::kZero, "busy", 10);
+  TEST_ASSERT_FALSE(o.finished);
+  TEST_ASSERT_EQUAL(-1, o.left);
+  TEST_ASSERT_EQUAL(int(kThree), int(c.present()));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_alternating_speakers);
@@ -367,5 +560,17 @@ int main() {
   RUN_TEST(test_live_is_capped);
   RUN_TEST(test_live_interrupt_and_offline);
   RUN_TEST(test_scripted_is_not_live);
+  RUN_TEST(test_pair_is_the_default);
+  RUN_TEST(test_group_lines_go_to_their_speakers);
+  RUN_TEST(test_group_only_those_present_can_be_given_a_line);
+  RUN_TEST(test_group_replies_count_only_from_the_speaker);
+  RUN_TEST(test_group_a_busy_hal_leaves_and_the_rest_go_on);
+  RUN_TEST(test_group_down_to_one_ends_as_it_always_did);
+  RUN_TEST(test_group_the_silent_one_is_dropped_and_told);
+  RUN_TEST(test_group_a_bystander_hanging_up_changes_nothing_for_the_speaker);
+  RUN_TEST(test_group_lines_of_someone_who_left_are_skipped);
+  RUN_TEST(test_group_end_from_anyone_ends_it_for_all);
+  RUN_TEST(test_group_endings_are_for_everyone);
+  RUN_TEST(test_group_hal_zero_cannot_leave_his_own_conversation);
   return UNITY_END();
 }

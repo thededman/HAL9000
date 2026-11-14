@@ -3,6 +3,7 @@
 #include <cctype>
 #include <sstream>
 
+#include "hal_cast.h"
 #include "hal_dialogue.h"
 
 namespace hal {
@@ -163,12 +164,44 @@ bool sameSubnet(const std::string& a, const std::string& b, const std::string& m
   return true;
 }
 
+namespace {
+
+// NOW <n> <who> <text>: read from the line itself, not its words, because the text is taken
+// exactly as written (single spaces between the fields, then everything to the end).
+bool parseNow(const std::string& raw, Message* out) {
+  std::string line = raw;
+  if (!line.empty() && line.back() == '\r') line.pop_back();  // a line ending from elsewhere
+  if (line.compare(0, 4, "NOW ") != 0) return false;
+  const size_t afterN = line.find(' ', 4);
+  if (afterN == std::string::npos) return false;
+  const size_t afterWho = line.find(' ', afterN + 1);
+  if (afterWho == std::string::npos) return false;
+  const std::string who = line.substr(afterN + 1, afterWho - afterN - 1);
+  const std::string text = line.substr(afterWho + 1);
+  if (!toInt(line.substr(4, afterN - 4), 1, kMaxDialogueLines, &out->n) || castFromId(who) < 0) return false;
+  if (text.empty() || text.size() > kLinkMaxText || text.front() == ' ' || text.back() == ' ') return false;
+  for (char c : text)
+    if (c < ' ' || c > '~') return false;
+  out->type = MsgType::Now;
+  out->who = who;
+  out->text = text;
+  return true;
+}
+
+}  // namespace
+
 Message parseMessage(const std::string& line) {
   Message m;
   auto w = words(line);
   if (w.empty()) return m;
   const std::string& cmd = w[0];
   Message ok;
+  if (cmd == "NOW") return parseNow(line, &ok) ? ok : m;
+  if (cmd == "IAM" && w.size() == 2 && castFromId(w[1]) > kZero) {  // any HAL but the one being told
+    ok.type = MsgType::Iam;
+    ok.who = w[1];
+    return ok;
+  }
   if ((cmd == "PING" || cmd == "PONG" || cmd == "BUSY") && w.size() == 1) {
     ok.type = cmd == "PING" ? MsgType::Ping : cmd == "PONG" ? MsgType::Pong : MsgType::Busy;
     return ok;
@@ -247,6 +280,8 @@ std::string formatMessage(const Message& m) {
     }
     case MsgType::Fetch: return "FETCH " + std::to_string(m.n) + " " + m.host + " " + std::to_string(m.port) + " " + m.token;
     case MsgType::Ready: return "READY " + std::to_string(m.n);
+    case MsgType::Iam: return "IAM " + m.who;
+    case MsgType::Now: return "NOW " + std::to_string(m.n) + " " + m.who + " " + m.text;
     case MsgType::Sense: return "SENSE";
     case MsgType::Sensors: {
       const PeerSensors& s = m.sensors;
@@ -339,7 +374,7 @@ bool LinkGuard::coolingOff(uint32_t nowMs) {
 }
 
 void LinkGuard::newPeer() {
-  splitter_ = LineSplitter();
+  splitter_ = LineSplitter(maxLine_);
   lines_ = bytes_ = 0;
   counting_ = flooded_ = cooling_ = false;
 }

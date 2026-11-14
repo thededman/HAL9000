@@ -118,6 +118,33 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
       else warn(key + ": '" + value + "' isn't a host name or IP address, using default");
       continue;
     }
+    if (key == "friends") {  // host names or IP addresses, with commas between
+      c.friends.clear();
+      size_t start = 0;
+      bool tooMany = false;
+      while (start <= value.size()) {
+        size_t comma = value.find(',', start);
+        if (comma == std::string::npos) comma = value.size();
+        std::string host = value.substr(start, comma - start);
+        while (!host.empty() && host.front() == ' ') host.erase(0, 1);
+        while (!host.empty() && host.back() == ' ') host.pop_back();
+        start = comma + 1;
+        if (host.empty()) continue;
+        bool ok = host.size() <= 64;
+        for (char ch : host) ok = ok && (std::isalnum(static_cast<unsigned char>(ch)) || ch == '.' || ch == '-');
+        if (!ok) {
+          warn("friends: '" + host + "' isn't a host name or IP address, left out");
+          continue;
+        }
+        bool twice = false;
+        for (const std::string& f : c.friends) twice = twice || f == host;
+        if (twice) continue;
+        if (c.friends.size() == 3) tooMany = true;
+        else c.friends.push_back(host);
+      }
+      if (tooMany) warn("friends: three at most, the rest left out");
+      continue;
+    }
     if (key == "brain_key") {  // 32 lower-case hex characters; a warning never repeats it
       bool ok = value.size() == 32;
       for (char ch : value) ok = ok && ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f'));
@@ -152,6 +179,10 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
     Config d;
     c.idleMinMinutes = d.idleMinMinutes;
     c.idleMaxMinutes = d.idleMaxMinutes;
+  }
+  for (size_t i = 0; i < c.friends.size();) {  // the desk HAL is not also a friend
+    if (c.friends[i] == c.peerHost) c.friends.erase(c.friends.begin() + static_cast<long>(i));
+    else ++i;
   }
   if (c.chatMinMinutes > c.chatMaxMinutes) {  // "at least this long": the maximum comes up to meet it
     warn("chat_max_minutes raised to chat_min_minutes (" + std::to_string(c.chatMinMinutes) + ")");

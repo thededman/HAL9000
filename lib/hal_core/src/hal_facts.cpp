@@ -1,7 +1,9 @@
 #include "hal_facts.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <utility>
 
 namespace hal {
 namespace {
@@ -94,6 +96,66 @@ std::string debateFacts(const std::vector<Reading>& zero, const PeerStatus* stat
   };
   addOwned("zero", factsFromReadings(mine));
   addOwned("desk", deskFacts(status, sensors));
+  return out;
+}
+
+namespace {
+
+// What each HAL can really tell, most telling first: {the name his readings give it, the name
+// used for him}. HAL Paper's temperature is the room's (he has a sensor for it), not a chip's.
+struct Wanted {
+  const char* name;
+  const char* as;
+};
+const Wanted kWanted[kCastSize][6] = {
+    /* zero  */ {{"chip temperature", nullptr}, {"free memory", nullptr}, {"uptime", nullptr},
+                 {"processor load", nullptr}, {"wifi signal", nullptr}, {"lines spoken", nullptr}},
+    /* desk  */ {{"battery", nullptr}, {"room light", nullptr}, {"chip temperature", nullptr},
+                 {"uptime", nullptr}, {"tilt", nullptr}, {"free memory", nullptr}},
+    /* nano  */ {{"battery", nullptr}, {"tilt", nullptr}, {"chip temperature", nullptr},
+                 {"uptime", nullptr}, {"wifi signal", nullptr}, {nullptr, nullptr}},
+    /* paper */ {{"battery", nullptr}, {"chip temperature", "room temperature"}, {"uptime", nullptr},
+                 {"wifi signal", nullptr}, {nullptr, nullptr}, {nullptr, nullptr}},
+    /* card  */ {{"battery", nullptr}, {"chip temperature", nullptr}, {"uptime", nullptr},
+                 {"wifi signal", nullptr}, {"free memory", nullptr}, {nullptr, nullptr}}};
+
+// The value of "name: value" in a block of such lines, or "" if it isn't there.
+std::string valueOf(const std::string& facts, const std::string& name) {
+  size_t start = 0;
+  while (start < facts.size()) {
+    size_t end = facts.find('\n', start);
+    if (end == std::string::npos) end = facts.size();
+    if (facts.compare(start, name.size() + 2, name + ": ") == 0) return facts.substr(start + name.size() + 2, end - start - name.size() - 2);
+    start = end + 1;
+  }
+  return "";
+}
+
+}  // namespace
+
+std::string castFacts(const std::vector<Reading>& zero, const std::vector<MemberFacts>& others, int maxLines) {
+  std::string out;
+  for (const Reading& r : zero)
+    if (r.code == "CLK" && r.valid) add(&out, "time", r.value);
+  // Everyone's readings as "name: value" lines, HAL Zero first.
+  std::vector<std::pair<int, std::string>> members;
+  members.emplace_back(kZero, factsFromReadings(zero));
+  for (const MemberFacts& m : others)
+    if (castValid(m.who) && m.who != kZero) members.emplace_back(m.who, deskFacts(m.status, m.sensors));
+  int telling = 0;
+  for (const auto& m : members) telling += m.second.empty() ? 0 : 1;
+  if (telling == 0) return out;
+  const int share = std::max(1, (maxLines - (out.empty() ? 0 : 1)) / telling);
+  for (const auto& m : members) {
+    int given = 0;
+    for (const Wanted& w : kWanted[m.first]) {
+      if (!w.name || given >= share) break;
+      const std::string value = valueOf(m.second, w.name);
+      if (value.empty()) continue;
+      add(&out, std::string(castId(m.first)) + " " + (w.as ? w.as : w.name), value);
+      ++given;
+    }
+  }
   return out;
 }
 
