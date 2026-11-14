@@ -9,24 +9,28 @@ from . import persona
 
 PATH = pathlib.Path(__file__).resolve().parent / "subjects.txt"
 MAX_SUBJECT = 120
+MAX_SUBJECTS = 500  # more than anyone will write; a runaway file must not hold up the brain's start
 # Used when the file is missing or empty, so a chat never has nothing to be about.
 SPARE = ["what Dave has been up to today", "which of you Dave likes better", "how the evening is going"]
 
 
 def load(path=PATH) -> list[str]:
     """The subjects in the file, cleaned to short printable lines; SPARE when there are none."""
-    try:
-        text = pathlib.Path(path).read_text(encoding="utf-8", errors="replace")
+    try:  # (utf-8-sig: a byte-order mark at the start of the file is not part of its first line)
+        text = pathlib.Path(path).read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return list(SPARE)
-    found = []
+    found, seen = [], set()
     for line in text.splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         subject = persona.plain(line, MAX_SUBJECT)
-        if subject and subject not in found:
+        if subject and subject not in seen:
+            seen.add(subject)
             found.append(subject)
+            if len(found) == MAX_SUBJECTS:
+                break
     return found or list(SPARE)
 
 

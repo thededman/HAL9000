@@ -11,7 +11,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=tools/.venv/bin/python
 RUN=brain/.run
-[ -x "$PY" ] || { echo "Set up the voice tool first: docs/SETUP.md, step 3."; exit 1; }
+# Everything but "autostart off" (and asking whether it is on) needs the voice tool's Python:
+# taking the login item away must still work after the tool has been removed.
+need_python() { [ -x "$PY" ] || { echo "Set up the voice tool first: docs/SETUP.md, step 3."; exit 1; }; }
+case "${1:-}:${2:-}" in autostart:on|autostart:off|autostart:print|autostart:) ;; *) need_python ;; esac
 port() { "$PY" -c 'from brain.config import port_from, read_env; print(port_from(read_env()))'; }
 # Is the brain we started still running? (A pid left over from before a restart may belong to
 # some other program by now: only a process that is the brain's server counts.)
@@ -31,7 +34,7 @@ case "${1:-}" in
     if healthy "$p"; then echo "Something is already answering on port $p: stop it first (or set HAL_BRAIN_PORT in brain/.env)."; exit 1; fi
     nohup "$PY" -m brain.server >> "$RUN/brain.log" 2>&1 &
     echo $! > "$RUN/pid"
-    for _ in $(seq 100); do
+    for _ in $(seq 300); do  # up to a minute: at login the computer is busy and the voice loads slowly
       running || break
       if healthy "$p"; then grep "listening" "$RUN/brain.log" | tail -n 1; exit 0; fi
       sleep 0.2
@@ -84,10 +87,12 @@ ITEM
     }
     case "${2:-}" in
       on)
+        need_python
         mkdir -p "$HOME/Library/LaunchAgents" "$RUN"
         launchctl bootout "gui/$(id -u)" "$plist" 2>/dev/null || true
         item > "$plist"
-        launchctl bootstrap "gui/$(id -u)" "$plist"
+        # (Straight after a bootout the old item may still be on its way out: try once more.)
+        launchctl bootstrap "gui/$(id -u)" "$plist" 2>/dev/null || { sleep 2; launchctl bootstrap "gui/$(id -u)" "$plist"; }
         echo "HAL's brain will start whenever you log in (it is starting now if it wasn't running)."
         echo "Undo with: tools/brain.sh autostart off"
         ;;
@@ -97,7 +102,13 @@ ITEM
         echo "HAL's brain no longer starts by itself. (If it is running now, it carries on: tools/brain.sh stop)"
         ;;
       print) item ;;  # what "on" would install
-      "") if [ -f "$plist" ]; then echo "on"; else echo "off"; fi ;;
+      "")
+        # The item remembers where this folder was: if the folder has moved since, it starts nothing.
+        if [ ! -f "$plist" ]; then echo "off"
+        elif grep -qF "<string>$(xml "$here/tools/brain.sh")</string>" "$plist"; then echo "on"
+        else echo "on, but for another folder: run 'tools/brain.sh autostart on' here to point it at this one"
+        fi
+        ;;
       *) echo "tools/brain.sh autostart on|off"; exit 1 ;;
     esac
     ;;

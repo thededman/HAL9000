@@ -6,7 +6,23 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-13
+
 ### Fixed
+- A chat the HALs start by themselves no longer makes a fuss when it can't go ahead: if the
+  desk HAL is busy, or hasn't said how he is, HAL Zero drops the idea without a banner or a
+  gloating remark, and never cuts into what the desk HAL is doing.
+- Pressing Enter or holding Fn while HAL Zero is still thinking up one of those chats now gets
+  his attention at once instead of being refused, and an Esc that lands just after a talk has
+  ended no longer quits him.
+- `chat_min_minutes` on its own, set above the usual maximum, was ignored (both settings fell
+  back to 20 and 40). The maximum now rises to meet it.
+- The HALs don't strike up a chat the very minute quiet hours end.
+- `tools/brain.sh autostart off` works even after the voice tool has been removed, `autostart`
+  says when the login item points at a folder that has since moved, and starting at login
+  allows the brain a minute to come up.
+- A `brain/subjects.txt` saved with a byte-order mark no longer turns its first note into a
+  subject.
 - The desk HAL can no longer be frozen over the link. With `link=on`, anything on your network
   that connected to him and poured data in, or stopped listening to his answers, could hold his
   eye and touch screen still for seconds at a time and use up his memory. He now takes only a

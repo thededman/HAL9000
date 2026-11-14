@@ -204,10 +204,16 @@ void test_chat_bad_values_warn() {
   TEST_ASSERT_EQUAL(40, c.chatMaxMinutes);
   TEST_ASSERT_EQUAL(3, w.size());
   w.clear();
-  c = hal::parseConfig("chat_min_minutes=60\nchat_max_minutes=30\n", &w);  // the wrong way round
-  TEST_ASSERT_EQUAL(20, c.chatMinMinutes);
-  TEST_ASSERT_EQUAL(40, c.chatMaxMinutes);
+  // A minimum above the maximum means "at least this long": the maximum comes up to meet it.
+  // (Falling back to 20 and 40 would undo what the owner asked for: fewer chats.)
+  c = hal::parseConfig("chat_min_minutes=60\nchat_max_minutes=30\n", &w);
+  TEST_ASSERT_EQUAL(60, c.chatMinMinutes);
+  TEST_ASSERT_EQUAL(60, c.chatMaxMinutes);
   TEST_ASSERT_EQUAL(1, w.size());
+  w.clear();
+  c = hal::parseConfig("chat_min_minutes=120\n", &w);  // only the minimum given, above the usual maximum
+  TEST_ASSERT_EQUAL(120, c.chatMinMinutes);
+  TEST_ASSERT_EQUAL(120, c.chatMaxMinutes);
 }
 
 void test_brain_defaults() {

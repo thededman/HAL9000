@@ -328,6 +328,8 @@ tools/brain.sh autostart on
 ```
 
 `tools/brain.sh autostart off` undoes that, and `tools/brain.sh autostart` says which it is.
+The login item remembers where this folder is: if you move the folder, run `autostart on`
+again from its new place.
 On Linux, add `tools/brain.sh start` (with its full path) to your desktop's startup programs.
 
 **Chat with HAL Zero in the simulator** (step 8) while the brain is running:
@@ -384,7 +386,8 @@ tools/brain.sh pair
   per line, yours to edit (restart the brain afterwards). "Let them chat" in the menu starts
   one at once, and Space, Esc or a tap stops one. In HAL Zero's `~/hal/config.txt`, `chat=off`
   stops them and `chat_min_minutes` / `chat_max_minutes` set how long they leave between
-  conversations (counted from the end of the last one, whoever started it). When the brain
+  conversations (counted from the end of the last one, whoever started it). Set both; a
+  minimum above the maximum pulls the maximum up with it. When the brain
   or the desk HAL isn't there, no chat happens and nothing is said about it.
 - If he says his higher functions are offline, the brain isn't running or can't be reached:
   check `tools/brain.sh status` (after a restart of the computer it has to be started again,

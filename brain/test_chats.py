@@ -89,6 +89,17 @@ class SubjectsTest(unittest.TestCase):
         self.assertEqual(got[0], "caf s and bells")  # printable ASCII only, like everything the HALs handle
         self.assertEqual(len(got[1]), subjects.MAX_SUBJECT)
 
+    def test_a_file_saved_with_a_byte_order_mark(self):
+        # Some editors put an invisible mark at the very start: the first note must stay a note.
+        path = self.write("\ufeff# a note at the top\nnaps\n")
+        self.assertEqual(subjects.load(path), ["naps"])
+
+    def test_a_huge_file_is_cut_short(self):
+        path = self.write("".join(f"subject number {n}\n" for n in range(5000)))
+        got = subjects.load(path)
+        self.assertEqual(len(got), subjects.MAX_SUBJECTS)
+        self.assertEqual(got[0], "subject number 0")
+
     def test_a_missing_or_empty_file_still_gives_them_something_to_say(self):
         for path in (pathlib.Path("/nonexistent/subjects.txt"), self.write("# nothing\n\n")):
             got = subjects.load(path)

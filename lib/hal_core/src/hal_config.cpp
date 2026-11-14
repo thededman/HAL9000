@@ -153,11 +153,9 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
     c.idleMinMinutes = d.idleMinMinutes;
     c.idleMaxMinutes = d.idleMaxMinutes;
   }
-  if (c.chatMinMinutes > c.chatMaxMinutes) {
-    warn("chat_min_minutes is larger than chat_max_minutes, using defaults for both");
-    Config d;
-    c.chatMinMinutes = d.chatMinMinutes;
-    c.chatMaxMinutes = d.chatMaxMinutes;
+  if (c.chatMinMinutes > c.chatMaxMinutes) {  // "at least this long": the maximum comes up to meet it
+    warn("chat_max_minutes raised to chat_min_minutes (" + std::to_string(c.chatMinMinutes) + ")");
+    c.chatMaxMinutes = c.chatMinMinutes;
   }
   return c;
 }

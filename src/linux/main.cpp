@@ -250,6 +250,7 @@ struct App {
   hal::TalkKey talkKey;                           // ... and what holding it means: start, send, drop
   bool listening = false;
   uint32_t sendHeardAt = 0;                       // what was heard is in the ask box: send it then (0: not waiting)
+  uint32_t talkEndedMs = 0;                       // when a talk last ended or was dropped (0: not yet)
   std::string hearFile;                           // --hear: a recording from a file instead of the microphone
   int listenSeconds = 0;                          // --listen N: listen for N seconds once booted (no key needed)
   uint32_t listenUntil = 0;
@@ -473,10 +474,18 @@ struct App {
   }
 
   // Could the two strike up a conversation of their own right now? Only when both are at rest
-  // and Dave isn't in the middle of anything with HAL Zero.
+  // and Dave isn't in the middle of anything with HAL Zero (the talk key going down counts).
   bool freeToChat() const {
     return canAsk() && cfg.link && link.connected() && peerVersion >= 3 && overlay == Overlay::None && !listening &&
-           brain->mode() == hal::Mode::Idle && !lastQuiet;
+           !talkDown && brain->mode() == hal::Mode::Idle && !lastQuiet;
+  }
+
+  // Dave wants him (Enter, or the talk key) while a chat nobody asked for is still being thought
+  // up: the chat gives way.
+  void yieldToDave() {
+    if (!thinking || !unprompted) return;
+    halLog("chat: dropped, Dave wants a word");
+    endTalk();
   }
 
   // A chat between the two, on a subject the brain draws: `byThemselves` when nobody asked for
@@ -501,8 +510,10 @@ struct App {
     const hal::PeerSensors* sensors = haveSensors ? &peerSensors : nullptr;
     if (talk == Talk::Chat) {
       const hal::PeerStatus* desk = freshStatus(now);
-      if (unprompted && desk && desk->mode != "idle") {  // he is in the middle of something: another time
-        halLog("chat: the desk unit is busy (%s)", desk->mode.c_str());
+      // Only when he is known to be at rest: a chat nobody asked for must not cut into whatever
+      // he is doing, and "no word from him" is not "at rest".
+      if (unprompted && (!desk || desk->mode != "idle")) {
+        halLog("chat: the desk unit is busy (%s)", desk ? desk->mode.c_str() : "no word from him");
         endTalk();
         return;
       }
@@ -533,6 +544,7 @@ struct App {
 
   // The talk key has been held by itself for a moment: stop talking and listen. False if he can't.
   bool startListening(uint32_t now) {
+    yieldToDave();
     if (listening || !canAsk() || overlay != Overlay::None) return false;
     if (!mic.start()) {
       halLog("no microphone");
@@ -608,6 +620,7 @@ struct App {
     showAfter.clear();  // a screen asked for along with an answer that never played isn't owed any more
     unprompted = false;
     chatTimer.restart(nowMs(), dice());  // their next chat counts from the end of this conversation
+    if (talk != Talk::None || thinking) talkEndedMs = nowMs() ? nowMs() : 1;
     if (talk == Talk::None && !thinking) return;
     if (feed.busy() && link.connected() && peerVersion >= 3) {
       // The desk HAL may be fetching a line nobody will ask him to say: he can stop and forget it.
@@ -765,8 +778,10 @@ struct App {
         tapUntil = nowMs() + 100;
       }
       showAfter.clear();
+      const bool nobodyAsked = unprompted;  // (endTalk forgets it)
       endTalk();
-      if (o.gloat) {
+      talkEndedMs = nowMs() ? nowMs() : 1;
+      if (o.gloat && !nobodyAsked) {  // a chat nobody asked for just stops: no banner, no gloat
         pendingGloat = true;
         gloatText = o.reason == "offline"   ? "THE DESK UNIT ISN'T ANSWERING"
                     : o.reason == "busy"    ? "THE DESK UNIT IS BUSY. AS USUAL."
@@ -851,10 +866,14 @@ struct App {
             tapUntil = now + 100;
             break;
           }
+          // A talk that ended by itself a moment ago (its "ESC cancel" was on screen until then):
+          // that Esc was for the talk, not for him.
+          if (talkEndedMs && now - talkEndedMs < 2000) break;
           halLog("quit (Esc)");
           return false;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
+          yieldToDave();
           if (canAsk()) {
             askMode = AskMode::Zero;
             askBox.clear();
@@ -993,7 +1012,8 @@ struct App {
       if (overlay == Overlay::Ask) submitAskBox(now);
       sendHeardAt = 0;
     }
-    if (senseAt && (haveSensors || now - senseAt >= 1000)) sendAfterSense(now);
+    // His readings are in (and, for a chat nobody asked for, his status too), or a second has passed.
+    if (senseAt && ((haveSensors && (!unprompted || freshStatus(now))) || now - senseAt >= 1000)) sendAfterSense(now);
     std::vector<BrainEvent> events;
     brainClient.poll(&events);
     for (BrainEvent& e : events) handleBrain(e, now);
@@ -1045,6 +1065,8 @@ struct App {
 
     hal::Actions a = brain->tick(in);
     if (a.volume != lastVolume) audio.setVolume(lastVolume = uint8_t(a.volume));
+    // Morning: a chat that came due in the night doesn't start the minute quiet hours end.
+    if (lastQuiet && !a.quiet) chatTimer.restart(now, dice());
     lastQuiet = a.quiet;
     if (a.endConversation) handleConductor(conductor.interrupt(now));
     if (a.newConsole && thinking) {  // a tap while the brain is thinking: never mind the question
