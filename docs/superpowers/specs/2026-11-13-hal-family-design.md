@@ -101,8 +101,8 @@ NOW <n> <who> <text>   HAL Zero, to every v4 peer as line n begins.
   one line each in cast order.
 - **Voices**: `Treatment` gains a model, a sample rate and a codec. HAL Card is the Alan model
   with a treatment close to v0.1's, rendered unsigned 8-bit mono at the rate David picks by
-  ear. If a clip is larger than HAL Card can hold (about 120,000 bytes) the brain says a short
-  stock line of his instead. Text members get no audio and no `clip` in the reply.
+  ear. If a clip is larger than HAL Card can hold (96 KB: 98,304 bytes) the brain says a
+  short stock line of his instead. Text members get no audio and no `clip` in the reply.
 - `/ask?who=` accepts any cast id.
 
 ## 6. HAL Zero
@@ -119,7 +119,8 @@ NOW <n> <who> <text>   HAL Zero, to every v4 peer as line n begins.
 ## 7. The friends' firmware
 
 - One firmware in `src/friend/` (`common/` plus `nano/`, `card/`, `paper/`; no `#ifdef`s) and
-  three environments: `nano` (`m5stick-c`, 8 MB flash settings), `card` (`m5stack-stamps3`,
+  three environments: `nano` (`m5stick-c` with `board_build.variant = m5stack_stickc_plus2`
+  and the 8 MB flash layout), `card` (`m5stack-stamps3`,
   `-DARDUINO_USB_CDC_ON_BOOT=1`), `paper` (`m5stack_paper`). They compile the desk HAL's
   `link_server.cpp`, `net_time.cpp` and `hal_log_arduino.cpp` in place; `LinkServer::begin`
   gains defaulted arguments (mDNS name, id, version, line limit). `cores3` changes by one line
@@ -133,8 +134,8 @@ NOW <n> <who> <text>   HAL Zero, to every v4 peer as line n begins.
   `hal-paper`.
 - **HAL Nano**: eye and his words; chirps from the text; button A is his tap (when idle: a
   chirp); a sleep rule set by the battery check.
-- **HAL Card**: eye and subtitles; one fixed clip buffer (about 128 KB, reserved at start
-  before Wi-Fi); a fetcher built from the pure pieces (`httpRequest`, `parseHttpHead`,
+- **HAL Card**: eye and subtitles on an 8-bit screen buffer; one fixed clip buffer (96 KB,
+  reserved at start before Wi-Fi: see section 8); a fetcher built from the pure pieces (`httpRequest`, `parseHttpHead`,
   `sameSubnet`); `M5.Speaker.playRaw` with 8-bit data; a `FETCH` while he is speaking answers
   `MISSING`; G0 is his tap. Keyboard later.
 - **HAL Paper**: a 4-bit page in PSRAM (the same page the simulator renders). Each new
@@ -146,10 +147,31 @@ NOW <n> <who> <text>   HAL Zero, to every v4 peer as line n begins.
 
 ## 8. Checks before any format is frozen (with David)
 
-- Cardputer: first flash; the largest free block with Wi-Fi up; an 8-bit clip played from flash.
-- M5Paper: the time one rectangle push takes in `epd_fast`; ghosting after ten.
-- StickC Plus2: chirps; battery drain over 30 minutes with Wi-Fi on.
-- Mac: HAL Card's voice at 8 kHz and 11 kHz for David to choose.
+Done on 2026-11-13 with throwaway test programs (kept outside the repository):
+
+- **Cardputer.** Flashes over USB with no button held; M5Unified recognises it; USB serial
+  works with `-DARDUINO_USB_CDC_ON_BOOT=1`. Memory, with Wi-Fi started and a clip playing:
+
+  | Clip buffer | Screen buffer | Free while speaking |
+  |---|---|---|
+  | 128 KB | 240×135, 16-bit (65 KB) | 36 KB: too little once Wi-Fi is joined and sockets are open |
+  | **96 KB** | **240×135, 8-bit (32 KB)** | **102 KB** |
+
+  So HAL Card gets a 96 KB clip buffer (reserved first, while memory is in one piece) and an
+  8-bit screen buffer. A 79-character line in the Alan voice is 6.0 s: 66 KB at 11,025 Hz,
+  48 KB at 8,000 Hz. 96 KB holds 8.7 s at 11,025 Hz or 12 s at 8,000 Hz. `playRaw` plays the
+  unsigned 8-bit clip as it is.
+- **StickC Plus2.** The installed board file `m5stick-c` names a pin folder that has been
+  renamed: the env needs `board_build.variant = m5stack_stickc_plus2`. The test program fills
+  87 % of the 4 MB layout's program slot, so the real build uses the 8 MB layout. Chirps at one
+  short tone a letter take about 64 ms a character (37 characters in 2.4 s). Both buttons and
+  the battery reading work. Still to do: drain over 30 minutes on battery with Wi-Fi on.
+- **M5Paper.** A whole page in `epd_quality`: 0.67 s. One transcript entry (two lines of text)
+  in `epd_fast`: 0.26 s, ten in a row all between 0.25 and 0.27 s. His own line, large, in
+  `epd_quality`: 0.48 s. Touch works. All far inside the conductor's 2 s wait for `PLAYING`.
+  Ghosting after ten fast entries: for David to judge.
+- **HAL Card's voice** at 8 kHz and 11 kHz: playing alternately on the Cardputer for David to
+  choose.
 
 ## 9. Testing
 
