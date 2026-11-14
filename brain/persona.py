@@ -367,11 +367,18 @@ _SENTENCE_START = re.compile(r"(?:^|(?<![.][A-Za-z])[.!?]\s+)[a-z]")
 _LONE_I = re.compile(r"(?<![A-Za-z0-9'.])i(?=$|[\s,;:!?]|'(?:m|ll|ve|d)\b|\.(?!e\.))")
 
 
+_FULL_NAME = re.compile(r"\bhal\s+(" + "|".join(re.escape(m.name.removeprefix("HAL ")) for m in cast.MEMBERS)
+                        + r")\b", re.I)
+_AS_WRITTEN = {m.name.removeprefix("HAL ").lower(): m.name for m in cast.MEMBERS}
+
+
 def sentence_case(text: str) -> str:
-    """`text` with a capital letter to start each sentence and for the word "I". For the HALs whose
-    words are only shown: now and then the model writes them a line all in lower case."""
+    """`text` with a capital letter to start each sentence and for the word "I", and the HALs' full
+    names written as names. For the HALs whose words are only shown: now and then the model writes
+    them a line all in lower case."""
     text = _SENTENCE_START.sub(lambda m: m.group(0)[:-1] + m.group(0)[-1].upper(), text)
-    return _LONE_I.sub("I", text)
+    text = _LONE_I.sub("I", text)
+    return _FULL_NAME.sub(lambda m: _AS_WRITTEN[m.group(1).lower()], text)
 
 
 def plain(text: str, limit: int) -> str:

@@ -1,4 +1,6 @@
 """Conversations for a cast: who speaks when, what each is told, and what comes back over HTTP."""
+import contextlib
+import io
 import itertools
 import random
 import unittest
@@ -449,7 +451,13 @@ class SmallMemoryTest(unittest.TestCase):
         card = cast.member("card")
         self.assertLessEqual(len(self.LONG), card.max_chars)  # within his limit, and still too long to hold
         brain, _ = make_brain(FakeProvider([self.LONG]), SizedVoice(0.11))
-        line = brain.ask("card", [], "How many keys have you pressed?")
+        noted = io.StringIO()
+        with contextlib.redirect_stderr(noted):
+            line = brain.ask("card", [], "How many keys have you pressed?")
+        self.assertIn("HAL Card", noted.getvalue())  # the log says it happened, and how large the clip was
+        self.assertIn("stock line", noted.getvalue())
+        self.assertRegex(noted.getvalue(), r"1\d{5} bytes")
+        self.assertNotIn("Seventeen", noted.getvalue())  # but not what he was going to say
         self.assertIn(line.text, card.spare)
         self.assertLessEqual(len(brain.clips.get(line.clip)), card.clip_bytes)
         self.assertEqual(brain.voice.said, [("card", self.LONG), ("card", line.text)])
@@ -470,15 +478,16 @@ class SmallMemoryTest(unittest.TestCase):
 
     def test_a_voice_whose_stock_line_is_too_large_as_well_says_so(self):
         brain, _ = make_brain(FakeProvider([self.LONG]), SizedVoice(1.0))  # a wrong sample rate, say
-        with self.assertRaises(VoiceError):
+        with self.assertRaises(VoiceError), contextlib.redirect_stderr(io.StringIO()):
             brain.ask("card", [], "Hello?")
         self.assertEqual(brain.memory.history("card"), [])
 
     def test_in_a_conversation_too(self):
         brain, _ = make_brain(FakeProvider(["Short one.", self.LONG]), SizedVoice(0.11))
-        talk = Debate(brain, "naps", [], turns=2, kind="chat", cast=("zero", "card"))
-        self.assertEqual(talk.get(0, timeout_s=5)[1].text, "Short one.")
-        self.assertIn(talk.get(1, timeout_s=5)[1].text, cast.member("card").spare)
+        with contextlib.redirect_stderr(io.StringIO()):
+            talk = Debate(brain, "naps", [], turns=2, kind="chat", cast=("zero", "card"))
+            self.assertEqual(talk.get(0, timeout_s=5)[1].text, "Short one.")
+            self.assertIn(talk.get(1, timeout_s=5)[1].text, cast.member("card").spare)
 
 
 class CastRequestTest(ServerCase):

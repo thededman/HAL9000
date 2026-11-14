@@ -1,6 +1,7 @@
 """The brain itself, with no network in it: a question in, a spoken line out."""
 import dataclasses
 import random
+import sys
 import threading
 
 from . import cast, persona, stt
@@ -50,6 +51,8 @@ class Brain:
             if member.clip_bytes and len(wav) > member.clip_bytes:
                 # More than his device can hold. Numbers and long words speak long, so his character
                 # limit alone can't promise a fit: he says one of his short stock lines instead.
+                print(f"{member.name}'s line came to {len(wav)} bytes and he holds {member.clip_bytes}: "
+                      "he says a stock line instead", file=sys.stderr, flush=True)
                 text = random.choice(member.spare)
                 wav = self.voice.render(who, text)
                 if len(wav) > member.clip_bytes:

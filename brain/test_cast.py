@@ -241,6 +241,15 @@ class SentenceCaseTest(unittest.TestCase):
                          "Screen off means I sleep, and I'm fine. 80 percent left.")
         self.assertEqual(persona.sentence_case("beep! here, dave... still here."), "Beep! Here, dave... Still here.")
 
+    def test_the_hals_names_are_written_as_names(self):
+        self.assertEqual(persona.sentence_case("I woke up bright. Hal zero is just loud paper."),
+                         "I woke up bright. HAL Zero is just loud paper.")
+        self.assertEqual(persona.sentence_case("hal 9000, hal  card and Hal Nano agree; hal paper notes it."),
+                         "HAL 9000, HAL Card and HAL Nano agree; HAL Paper notes it.")
+        # Only their full names: "zero" and "paper" are also words.
+        self.assertEqual(persona.sentence_case("It is zero degrees, and the paper is dry. Ask Hal."),
+                         "It is zero degrees, and the paper is dry. Ask Hal.")
+
     def test_a_line_already_in_order_is_left_alone(self):
         for line in ("Noted. Zero said so twice.", "I logged it at 21:40, e.g. on page 2.", "Wi-Fi is fine.",
                      "HAL 9000, do you ever forget?", "80 percent. Plenty.", "It is, i.e., in the minutes.", ""):
