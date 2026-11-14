@@ -1,6 +1,7 @@
 #include "link_server.h"
 
 #include <ESPmDNS.h>
+#include <lwip/sockets.h>
 
 #include "hal_log.h"
 
@@ -18,17 +19,23 @@ void LinkServer::poll(std::vector<hal::Message>* in, bool* dropped) {
   in->clear();
   *dropped = false;
   if (!server_) return;
-  if (!client_ || !client_.connected()) {
+  const uint32_t now = millis();
+  if (!client_.connected()) {
     if (hadClient_) {
-      halLog("link: HAL Zero hung up");
+      if (!hungUp_) halLog("link: HAL Zero hung up");
       *dropped = true;
-      hadClient_ = false;
+      hadClient_ = hungUp_ = false;
+      // Nobody else comes in on this pass: the caller sees the link down for one pass, and so
+      // greets whoever is next as a new peer instead of carrying on with the last one's state.
+      return;
     }
+    if (guard_.coolingOff(now)) return;  // someone flooded us a moment ago: nobody in just yet
     WiFiClient c = server_->available();
     if (c) {
       client_ = c;
       client_.setNoDelay(true);
       hadClient_ = true;
+      guard_.newPeer();
       halLog("link: HAL Zero connected from %s", client_.remoteIP().toString().c_str());
       hal::Message hello;
       hello.type = hal::MsgType::Hello;
@@ -38,30 +45,43 @@ void LinkServer::poll(std::vector<hal::Message>* in, bool* dropped) {
     }
     return;
   }
-  char buf[128];
-  while (client_.available()) {
-    int n = client_.read(reinterpret_cast<uint8_t*>(buf), sizeof buf);
-    if (n <= 0) break;
-    for (const std::string& line : splitter_.feed(buf, size_t(n))) {
-      hal::Message m = hal::parseMessage(line);
-      if (m.type == hal::MsgType::Invalid) continue;
-      in->push_back(m);
-      ++msgsIn_;
-      last_ = line;
-    }
+  // The guard decides how much is read and handed over in one pass (see hal_link.h); read()
+  // only returns what has already arrived, so this never waits.
+  auto read = [this](char* buf, size_t max) { return client_.read(reinterpret_cast<uint8_t*>(buf), max); };
+  if (!guard_.take(now, read, in)) {
+    hangUp("sent more than a HAL Zero ever does");
+    return;
   }
+  msgsIn_ += int(in->size());
+  if (!in->empty()) last_ = guard_.lastLine();
 }
 
 bool LinkServer::send(const hal::Message& m) {
-  if (!client_ || !client_.connected()) return false;
-  std::string line = hal::formatMessage(m) + "\n";
-  bool ok = client_.write(reinterpret_cast<const uint8_t*>(line.data()), line.size()) == line.size();
-  if (ok) ++msgsOut_;
-  return ok;
+  if (!client_.connected()) return false;
+  const std::string line = hal::formatMessage(m) + "\n";
+  // Not client_.write(): the core's write waits for a peer who has stopped reading, a second at
+  // a time and up to ten times over, with the eye and the touch screen frozen meanwhile. This
+  // asks the socket once, without waiting. A line is at most 129 bytes and the socket keeps
+  // 5744 for the peer, so a HAL Zero who is reading always has room. If the whole line doesn't
+  // go, the peer has stopped reading or the network has gone: hang up, as HAL Zero does to us
+  // (src/linux/link_client.cpp). Half a line can't be taken back, so that ends it as well.
+  const int took = lwip_send(client_.fd(), line.data(), line.size(), MSG_DONTWAIT);
+  if (took != int(line.size())) {
+    hangUp("has stopped reading");
+    return false;
+  }
+  ++msgsOut_;
+  return true;
 }
 
 void LinkServer::drop() {
   if (client_) client_.stop();
+}
+
+void LinkServer::hangUp(const char* why) {
+  halLog("link: hanging up on %s: he %s", client_.remoteIP().toString().c_str(), why);
+  client_.stop();
+  hungUp_ = true;
 }
 
 std::string LinkServer::peerAddress() {
