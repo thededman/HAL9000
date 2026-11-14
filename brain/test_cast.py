@@ -107,7 +107,7 @@ class RegistryTest(unittest.TestCase):
 
     def test_longest_lines(self):
         self.assertEqual({m.id: m.max_chars for m in cast.MEMBERS},
-                         {"zero": 150, "desk": 150, "nano": 80, "paper": 100, "card": 120})
+                         {"zero": 150, "desk": 150, "nano": 80, "paper": 100, "card": 110})
         self.assertEqual(max(m.max_chars for m in cast.MEMBERS), persona.MAX_CHARS)
 
     def test_who_speaks_and_who_only_shows_his_words(self):
@@ -128,7 +128,7 @@ class RegistryTest(unittest.TestCase):
 
     def test_hal_card_has_a_small_memory_and_lines_for_when_it_overflows(self):
         card = cast.member("card")
-        self.assertEqual(card.clip_bytes, 120_000)
+        self.assertEqual(card.clip_bytes, 98_304)  # 96 KB, measured on the real Cardputer
         self.assertGreaterEqual(len(card.spare), 2)
         for line in card.spare:
             self.assertLessEqual(len(line), 70, line)  # short, so the stand-in is sure to fit

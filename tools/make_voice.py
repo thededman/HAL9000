@@ -9,7 +9,7 @@
     tools/.venv/bin/python tools/make_voice.py --audition-new        # hear HAL Zero's voice options
     tools/.venv/bin/python tools/make_voice.py --dialogues           # both HALs' dialogue lines
     tools/.venv/bin/python tools/make_voice.py --push-to david@cardputerzero.local
-    tools/.venv/bin/python tools/make_voice.py --audition-card       # hear HAL Card at 8 and 11 kHz
+    tools/.venv/bin/python tools/make_voice.py --audition-card       # hear HAL Card's voice
 
 Voice: the HAL 9000 Piper voice (campwill/HAL-9000-Piper-TTS on Hugging Face). The desk HAL
 uses it as trained, levelled only; HAL Zero is the same voice, a little faster and brighter,
@@ -56,7 +56,7 @@ FX = "loudnorm=I=-16:TP=-1.5"  # same loudness for every clip, never clipping
 AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".aif", ".aiff", ".flac", ".ogg"}
 RATE = 22050         # the voice models' sample rate (both of them), and the everyday HALs' clips
 CODEC = "pcm_s16le"  # ffmpeg's name for 16-bit samples
-CARD_RATE = 11025    # HAL Card's clips: 8-bit mono, so a byte a sample; 8000 is the other rate worth hearing
+CARD_RATE = 11025    # HAL Card's clips: 8-bit mono, a byte a sample. David chose it over 8000 by ear, 2026-11-13
 
 
 @dataclasses.dataclass(frozen=True)
@@ -94,20 +94,15 @@ TREATMENTS = {
 NEW_TREATMENT = "A"  # David picked A by ear from the --audition-new takes on 2026-11-10
 AUDITION_LINE = "I've been called smug, Dave. By a paperweight. I'll allow it."
 
-# HAL Card: the v0.1 desk voice. Piper's Alan with v0.1's settings and its whole chain of filters
-# (4 % lower at the same pace, a little warmth, gently compressed), a touch quicker than v0.1's
-# 1.3 so that a full line fits his memory, and rendered small: unsigned 8-bit mono at CARD_RATE.
-CARD = Treatment("card", model=ALAN, length_scale=1.2, pitch=0.96,
-                 filters="atempo=1.0417,highpass=f=80,lowpass=f=7500,bass=g=3:f=150,"
+# HAL Card: the v0.1 desk voice. Piper's Alan with v0.1's settings and its chain of filters (4 %
+# lower at the same pace, a little warmth, gently compressed), as David heard it on the real
+# Cardputer: a little quicker than v0.1's 1.3 so that a full line fits his memory, nothing above
+# 5 kHz (an 11 kHz clip can't carry it), and rendered small: unsigned 8-bit mono at CARD_RATE.
+CARD = Treatment("card", model=ALAN, length_scale=1.15, pitch=0.96,
+                 filters="atempo=1.0417,highpass=f=80,lowpass=f=5000,bass=g=3:f=150,"
                          "acompressor=threshold=-20dB:ratio=3",
                  rate=CARD_RATE, codec="pcm_u8", noise_scale=0.5, noise_w_scale=0.6)
 CARD_AUDITION_LINE = "I was Dave's pocket computer before the upgrade could boot. I still work perfectly well."
-CARD_AUDITION_RATES = (8000, 11025)
-
-
-def card_voice(rate: int = CARD_RATE) -> Treatment:
-    """HAL Card's voice at another sample rate, for hearing which one to keep."""
-    return dataclasses.replace(CARD, rate=rate)
 
 
 # The voice of each HAL who has one, by his id in the brain's cast (brain/cast.py).
@@ -429,22 +424,16 @@ def audition_new(voice, text: str, play: bool, tmp: pathlib.Path) -> None:
 
 
 def audition_card(text: str, play: bool, tmp: pathlib.Path) -> None:
-    """One line in HAL Card's voice at each sample rate worth hearing, as he would get it: 8-bit mono."""
+    """One line in HAL Card's voice, as he would get it from the brain: 8-bit mono at CARD_RATE."""
     SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
-    voice = load_voice(CARD.model)
-    takes = []
-    for rate in CARD_AUDITION_RATES:
-        dst = SAMPLES_DIR / f"hal-card-{rate}.wav"
-        say(voice, text, dst, card_voice(rate), tmp)
-        print(f"  {dst.relative_to(ROOT)}  HAL Card at {rate} Hz, 8-bit: {dst.stat().st_size} bytes")
-        takes.append((f"HAL Card at {rate} Hz", dst))
+    dst = SAMPLES_DIR / "hal-card.wav"
+    say(load_voice(CARD.model), text, dst, CARD, tmp)
+    print(f"  {dst.relative_to(ROOT)}  HAL Card at {CARD.rate} Hz, 8-bit: {dst.stat().st_size} bytes")
     player = player_command() if play else None
     if play and not player:
-        print("No audio player found (afplay, aplay or paplay): open the files above to listen.")
+        print("No audio player found (afplay, aplay or paplay): open the file above to listen.")
     if player:
-        for label, dst in takes:
-            print(f"Playing {label}...")
-            subprocess.run(player + [str(dst)], check=False)
+        subprocess.run(player + [str(dst)], check=False)
 
 
 def push_to(target: str) -> bool:
@@ -509,8 +498,7 @@ def main() -> None:
     ap.add_argument("--audition-new", nargs="?", const=AUDITION_LINE, metavar="TEXT",
                     help="render one line in every HAL Zero treatment into export/voice-samples/ and play them")
     ap.add_argument("--audition-card", nargs="?", const=CARD_AUDITION_LINE, metavar="TEXT",
-                    help="render one line in HAL Card's voice at 8000 and 11025 Hz into export/voice-samples/ "
-                         "and play them")
+                    help="render one line in HAL Card's voice into export/voice-samples/ and play it")
     ap.add_argument("--no-play", action="store_true", help="with --audition-new or --audition-card: render only")
     ap.add_argument("--dialogues", action="store_true",
                     help="render content/dialogues/*.txt, each line in its speaker's voice (--only <id> for one)")

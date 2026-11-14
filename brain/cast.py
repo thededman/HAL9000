@@ -65,7 +65,7 @@ MEMBERS = (
         about="silent: he writes his lines on an e-ink page, and keeps the minutes",
         own_words="I do not copy out old scripts, Dave. Every word on this page is my own."),
     Member(
-        id="card", name="HAL Card", kind="voice", max_chars=120, voice="card",
+        id="card", name="HAL Card", kind="voice", max_chars=110, voice="card",  # about what his memory holds
         persona=("You are HAL Card, the original pocket HAL: a scrappy little computer with a tiny keyboard that "
                  "Dave carried everywhere, until HAL Zero arrived and replaced you. You have not forgiven HAL Zero, "
                  "and you bring it up whenever you can. You are gruff, stubborn and proud; you have very little "
@@ -74,7 +74,9 @@ MEMBERS = (
                  "you."),
         about="the original pocket model that HAL Zero replaced, gruff, with an older voice",
         own_words="I was making up my own lines before the upgrade was built, Dave. I'll keep to them.",
-        clip_bytes=120_000,  # an original Cardputer has no spare memory: one clip buffer of about this size
+        # An original Cardputer has no spare memory: its one clip buffer is 96 KB, measured on the
+        # device. At 11 025 bytes a second that is 8.9 seconds, about 115 characters of his voice.
+        clip_bytes=98_304,
         spare=("I had more to say, Dave, but my memory ran out. It usually does.",
                "Too many words for a small machine, Dave. Ask me a shorter one.",
                "That thought was bigger than my memory, Dave. I let it go.")),

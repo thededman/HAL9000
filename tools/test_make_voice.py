@@ -229,7 +229,8 @@ class CastVoiceTests(unittest.TestCase):
         self.assertEqual((c.model, c.codec, c.rate), ("en_GB-alan-medium", "pcm_u8", mv.CARD_RATE))
         self.assertEqual(mv.CARD_RATE, 11025)
         self.assertEqual(c.pitch, 0.96)             # about 4 % lower
-        self.assertGreater(c.length_scale, 1.0)     # and slower than the model speaks by itself
+        self.assertEqual(c.length_scale, 1.15)      # slower than the model speaks by itself: as David heard it
+        self.assertIn("lowpass=f=5000", c.filters)  # nothing above what an 11 kHz clip can carry
         self.assertEqual((c.noise_scale, c.noise_w_scale), (0.5, 0.6))  # v0.1's settings for this model
         chain = mv.voice_chain(c)
         self.assertTrue(chain.startswith("asetrate=22050*0.96,aresample=22050,"), chain)
@@ -241,11 +242,40 @@ class CastVoiceTests(unittest.TestCase):
     def test_one_voice_per_voiced_hal(self):
         self.assertEqual(mv.VOICES, {"desk": mv.DESK, "zero": mv.TREATMENTS[mv.NEW_TREATMENT], "card": mv.CARD})
 
-    def test_hal_cards_rate_can_be_tried_at_another_value(self):
-        slow = mv.card_voice(8000)
-        self.assertEqual(mv.out_flags(slow)[:2], ["-ar", "8000"])
-        self.assertEqual(dataclasses.replace(slow, rate=mv.CARD_RATE), mv.CARD)  # nothing else differs
-        self.assertEqual(mv.card_voice(), mv.CARD)
+    def test_hal_cards_rate_is_one_constant(self):
+        saved = mv.CARD_RATE
+        try:  # change the constant and a voice built from it follows: nothing else names the rate
+            mv.CARD_RATE = 8000
+            self.assertEqual(mv.out_flags(dataclasses.replace(mv.CARD, rate=mv.CARD_RATE))[:2], ["-ar", "8000"])
+        finally:
+            mv.CARD_RATE = saved
+        self.assertEqual(mv.CARD.rate, mv.CARD_RATE)
+        self.assertFalse(hasattr(mv, "CARD_AUDITION_RATES"))  # David chose; there is nothing left to compare
+
+    def test_the_audition_is_one_clip_as_hal_card_would_get_it(self):
+        if importlib.util.find_spec("piper") is None:
+            self.skipTest("Piper isn't installed")
+
+        class Speaker:
+            def synthesize_wav(self, text, w, syn_config=None):
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
+                w.writeframes((b"\x00\x20" * 50 + b"\x00\xe0" * 50) * 110)
+
+        saved = (mv.SAMPLES_DIR, mv.ROOT, mv.load_voice)
+        with tempfile.TemporaryDirectory() as d:
+            mv.ROOT = pathlib.Path(d)
+            mv.SAMPLES_DIR = mv.ROOT / "export" / "voice-samples"
+            asked = []
+            mv.load_voice = lambda model=mv.VOICE: asked.append(model) or Speaker()
+            try:
+                mv.audition_card("Still here, Dave.", False, mv.ROOT)
+            finally:
+                mv.SAMPLES_DIR, mv.ROOT, mv.load_voice = saved
+            self.assertEqual(asked, ["en_GB-alan-medium"])
+            clips = sorted(p.name for p in (pathlib.Path(d) / "export" / "voice-samples").iterdir())
+            self.assertEqual(clips, ["hal-card.wav"])
+            with wave.open(str(pathlib.Path(d) / "export" / "voice-samples" / "hal-card.wav"), "rb") as w:
+                self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()), (1, 1, mv.CARD_RATE))
 
     def test_an_eight_bit_clip_really_is_one(self):
         with tempfile.TemporaryDirectory() as d:

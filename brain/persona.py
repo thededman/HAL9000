@@ -51,11 +51,11 @@ def _rules(who: str, rules: str = RULES) -> str:
     limit = member.max_chars
     if limit == MAX_CHARS:
         return rules
-    length = (f"Reply in 1 or 2 short sentences, at most {limit} characters." if limit >= 120 else
-              f"Reply in 1 short sentence, at most {limit} characters (about {limit // 7} words).")
-    if member.kind == "text":  # (no word about capitals here: see sentence_case)
-        length += " Your words are read on a screen: write them as ordinary sentences."
-    return rules.replace(_LENGTH, length)
+    if member.kind != "text":
+        return rules.replace(_LENGTH, f"Reply in 1 or 2 short sentences, at most {limit} characters.")
+    return rules.replace(_LENGTH,  # (no word about capitals here: see sentence_case)
+                         f"Reply in 1 short sentence, at most {limit} characters (about {limit // 7} words). "
+                         "Your words are read on a screen: write them as ordinary sentences.")
 
 
 def other(who: str) -> str:
