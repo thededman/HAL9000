@@ -9,10 +9,15 @@
     tools/.venv/bin/python tools/make_voice.py --audition-new        # hear HAL Zero's voice options
     tools/.venv/bin/python tools/make_voice.py --dialogues           # both HALs' dialogue lines
     tools/.venv/bin/python tools/make_voice.py --push-to david@cardputerzero.local
+    tools/.venv/bin/python tools/make_voice.py --audition-card       # hear HAL Card's voice
 
 Voice: the HAL 9000 Piper voice (campwill/HAL-9000-Piper-TTS on Hugging Face). The desk HAL
 uses it as trained, levelled only; HAL Zero is the same voice, a little faster and brighter,
 with a faint metallic edge. Output: 22 050 Hz mono 16-bit.
+
+HAL Card, an optional friend on an original Cardputer, speaks with the project's first voice
+(Piper's en_GB-alan-medium, slowed and lowered as in v0.1), in small 8-bit clips: his lines
+are written and rendered by the brain as he says them, so this tool only auditions him.
 """
 from __future__ import annotations
 
@@ -38,6 +43,7 @@ MODELS_DIR = ROOT / "tools" / "models"
 TEMPLATE_CONFIG = ROOT / "sd-template" / "hal" / "config.txt"
 
 VOICE = "hal"
+ALAN = "en_GB-alan-medium"  # the voice v0.1 shipped with; HAL Card still speaks with it
 # Pinned to the revision David listened to, so a re-download can't change the voice.
 VOICE_URL = ("https://huggingface.co/campwill/HAL-9000-Piper-TTS/resolve/"
              "5ad905a1f42cb33364df9d3856491bca8738b9fa/")
@@ -47,20 +53,34 @@ LENGTH_SCALE = 1.0
 NOISE_SCALE = 0.667
 NOISE_W_SCALE = 0.8
 FX = "loudnorm=I=-16:TP=-1.5"  # same loudness for every clip, never clipping
-OUT_FLAGS = ["-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", "-map_metadata", "-1", "-fflags", "+bitexact"]
 AUDIO_EXTS = {".mp3", ".m4a", ".wav", ".aif", ".aiff", ".flac", ".ogg"}
-RATE = 22050  # the voice model's sample rate
+RATE = 22050         # the voice models' sample rate (both of them), and the everyday HALs' clips
+CODEC = "pcm_s16le"  # ffmpeg's name for 16-bit samples
+CARD_RATE = 11025    # HAL Card's clips: 8-bit mono, a byte a sample. David chose it over 8000 by ear, 2026-11-13
 
 
 @dataclasses.dataclass(frozen=True)
 class Treatment:
-    """How one HAL sounds: Piper's speed, then a pitch lift and tone filters, then levelling."""
+    """How one HAL sounds: his Piper model and its speed, then a pitch shift and tone filters, then
+    levelling; and the clip that comes out, as a sample rate and ffmpeg's name for the samples."""
     name: str
     length_scale: float = LENGTH_SCALE
-    pitch: float = 1.0   # asetrate factor: a little higher and a little quicker
-    filters: str = ""    # ffmpeg filters between the pitch lift and loudnorm
+    pitch: float = 1.0   # asetrate factor: above 1 a little higher and quicker, below 1 lower and slower
+    filters: str = ""    # ffmpeg filters between the pitch shift and loudnorm
+    model: str = VOICE   # the Piper model, by its file name in tools/models without ".onnx"
+    rate: int = RATE     # the clip's sample rate
+    codec: str = CODEC   # the clip's samples: 16-bit, or pcm_u8 (unsigned 8-bit) for HAL Card
+    noise_scale: float = NOISE_SCALE
+    noise_w_scale: float = NOISE_W_SCALE
 
 
+def out_flags(tone: Treatment | None = None) -> list[str]:
+    """ffmpeg's output settings for a voice's clips: mono, its rate and samples, no metadata."""
+    tone = tone or Treatment("")
+    return ["-ar", str(tone.rate), "-ac", "1", "-c:a", tone.codec, "-map_metadata", "-1", "-fflags", "+bitexact"]
+
+
+OUT_FLAGS = out_flags()  # 22 050 Hz mono 16-bit: every clip on the desk HAL's card and on HAL Zero
 DESK = Treatment("desk")
 # HAL Zero's three candidates for --audition-new. All brighter and quicker than the desk HAL.
 TREATMENTS = {
@@ -73,6 +93,20 @@ TREATMENTS = {
 }
 NEW_TREATMENT = "A"  # David picked A by ear from the --audition-new takes on 2026-11-10
 AUDITION_LINE = "I've been called smug, Dave. By a paperweight. I'll allow it."
+
+# HAL Card: the v0.1 desk voice. Piper's Alan with v0.1's settings and its chain of filters (4 %
+# lower at the same pace, a little warmth, gently compressed), as David heard it on the real
+# Cardputer: a little quicker than v0.1's 1.3 so that a full line fits his memory, nothing above
+# 5 kHz (an 11 kHz clip can't carry it), and rendered small: unsigned 8-bit mono at CARD_RATE.
+CARD = Treatment("card", model=ALAN, length_scale=1.15, pitch=0.96,
+                 filters="atempo=1.0417,highpass=f=80,lowpass=f=5000,bass=g=3:f=150,"
+                         "acompressor=threshold=-20dB:ratio=3",
+                 rate=CARD_RATE, codec="pcm_u8", noise_scale=0.5, noise_w_scale=0.6)
+CARD_AUDITION_LINE = "I was Dave's pocket computer before the upgrade could boot. I still work perfectly well."
+
+
+# The voice of each HAL who has one, by his id in the brain's cast (brain/cast.py).
+VOICES = {"desk": DESK, "zero": TREATMENTS[NEW_TREATMENT], "card": CARD}
 
 MAX_DIALOGUE_LINES = 99
 DIALOGUE_GAP_MS = 400  # the conductor's silence between lines, unless the script says PAUSE
@@ -136,7 +170,7 @@ def daisy_filter(i: int, voice: Treatment = DESK) -> str:
 
 
 def voice_chain(voice: Treatment) -> str:
-    """The ffmpeg chain after Piper: pitch lift and tone (HAL Zero only), then levelling."""
+    """The ffmpeg chain after Piper: pitch shift and tone (none for the desk HAL), then levelling."""
     parts = []
     if voice.pitch != 1.0:
         parts.append(f"asetrate={RATE}*{voice.pitch:.2f},aresample={RATE}")
@@ -249,15 +283,48 @@ def push_commands(target: str) -> list[list[str]]:
 
 # ---------- rendering ----------
 
-def ffmpeg(src: pathlib.Path, dst: pathlib.Path, chain: str | None) -> None:
+def ffmpeg(src: pathlib.Path, dst: pathlib.Path, chain: str | None, flags: list[str] | None = None) -> None:
     cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", str(src)]
     if chain:
         cmd += ["-af", chain]
-    cmd += OUT_FLAGS + [str(dst)]
+    cmd += (flags or OUT_FLAGS) + [str(dst)]
     subprocess.run(cmd, check=True)
 
 
-def load_voice():
+def model_files(model: str) -> list[str]:
+    """The two files a Piper voice is made of, its settings first."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", model):
+        raise ValueError(f"not the name of a voice model: {model!r}")
+    return [f"{model}.onnx.json", f"{model}.onnx"]
+
+
+def fetch_command(model: str) -> list[str]:
+    """Piper's own downloader, for one of its published voices."""
+    return [sys.executable, "-m", "piper.download_voices", "--download-dir", str(MODELS_DIR), model]
+
+
+def ensure_model(model: str, run=subprocess.run, fetch=urllib.request.urlretrieve) -> None:
+    """Fetch a voice's files into tools/models if they aren't there yet: the HAL voice from the
+    revision David listened to, any other (HAL Card's) with Piper's own downloader, as v0.1 did."""
+    names = model_files(model)
+    if all((MODELS_DIR / name).exists() for name in names):
+        return
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    if model != VOICE:
+        print(f"Downloading the {model} voice with Piper's downloader...")
+        run(fetch_command(model), check=True)
+        return
+    for name in names:
+        dst = MODELS_DIR / name
+        if not dst.exists():
+            print(f"Downloading {name} from Hugging Face...")
+            part = dst.with_name(dst.name + ".part")
+            fetch(VOICE_URL + name, part)
+            part.rename(dst)
+
+
+def _piper():
+    """Piper's voice class, once it is sure to work here (exits saying what to do when it won't)."""
     try:
         from piper import PiperVoice
         from piper.phonemize_espeak import ESPEAK_DATA_DIR
@@ -267,29 +334,33 @@ def load_voice():
     if len(str(ESPEAK_DATA_DIR)) >= 150:
         sys.exit(f"Piper's speech data path is too long for espeak (max ~160 chars):\n  {ESPEAK_DATA_DIR}\n"
                  "Move the venv somewhere with a shorter path.")
-    model = MODELS_DIR / f"{VOICE}.onnx"
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    for name in (f"{VOICE}.onnx.json", f"{VOICE}.onnx"):
-        dst = MODELS_DIR / name
-        if not dst.exists():
-            print(f"Downloading {name} from Hugging Face...")
-            part = dst.with_name(dst.name + ".part")
-            urllib.request.urlretrieve(VOICE_URL + name, part)
-            part.rename(dst)
-    return PiperVoice.load(str(model))
+    return PiperVoice
 
 
-def synth(voice, text: str, dst: pathlib.Path, length_scale: float) -> None:
+_LOADED: dict[str, object] = {}  # one loaded voice per model file
+
+
+def load_voice(model: str = VOICE):
+    """A Piper voice, loaded once and kept: the HAL voice, or the one named."""
+    if model not in _LOADED:
+        piper_voice = _piper()  # before anything is fetched
+        ensure_model(model)
+        _LOADED[model] = piper_voice.load(str(MODELS_DIR / f"{model}.onnx"))
+    return _LOADED[model]
+
+
+def synth(voice, text: str, dst: pathlib.Path, length_scale: float, tone: Treatment = DESK) -> None:
     from piper import SynthesisConfig
-    cfg = SynthesisConfig(length_scale=length_scale, noise_scale=NOISE_SCALE, noise_w_scale=NOISE_W_SCALE)
+    cfg = SynthesisConfig(length_scale=length_scale, noise_scale=tone.noise_scale, noise_w_scale=tone.noise_w_scale)
     with wave.open(str(dst), "wb") as w:
         voice.synthesize_wav(text, w, syn_config=cfg)
 
 
 def say(voice, text: str, dst: pathlib.Path, tone: Treatment, tmp: pathlib.Path) -> None:
+    """One line as a clip: `voice` is the loaded model `tone` names (see load_voice)."""
     raw = tmp / "raw.wav"
-    synth(voice, text, raw, tone.length_scale)
-    ffmpeg(raw, dst, voice_chain(tone))
+    synth(voice, text, raw, tone.length_scale, tone)
+    ffmpeg(raw, dst, voice_chain(tone), out_flags(tone))
 
 
 def clear_wavs(folder: pathlib.Path) -> None:
@@ -308,7 +379,7 @@ def render_folder(voice, txt: pathlib.Path, tmp: pathlib.Path,
     for i, line in enumerate(lines):
         if folder == "daisy":
             raw = tmp / "raw.wav"
-            synth(voice, line, raw, tone.length_scale + 0.25 * i)
+            synth(voice, line, raw, tone.length_scale + 0.25 * i, tone)
             ffmpeg(raw, out_dir / out_name(i + 1, line), daisy_filter(i, tone))
         else:
             say(voice, line, out_dir / out_name(i + 1, line), tone, tmp)
@@ -350,6 +421,19 @@ def audition_new(voice, text: str, play: bool, tmp: pathlib.Path) -> None:
         for label, _, dst in takes:
             print(f"Playing {label}...")
             subprocess.run(player + [str(dst)], check=False)
+
+
+def audition_card(text: str, play: bool, tmp: pathlib.Path) -> None:
+    """One line in HAL Card's voice, as he would get it from the brain: 8-bit mono at CARD_RATE."""
+    SAMPLES_DIR.mkdir(parents=True, exist_ok=True)
+    dst = SAMPLES_DIR / "hal-card.wav"
+    say(load_voice(CARD.model), text, dst, CARD, tmp)
+    print(f"  {dst.relative_to(ROOT)}  HAL Card at {CARD.rate} Hz, 8-bit: {dst.stat().st_size} bytes")
+    player = player_command() if play else None
+    if play and not player:
+        print("No audio player found (afplay, aplay or paplay): open the file above to listen.")
+    if player:
+        subprocess.run(player + [str(dst)], check=False)
 
 
 def push_to(target: str) -> bool:
@@ -413,15 +497,17 @@ def main() -> None:
                     help=f"HAL Zero's voice treatment (default {NEW_TREATMENT})")
     ap.add_argument("--audition-new", nargs="?", const=AUDITION_LINE, metavar="TEXT",
                     help="render one line in every HAL Zero treatment into export/voice-samples/ and play them")
-    ap.add_argument("--no-play", action="store_true", help="with --audition-new: render only")
+    ap.add_argument("--audition-card", nargs="?", const=CARD_AUDITION_LINE, metavar="TEXT",
+                    help="render one line in HAL Card's voice into export/voice-samples/ and play it")
+    ap.add_argument("--no-play", action="store_true", help="with --audition-new or --audition-card: render only")
     ap.add_argument("--dialogues", action="store_true",
                     help="render content/dialogues/*.txt, each line in its speaker's voice (--only <id> for one)")
     ap.add_argument("--push-to", metavar="USER@HOST", help="rsync build/new/hal to ~/hal on the Cardputer")
     args = ap.parse_args()
 
     tone_new = TREATMENTS[args.treatment]
-    # --dialogues, --audition-new and a bare --push-to don't re-render the folders of lines.
-    render_lines = not (args.skip_render or args.dialogues or args.audition_new
+    # --dialogues, the auditions and a bare --push-to don't re-render the folders of lines.
+    render_lines = not (args.skip_render or args.dialogues or args.audition_new or args.audition_card
                         or (args.push_to and args.model == "old"))
     if render_lines or args.dialogues or args.audition_new:
         voice = load_voice()
@@ -429,6 +515,8 @@ def main() -> None:
         tmp = pathlib.Path(tmp_name)
         if args.audition_new:
             audition_new(voice, args.audition_new, not args.no_play, tmp)
+        if args.audition_card:
+            audition_card(args.audition_card, not args.no_play, tmp)
         if args.dialogues:
             total = render_dialogues(voice, load_dialogues(args.only), tone_new, tmp)
             print(f"Rendered {total} dialogue lines (HAL Zero treatment {tone_new.name})")

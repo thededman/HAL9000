@@ -1,4 +1,6 @@
 """Tests for the pure helpers in make_voice.py.  Run: python3.11 -m unittest tools/test_make_voice.py"""
+import dataclasses
+import importlib.util
 import pathlib
 import sys
 import tempfile
@@ -204,6 +206,190 @@ class NewVoiceTests(unittest.TestCase):
         self.assertIn(f"asetrate=22050*{t.pitch:.2f}", first)
         self.assertIn(t.filters, last)
         self.assertIn(f"asetrate=22050*{t.pitch * 0.79:.2f}", last)
+
+
+class CastVoiceTests(unittest.TestCase):
+    """A voice is a model, a treatment and a clip format. The two everyday HALs keep theirs; HAL Card
+    gets the v0.1 voice in a clip small enough for a Cardputer with no spare memory."""
+
+    V06_FLAGS = ["-ar", "22050", "-ac", "1", "-c:a", "pcm_s16le", "-map_metadata", "-1", "-fflags", "+bitexact"]
+
+    def test_the_everyday_voices_keep_their_model_and_format(self):
+        for t in [mv.DESK, *mv.TREATMENTS.values()]:
+            with self.subTest(treatment=t.name):
+                self.assertEqual((t.model, t.rate, t.codec), ("hal", 22050, "pcm_s16le"))
+                self.assertEqual((t.noise_scale, t.noise_w_scale), (0.667, 0.8))
+                self.assertEqual(mv.out_flags(t), self.V06_FLAGS)
+        self.assertEqual(mv.OUT_FLAGS, self.V06_FLAGS)
+        self.assertEqual(mv.out_flags(), self.V06_FLAGS)
+        self.assertEqual(mv.Treatment("x"), mv.Treatment("x", 1.0, 1.0, "", "hal", 22050, "pcm_s16le"))
+
+    def test_hal_card_is_the_v01_voice_slowed_lowered_and_eight_bit(self):
+        c = mv.CARD
+        self.assertEqual((c.model, c.codec, c.rate), ("en_GB-alan-medium", "pcm_u8", mv.CARD_RATE))
+        self.assertEqual(mv.CARD_RATE, 11025)
+        self.assertEqual(c.pitch, 0.96)             # about 4 % lower
+        self.assertEqual(c.length_scale, 1.15)      # slower than the model speaks by itself: as David heard it
+        self.assertIn("lowpass=f=5000", c.filters)  # nothing above what an 11 kHz clip can carry
+        self.assertEqual((c.noise_scale, c.noise_w_scale), (0.5, 0.6))  # v0.1's settings for this model
+        chain = mv.voice_chain(c)
+        self.assertTrue(chain.startswith("asetrate=22050*0.96,aresample=22050,"), chain)
+        self.assertIn("bass=", chain)               # a little warmth
+        self.assertTrue(chain.endswith(mv.FX))      # levelled like every other clip
+        self.assertEqual(mv.out_flags(c), ["-ar", "11025", "-ac", "1", "-c:a", "pcm_u8", "-map_metadata", "-1",
+                                           "-fflags", "+bitexact"])
+
+    def test_one_voice_per_voiced_hal(self):
+        self.assertEqual(mv.VOICES, {"desk": mv.DESK, "zero": mv.TREATMENTS[mv.NEW_TREATMENT], "card": mv.CARD})
+
+    def test_hal_cards_rate_is_one_constant(self):
+        saved = mv.CARD_RATE
+        try:  # change the constant and a voice built from it follows: nothing else names the rate
+            mv.CARD_RATE = 8000
+            self.assertEqual(mv.out_flags(dataclasses.replace(mv.CARD, rate=mv.CARD_RATE))[:2], ["-ar", "8000"])
+        finally:
+            mv.CARD_RATE = saved
+        self.assertEqual(mv.CARD.rate, mv.CARD_RATE)
+        self.assertFalse(hasattr(mv, "CARD_AUDITION_RATES"))  # David chose; there is nothing left to compare
+
+    def test_the_audition_is_one_clip_as_hal_card_would_get_it(self):
+        if importlib.util.find_spec("piper") is None:
+            self.skipTest("Piper isn't installed")
+
+        class Speaker:
+            def synthesize_wav(self, text, w, syn_config=None):
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
+                w.writeframes((b"\x00\x20" * 50 + b"\x00\xe0" * 50) * 110)
+
+        saved = (mv.SAMPLES_DIR, mv.ROOT, mv.load_voice)
+        with tempfile.TemporaryDirectory() as d:
+            mv.ROOT = pathlib.Path(d)
+            mv.SAMPLES_DIR = mv.ROOT / "export" / "voice-samples"
+            asked = []
+            mv.load_voice = lambda model=mv.VOICE: asked.append(model) or Speaker()
+            try:
+                mv.audition_card("Still here, Dave.", False, mv.ROOT)
+            finally:
+                mv.SAMPLES_DIR, mv.ROOT, mv.load_voice = saved
+            self.assertEqual(asked, ["en_GB-alan-medium"])
+            clips = sorted(p.name for p in (pathlib.Path(d) / "export" / "voice-samples").iterdir())
+            self.assertEqual(clips, ["hal-card.wav"])
+            with wave.open(str(pathlib.Path(d) / "export" / "voice-samples" / "hal-card.wav"), "rb") as w:
+                self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()), (1, 1, mv.CARD_RATE))
+
+    def test_an_eight_bit_clip_really_is_one(self):
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = pathlib.Path(d) / "in.wav", pathlib.Path(d) / "out.wav"
+            with wave.open(str(src), "wb") as w:
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050); w.writeframes(b"\0\0" * 22050)
+            mv.ffmpeg(src, dst, None, mv.out_flags(mv.CARD))
+            with wave.open(str(dst), "rb") as w:
+                self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()), (1, 1, mv.CARD_RATE))
+                self.assertAlmostEqual(w.getnframes(), mv.CARD_RATE, delta=50)  # one second
+                self.assertEqual(set(w.readframes(w.getnframes())), {0x80})     # unsigned: silence is 128
+            self.assertLess(dst.stat().st_size, mv.CARD_RATE + 200)             # a byte a sample and a header
+
+    def test_say_uses_the_voices_own_settings_and_format(self):
+        if importlib.util.find_spec("piper") is None:
+            self.skipTest("Piper isn't installed")
+
+        class Speaker:  # stands in for a loaded Piper model: half a second of a square wave
+            def synthesize_wav(self, text, w, syn_config=None):
+                self.heard = (text, syn_config.length_scale, syn_config.noise_scale, syn_config.noise_w_scale)
+                w.setnchannels(1); w.setsampwidth(2); w.setframerate(22050)
+                w.writeframes((b"\x00\x20" * 50 + b"\x00\xe0" * 50) * 110)
+
+        with tempfile.TemporaryDirectory() as d:
+            speaker, dst = Speaker(), pathlib.Path(d) / "line.wav"
+            mv.say(speaker, "Still here, Dave.", dst, mv.CARD, pathlib.Path(d))
+            self.assertEqual(speaker.heard, ("Still here, Dave.", mv.CARD.length_scale, 0.5, 0.6))
+            with wave.open(str(dst), "rb") as w:
+                self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()), (1, 1, mv.CARD_RATE))
+            mv.say(speaker, "Good evening, Dave.", dst, mv.DESK, pathlib.Path(d))
+            self.assertEqual(speaker.heard, ("Good evening, Dave.", 1.0, 0.667, 0.8))
+            with wave.open(str(dst), "rb") as w:
+                self.assertEqual((w.getnchannels(), w.getsampwidth(), w.getframerate()), (1, 2, 22050))
+
+
+class ModelFileTests(unittest.TestCase):
+    """Fetching a voice's model files when they aren't there yet. Nothing is downloaded here."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = (mv.MODELS_DIR, dict(mv._LOADED))
+        mv.MODELS_DIR = pathlib.Path(self.tmp.name) / "models"
+        mv._LOADED.clear()
+        self.ran, self.fetched = [], []
+
+    def tearDown(self):
+        mv.MODELS_DIR = self.saved[0]
+        mv._LOADED.clear()
+        mv._LOADED.update(self.saved[1])
+        self.tmp.cleanup()
+
+    def run_command(self, cmd, check=False):
+        self.ran.append(cmd)
+
+    def fetch(self, url, dst):
+        self.fetched.append(url)
+        pathlib.Path(dst).write_bytes(b"model")
+
+    def ensure(self, model):
+        mv.ensure_model(model, run=self.run_command, fetch=self.fetch)
+
+    def test_files_that_are_there_are_left_alone(self):
+        mv.MODELS_DIR.mkdir()
+        for model in (mv.VOICE, mv.CARD.model):
+            for name in mv.model_files(model):
+                (mv.MODELS_DIR / name).write_bytes(b"x")
+            self.ensure(model)
+        self.assertEqual((self.ran, self.fetched), ([], []))
+
+    def test_the_hal_voice_comes_from_the_revision_david_listened_to(self):
+        self.ensure(mv.VOICE)
+        self.assertEqual(self.fetched, [mv.VOICE_URL + "hal.onnx.json", mv.VOICE_URL + "hal.onnx"])
+        self.assertEqual(self.ran, [])
+        self.assertEqual(sorted(p.name for p in mv.MODELS_DIR.iterdir()), ["hal.onnx", "hal.onnx.json"])
+
+    def test_hal_cards_voice_comes_from_pipers_own_downloader_as_in_v01(self):
+        self.ensure("en_GB-alan-medium")
+        self.assertEqual(self.ran, [[sys.executable, "-m", "piper.download_voices", "--download-dir",
+                                     str(mv.MODELS_DIR), "en_GB-alan-medium"]])
+        self.assertEqual(self.fetched, [])
+        self.assertTrue(mv.MODELS_DIR.is_dir())
+
+    def test_half_a_model_is_fetched_again(self):
+        mv.MODELS_DIR.mkdir()
+        (mv.MODELS_DIR / "en_GB-alan-medium.onnx").write_bytes(b"x")  # its settings file is missing
+        self.ensure("en_GB-alan-medium")
+        self.assertEqual(len(self.ran), 1)
+
+    def test_model_names_cannot_wander_off(self):
+        for bad in ("", "../hal", "a/b", "hal.onnx", "-x", "a b"):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                mv.model_files(bad)
+
+    def test_each_model_is_loaded_once_and_kept(self):
+        opened = []
+
+        class Piper:  # stands in for Piper's voice class
+            @staticmethod
+            def load(path):
+                opened.append(path)
+                return object()
+
+        saved = (mv.ensure_model, mv._piper)
+        mv.ensure_model = lambda model: None
+        mv._piper = lambda: Piper
+        try:
+            hal, alan = mv.load_voice(), mv.load_voice("en_GB-alan-medium")
+            self.assertIs(mv.load_voice(), hal)
+            self.assertIs(mv.load_voice("hal"), hal)
+            self.assertIs(mv.load_voice("en_GB-alan-medium"), alan)
+            self.assertIsNot(hal, alan)
+        finally:
+            mv.ensure_model, mv._piper = saved
+        self.assertEqual(opened, [str(mv.MODELS_DIR / "hal.onnx"), str(mv.MODELS_DIR / "en_GB-alan-medium.onnx")])
 
 
 class PushTests(unittest.TestCase):

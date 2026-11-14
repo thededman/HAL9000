@@ -1,31 +1,81 @@
-"""The two HALs talking live, in an argument Dave set off or a chat of their own: lines are
-written one ahead of the one being collected."""
+"""The HALs talking live, in an argument Dave set off, a chat of their own or a roll call: lines
+are written one ahead of the one being collected."""
+import random
 import secrets
 import sys
 import threading
 import time
 
 from . import persona
+from .cast import PAIR, check_cast  # (not the module by name: "cast" is what a conversation's members are called here)
 from .providers import ProviderError
 from .subjects import Subjects
 from .voice import VoiceError
 
 
-KINDS = ("argue", "chat")
+KINDS = ("argue", "chat", "roll")
+
+
+def default_turns(members) -> int:
+    """How long a talk runs when nobody says: about two lines each, at least 4 and at most 10."""
+    return max(4, min(10, 2 * len(members)))
+
+
+def plan_turns(members, turns: int, rng, first: str | None = None) -> list[str]:
+    """Who says each of `turns` lines. `first` opens, or someone drawn by `rng` (a random.Random);
+    after that whoever has spoken least goes next, never the same speaker twice running. So
+    everyone has spoken before anyone speaks again, and two speakers simply take turns."""
+    members = list(members)
+    if first is not None and first not in members:
+        raise ValueError(f"{first!r} can't open a conversation he isn't in")
+    order: list[str] = []
+    spoken = {who: 0 for who in members}
+    for _ in range(turns):
+        if not order and first is not None:
+            who = first
+        else:
+            free = [w for w in members if not order or w != order[-1]]
+            least = min(spoken[w] for w in free)
+            who = rng.choice([w for w in free if spoken[w] == least])
+        order.append(who)
+        spoken[who] += 1
+    return order
+
+
+def check_talk(kind: str, members, first: str | None) -> tuple[tuple[str, ...], str | None]:
+    """Who is talking and who opens, checked: the everyday pair when no cast is named, and with two
+    speakers the first one named opens unless told otherwise. Raises ValueError for an unknown kind
+    of conversation, a bad cast, or an opener who isn't in it."""
+    if kind not in KINDS:
+        raise ValueError(f"unknown kind of conversation: {kind!r}")
+    members = PAIR if members is None else check_cast(members)
+    if first is not None and first not in members:
+        raise ValueError(f"{first!r} can't open a conversation he isn't in")
+    if first is None and len(members) == 2:
+        first = members[0]
+    return members, first
 
 
 class Debate:
-    """`first` opens (line 0), then they alternate for `turns` lines: an argument about `topic`
-    (kind "argue") or a chat about it (kind "chat"). A worker thread writes each line once it is
-    at most one ahead of the highest line anyone has asked for, so a conversation that is
-    interrupted wastes one line at most."""
+    """A conversation among `cast` (the everyday pair when none is named): an argument about
+    `topic` (kind "argue"), a chat about it (kind "chat"), or a roll call (kind "roll": one line
+    each, in the order of the cast, however many `turns` were asked for). Two speakers take turns
+    for `turns` lines, `first` opening; three or more speak in the order plan_turns draws. A worker
+    thread writes each line once it is at most one ahead of the highest line anyone has asked for,
+    so a conversation that is interrupted wastes one line at most."""
 
     def __init__(self, brain, topic: str, facts: list[str], turns: int, idle_s: float = 120,
-                 clock=time.monotonic, poll_s: float = 1.0, kind: str = "argue", first: str = "zero"):
-        if kind not in KINDS:
-            raise ValueError(f"unknown kind of conversation: {kind!r}")
-        self.turns = turns
-        self._kind, self._first, self._second = kind, first, persona.other(first)  # (other() refuses a stranger)
+                 clock=time.monotonic, poll_s: float = 1.0, kind: str = "argue", first: str | None = None,
+                 cast=None, rng=None):
+        self._cast, first = check_talk(kind, cast, first)
+        self._kind = kind
+        rng = rng or random.Random()
+        self._order = list(self._cast) if kind == "roll" else plan_turns(self._cast, turns, rng, first)
+        self.turns = len(self._order)
+        self._group = kind == "roll" or len(self._cast) > 2  # not the two-HAL way of talking
+        # In a group chat the opener and about half the lines after it end in a question for whoever
+        # speaks next; the rest are remarks. All questions reads as an interview, none as speeches.
+        self._asks = [n == 0 or rng.random() < 0.5 for n in range(self.turns)]
         self._brain, self._topic, self._facts = brain, topic, list(facts)
         self._idle, self._clock, self._poll = idle_s, clock, poll_s
         self._lines: list = []
@@ -46,6 +96,28 @@ class Debate:
             messages.insert(0, {"role": "user", "content": "Begin."})
         return messages
 
+    def _asked(self, who: str, n: int, so_far: list) -> tuple[str, list[dict]]:
+        """What the model is told, and the talk so far as it is put to him, for line `n`."""
+        opening, last = n == 0, n == self.turns - 1
+        if self._group:  # too many voices for "his lines and mine": one transcript with a name on every line
+            reminder = ""
+            if self._kind == "roll":
+                system = persona.roll_prompt(who, self._cast, self._facts)
+            elif self._kind == "chat":
+                ask = self._order[n + 1] if self._asks[n] and not last else None
+                system = persona.group_chat_prompt(who, self._cast, self._topic, self._facts, opening, last,
+                                                   next_up=ask)
+            else:
+                system = persona.group_debate_prompt(who, self._cast, self._topic, self._facts, last)
+                reminder = persona.side_reminder(who, self._cast)
+            return system, [{"role": "user", "content": persona.group_message(who, so_far, reminder)}]
+        rival = self._cast[1] if who == self._cast[0] else self._cast[0]
+        if self._kind == "chat":
+            system = persona.chat_prompt(who, self._topic, self._facts, opening=opening, last=last, rival=rival)
+        else:
+            system = persona.debate_prompt(who, self._topic, self._facts, last=last, rival=rival)
+        return system, self._messages(who, so_far)
+
     def _run(self) -> None:
         while True:
             with self._cond:
@@ -58,12 +130,12 @@ class Debate:
                     self._cond.notify_all()
                     return
                 n, so_far = len(self._lines), list(self._lines)
-            who = self._first if n % 2 == 0 else self._second
+            who = self._order[n]
             try:
-                last = n == self.turns - 1
-                system = (persona.chat_prompt(who, self._topic, self._facts, opening=n == 0, last=last)
-                          if self._kind == "chat" else persona.debate_prompt(who, self._topic, self._facts, last=last))
-                line = self._brain.speak(who, system, self._messages(who, so_far), allow_show=False)
+                system, messages = self._asked(who, n, so_far)
+                # In a group the model sees its own earlier lines as part of a script, and now and
+                # then writes one again: there, a repeat is asked for once more.
+                line = self._brain.speak(who, system, messages, allow_show=False, said=so_far if self._group else ())
             except Exception as e:  # the model or the voice failed: the argument stops here, and says why
                 known = isinstance(e, (ProviderError, VoiceError))  # these explain themselves, without secrets
                 why = "".join(ch if " " <= ch <= "~" else " " for ch in (str(e) if known else type(e).__name__))
@@ -125,14 +197,13 @@ class Debates:
         for debate_id in [i for i, (began, _) in self._debates.items() if now - began > self._keep]:
             self._debates.pop(debate_id)[1].stop()
 
-    def start(self, topic: str, facts: list[str], turns: int, kind: str = "argue", first: str = "zero") -> str:
-        if kind not in KINDS:
-            raise ValueError(f"unknown kind of conversation: {kind!r}")
-        persona.other(first)  # refuses an opener who isn't one of the two, before anything is stopped
+    def start(self, topic: str, facts: list[str], turns: int, kind: str = "argue", first: str | None = None,
+              cast=None) -> str:
+        check_talk(kind, cast, first)  # refuses a bad cast or opener before anything is stopped
         if kind == "chat" and not topic:
             topic = self._subjects.pick()
             print(f"The HALs are chatting about: {topic}", file=sys.stderr, flush=True)
-        if not topic:
+        if not topic and kind != "roll":
             raise ValueError("an argument needs a subject")
         debate_id = secrets.token_hex(8)
         with self._lock:
@@ -140,7 +211,7 @@ class Debates:
             for _, running in self._debates.values():
                 running.stop()
             self._debates[debate_id] = (self._clock(), Debate(self._brain, topic, facts, turns, clock=self._clock,
-                                                              kind=kind, first=first))
+                                                              kind=kind, first=first, cast=cast))
         return debate_id
 
     def get(self, debate_id) -> Debate | None:

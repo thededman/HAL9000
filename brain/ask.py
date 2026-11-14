@@ -2,6 +2,7 @@
 
     tools/brain.sh ask zero "What do you think of the old model?"
     tools/brain.sh ask desk --fact "battery: 37 % charging" "How is your battery?"
+    tools/brain.sh ask nano "Where has Dave taken you today?"
 
 Talks to the brain running on this computer (tools/brain.sh start).
 """
@@ -14,13 +15,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import cast
 from .config import port_from, read_env
 from .voice import _make_voice
 
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="tools/brain.sh ask", description="Ask a HAL a question.")
-    ap.add_argument("who", choices=["zero", "desk"], help="zero: HAL Zero; desk: HAL 9000")
+    ap.add_argument("who", choices=list(cast.ORDER), help="; ".join(f"{m.id}: {m.name}" for m in cast.MEMBERS))
     ap.add_argument("question", nargs="+")
     ap.add_argument("--fact", action="append", default=[], metavar="NAME: VALUE",
                     help="something he knows right now (may be repeated)")
@@ -46,7 +48,10 @@ def main(argv: list[str]) -> int:
     print(got.get("text", ""))
     if got.get("show"):
         print(f"(he would bring up his '{got['show']}' screen)")
-    if args.no_play or "clip" not in got:
+    if "clip" not in got:  # HAL Nano and HAL Paper
+        print("(no audio: his words are shown on his screen, not spoken)")
+        return 0
+    if args.no_play:
         return 0
     player = _make_voice().player_command()
     if not player:
