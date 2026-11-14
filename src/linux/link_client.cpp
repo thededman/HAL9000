@@ -73,6 +73,7 @@ void LinkClient::run() {
     if (fd_.load() < 0) {
       int fd = connectTo(host_, port_, 3000);
       if (fd >= 0) {
+        ++connections_;  // before fd_, so poll() knows it is a new desk HAL by the time it can read from him
         fd_ = fd;
         halLog("link: connected to %s:%d", host_.c_str(), port_);
         hal::Message hello;
@@ -124,22 +125,29 @@ void LinkClient::poll(std::vector<hal::Message>* in, bool* dropped) {
   in->clear();
   int fd = fd_.load();
   if (fd >= 0) {
-    char buf[256];
-    for (;;) {
-      ssize_t n = recv(fd, buf, sizeof buf, 0);
-      if (n > 0) {
-        for (const std::string& line : splitter_.feed(buf, size_t(n))) {
-          hal::Message m = hal::parseMessage(line);
-          if (m.type != hal::MsgType::Invalid) in->push_back(m);
-        }
-        continue;
-      }
-      if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
-        halLog("link: the desk HAL hung up");
-        closeFd();
-        dropped_ = true;
-      }
-      break;
+    const unsigned connection = connections_.load();
+    if (connection != polledConnection_) {  // the worker thread has connected again since we last read
+      polledConnection_ = connection;
+      guard_.newPeer();
+    }
+    // The guard decides how much is read and handed over in one pass, exactly as it does for the
+    // desk HAL (hal_link.h): whatever answers at the desk HAL's address is not trusted to be him.
+    // The socket is non-blocking, so recv only returns what has already arrived.
+    bool gone = false;
+    auto read = [fd, &gone](char* buf, size_t max) {
+      ssize_t n = recv(fd, buf, max, 0);
+      if (n > 0) return int(n);
+      gone = n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK);
+      return 0;
+    };
+    const auto sinceStart = std::chrono::steady_clock::now().time_since_epoch();
+    const uint32_t nowMs = uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(sinceStart).count());
+    const bool flooded = !guard_.take(nowMs, read, in);
+    if (flooded || gone) {
+      // After a flood the worker thread tries again in its own time, at most every 5 s.
+      halLog(flooded ? "link: the desk HAL sent more than he ever does: hanging up" : "link: the desk HAL hung up");
+      closeFd();
+      dropped_ = true;
     }
   }
   *dropped = dropped_.exchange(false);

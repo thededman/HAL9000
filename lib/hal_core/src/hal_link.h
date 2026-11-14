@@ -18,9 +18,11 @@
 //                                 (v3, desk HAL) the answer: all six keys, any order
 //
 // Anything else is Invalid: the receiver ignores it. v3 messages are only sent to a peer
-// whose HELLO said 3 or more.
+// whose HELLO said 3 or more. A line is at most 128 bytes, and the desk HAL hangs up on a peer
+// who sends him more than 24 lines or 1024 bytes in a second (LinkGuard, below).
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -128,6 +130,46 @@ class LineSplitter {
   size_t maxLine_;
   std::string buf_;
   bool overflow_ = false;
+};
+
+// The desk HAL listens on the home network, so anything there can connect and send. A real
+// HAL Zero sends a few short lines a second (a PING and a STATUS every 2 s, a handful around
+// each spoken line), and gives up on a desk HAL he hasn't heard from in 5 s: even all he can
+// have sent while the desk HAL was held up is about a dozen lines, some 150 bytes. These limits
+// are twice that and more, so a peer who goes over them in one second is not a HAL Zero.
+constexpr size_t kLinkFloodLines = 24;      // lines taken from a peer in one second
+constexpr size_t kLinkFloodBytes = 1024;    // bytes read from a peer in one second
+constexpr uint32_t kLinkCoolOffMs = 3000;   // after a flood, nobody is let in for this long
+
+// The desk HAL's guard on what arrives over the link. Each pass of his loop it reads what the
+// peer has sent and hands over the messages, but never more than the limits above in a second,
+// so one pass is short and the inbox small whatever the peer does. A peer who sends more is
+// flooding: the guard stops reading, hands over nothing from that pass, and the caller hangs
+// up. Hanging up is the simplest answer that is also safe: slowing such a peer down instead
+// would mean keeping his backlog and going on answering it, and he is not a HAL Zero anyway.
+// A real one who was somehow caught by this reconnects by himself within 5 s.
+class LinkGuard {
+ public:
+  // Reads up to `max` bytes that have already arrived into `buf`, without waiting; returns how
+  // many, or 0 (or less) when there are none.
+  using Read = std::function<int(char* buf, size_t max)>;
+
+  // One pass. Leaves this pass's messages in *inbox (none when there are none). False when the
+  // peer has flooded: *inbox is empty and it is time to hang up.
+  bool take(uint32_t nowMs, const Read& read, std::vector<Message>* inbox);
+  bool flooded() const { return flooded_; }
+  // True for kLinkCoolOffMs after a flood: let nobody in, or the same peer is back at once.
+  // Shorter than the 5 s a HAL Zero waits for an answer, so a real one never notices.
+  bool coolingOff(uint32_t nowMs);
+  void newPeer();  // someone was let in: forget the last peer's half line and his count
+  const std::string& lastLine() const { return last_; }  // the last message handed over, as sent
+
+ private:
+  LineSplitter splitter_;
+  std::string last_;
+  size_t lines_ = 0, bytes_ = 0;  // taken in the second that began at windowMs_
+  uint32_t windowMs_ = 0, floodMs_ = 0;
+  bool counting_ = false, flooded_ = false, cooling_ = false;
 };
 
 }  // namespace hal

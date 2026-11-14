@@ -13,7 +13,10 @@ class LinkServer {
   bool begin(int port);  // Wi-Fi must be connected
   bool started() const { return server_ != nullptr; }
   bool connected() { return client_ && client_.connected(); }
-  void poll(std::vector<hal::Message>* in, bool* dropped);  // never blocks
+  // Never blocks, and never takes more in one pass than hal::LinkGuard allows: a peer who sends
+  // more is hung up on. `dropped` is set on the first poll after the link went, whoever ended it.
+  void poll(std::vector<hal::Message>* in, bool* dropped);
+  // Never waits: a peer who can't take the whole line at once is hung up on (the next poll reports it).
   bool send(const hal::Message& m);
   void drop();  // hang up on HAL Zero (he went quiet); the next poll reports it
   // For the comms screen.
@@ -23,10 +26,12 @@ class LinkServer {
   std::string peerAddress();
 
  private:
+  void hangUp(const char* why);
   WiFiServer* server_ = nullptr;
   WiFiClient client_;
   bool hadClient_ = false;
-  hal::LineSplitter splitter_;
+  bool hungUp_ = false;  // we ended it and said why: no "HAL Zero hung up" in the log
+  hal::LinkGuard guard_;
   int msgsIn_ = 0, msgsOut_ = 0;
   std::string last_;
 };

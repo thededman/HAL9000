@@ -19,6 +19,7 @@ class LinkClient {
   bool send(const hal::Message& m);  // false if not connected (or the write failed)
   void drop();                       // give up on this connection (the peer went quiet); reconnects
   // Messages received since the last call; `dropped` is set when the connection went away.
+  // Never takes more in one call than hal::LinkGuard allows: a peer who sends more is hung up on.
   void poll(std::vector<hal::Message>* in, bool* dropped);
 
  private:
@@ -29,7 +30,9 @@ class LinkClient {
   std::atomic<int> fd_{-1};
   std::atomic<bool> running_{false};
   std::atomic<bool> dropped_{false};
+  std::atomic<unsigned> connections_{0};  // how many times the worker thread has connected
+  unsigned polledConnection_ = 0;         // the connection poll() last read from
   std::thread worker_;
   std::mutex writeMu_;
-  hal::LineSplitter splitter_;
+  hal::LinkGuard guard_;                  // only poll() touches it
 };

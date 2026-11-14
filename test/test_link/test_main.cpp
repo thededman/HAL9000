@@ -1,5 +1,7 @@
 #include <unity.h>
 
+#include <algorithm>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -360,6 +362,304 @@ void test_liveness_idle_before_connecting() {
   TEST_ASSERT_FALSE(l.silent(100000));  // nothing to time out yet
 }
 
+// ---- The desk HAL's guard: what he takes from the link, and when he hangs up ----
+
+namespace {
+
+// A peer for the guard's tests: `waiting` is what he has sent and the desk HAL hasn't read yet.
+struct FakePeer {
+  std::string waiting;
+  size_t bytesRead = 0;
+  size_t biggestAsk = 0;
+  int reads = 0;
+  hal::LinkGuard::Read reader() {
+    return [this](char* buf, size_t max) {
+      ++reads;
+      biggestAsk = std::max(biggestAsk, max);
+      size_t n = std::min(max, waiting.size());
+      memcpy(buf, waiting.data(), n);
+      waiting.erase(0, n);
+      bytesRead += n;
+      return int(n);
+    };
+  }
+};
+
+std::string times(int n, const std::string& line) {
+  std::string all;
+  for (int i = 0; i < n; ++i) all += line;
+  return all;
+}
+
+const int kLines = int(hal::kLinkFloodLines);
+const int kBytes = int(hal::kLinkFloodBytes);
+
+}  // namespace
+
+void test_guard_hands_over_what_hal_zero_sends() {
+  hal::LinkGuard g;
+  FakePeer zero;
+  std::vector<Message> inbox;
+  zero.waiting = "HELLO NEW 3\nPING\n";
+  TEST_ASSERT_TRUE(g.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(2, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[0].type == MsgType::Hello);
+  TEST_ASSERT_EQUAL(3, inbox[0].version);
+  TEST_ASSERT_TRUE(inbox[1].type == MsgType::Ping);
+  TEST_ASSERT_EQUAL_STRING("PING", g.lastLine().c_str());
+  TEST_ASSERT_EQUAL(0, int(zero.waiting.size()));
+  TEST_ASSERT_FALSE(g.flooded());
+}
+
+void test_guard_gives_each_pass_only_its_own_messages() {
+  hal::LinkGuard g;
+  FakePeer zero;
+  std::vector<Message> inbox;
+  zero.waiting = "PING\n";
+  g.take(1000, zero.reader(), &inbox);
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  TEST_ASSERT_TRUE(g.take(1010, zero.reader(), &inbox));  // nothing new arrived
+  TEST_ASSERT_EQUAL(0, int(inbox.size()));
+  TEST_ASSERT_EQUAL_STRING("PING", g.lastLine().c_str());  // still the last one he sent
+}
+
+void test_guard_keeps_half_a_line_for_the_next_pass() {
+  hal::LinkGuard g;
+  FakePeer zero;
+  std::vector<Message> inbox;
+  zero.waiting = "SAY in";
+  TEST_ASSERT_TRUE(g.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(0, int(inbox.size()));
+  zero.waiting = "tro 3\n";
+  TEST_ASSERT_TRUE(g.take(1010, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[0].type == MsgType::Say);
+  TEST_ASSERT_EQUAL_STRING("intro", inbox[0].id.c_str());
+  TEST_ASSERT_EQUAL(3, inbox[0].n);
+}
+
+void test_guard_skips_lines_that_mean_nothing() {
+  hal::LinkGuard g;
+  FakePeer zero;
+  std::vector<Message> inbox;
+  zero.waiting = "DANCE\n\n" + std::string(200, 'a') + "\nPING\n";  // unknown, empty, too long, fine
+  TEST_ASSERT_TRUE(g.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[0].type == MsgType::Ping);
+}
+
+void test_guard_stops_when_nothing_is_waiting() {
+  hal::LinkGuard g;
+  FakePeer zero;
+  std::vector<Message> inbox;
+  TEST_ASSERT_TRUE(g.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(1, zero.reads);  // asked once, heard nothing, went back to the eye
+  int calls = 0;
+  TEST_ASSERT_TRUE(g.take(1010, [&calls](char*, size_t) { ++calls; return -1; }, &inbox));  // a read error
+  TEST_ASSERT_EQUAL(1, calls);
+}
+
+// HAL Zero gives up on a desk HAL he hasn't heard from in 5 s. This is everything he can have
+// sent by then, arriving in one pass after the desk HAL was held up: it must all go through.
+void test_guard_takes_all_hal_zero_can_send_before_he_gives_up() {
+  hal::LinkGuard g;
+  FakePeer zero;
+  std::vector<Message> inbox;
+  zero.waiting = "HELLO NEW 3\n" + times(3, "PING\n") + times(3, "STATUS\n") +
+                 "FETCH 99 192.168.100.100 65535 0123456789abcdef0123456789abcdef\n"
+                 "SAY live 99\nSENSE\nEND interrupted\n";
+  TEST_ASSERT_TRUE(g.take(1000, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(11, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[10].type == MsgType::End);
+  // ...with room to spare: he could have sent it all twice over.
+  TEST_ASSERT_TRUE(2 * 11 <= kLines);
+  TEST_ASSERT_TRUE(2 * zero.bytesRead <= size_t(kBytes));
+}
+
+// The same guard stands at HAL Zero's end. The desk HAL only answers, so the most he can have
+// sent while HAL Zero was held up is his answers to the lines above, each at its longest.
+void test_guard_takes_all_the_desk_hal_can_answer_at_once() {
+  hal::Message state;
+  state.type = MsgType::State;
+  state.status = {999999999, 9999999, 99999999, 100, 9999999, "speaking", -127, "10.10.10", 64, 9999};
+  hal::Message sensors;
+  sensors.type = MsgType::Sensors;
+  sensors.sensors = {100, 65535, 180, 100, true, -40};
+  hal::LinkGuard g;
+  FakePeer desk;
+  std::vector<Message> inbox;
+  desk.waiting = "HELLO OLD 3\n" + times(3, "PONG\n") + times(3, hal::formatMessage(state) + "\n") +
+                 "READY 99\nPLAYING 99 600000\nDONE 99\n" + hal::formatMessage(sensors) + "\nEND interrupted\n";
+  TEST_ASSERT_TRUE(g.take(1000, desk.reader(), &inbox));
+  TEST_ASSERT_EQUAL(12, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[11].type == MsgType::End);
+  TEST_ASSERT_TRUE(2 * 12 <= kLines);
+  TEST_ASSERT_TRUE_MESSAGE(2 * desk.bytesRead <= size_t(kBytes), std::to_string(desk.bytesRead).c_str());
+}
+
+void test_guard_allows_a_full_second_of_lines() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = times(kLines, "PING\n");
+  TEST_ASSERT_TRUE(g.take(1000, peer.reader(), &inbox));
+  TEST_ASSERT_EQUAL(kLines, int(inbox.size()));
+  peer.waiting = times(kLines, "PING\n");  // and as many again in the next second
+  TEST_ASSERT_TRUE(g.take(2000, peer.reader(), &inbox));
+  TEST_ASSERT_EQUAL(kLines, int(inbox.size()));
+  TEST_ASSERT_FALSE(g.flooded());
+}
+
+void test_guard_hangs_up_on_one_line_too_many() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = times(kLines + 1, "PING\n");
+  TEST_ASSERT_FALSE(g.take(1000, peer.reader(), &inbox));
+  TEST_ASSERT_TRUE(g.flooded());
+  TEST_ASSERT_EQUAL(0, int(inbox.size()));  // nothing from the pass that showed him up is acted on
+}
+
+void test_guard_counts_lines_across_the_passes_of_one_second() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = times(kLines - 2, "PING\n");
+  TEST_ASSERT_TRUE(g.take(1000, peer.reader(), &inbox));
+  TEST_ASSERT_EQUAL(kLines - 2, int(inbox.size()));
+  peer.waiting = times(3, "PING\n");
+  TEST_ASSERT_FALSE(g.take(1999, peer.reader(), &inbox));
+  TEST_ASSERT_EQUAL(0, int(inbox.size()));
+}
+
+void test_guard_counts_afresh_each_second() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = times(kLines - 2, "PING\n");
+  TEST_ASSERT_TRUE(g.take(1000, peer.reader(), &inbox));
+  peer.waiting = times(3, "PING\n");
+  TEST_ASSERT_TRUE(g.take(2000, peer.reader(), &inbox));
+  TEST_ASSERT_EQUAL(3, int(inbox.size()));
+}
+
+void test_guard_counts_lines_that_mean_nothing_too() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = times(kLines + 1, "\n");
+  TEST_ASSERT_FALSE(g.take(1000, peer.reader(), &inbox));
+}
+
+void test_guard_hangs_up_on_one_byte_too_many() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = std::string(kBytes, 'a');  // no newline anywhere: never a message
+  TEST_ASSERT_TRUE(g.take(1000, peer.reader(), &inbox));
+  peer.waiting = "a";
+  TEST_ASSERT_FALSE(g.take(1500, peer.reader(), &inbox));
+  TEST_ASSERT_TRUE(g.flooded());
+}
+
+// However much is waiting, one pass reads one byte past the budget (that byte is the proof)
+// and hands nothing over: the pass stays short and the inbox small.
+void test_guard_reads_no_more_than_the_budget_in_a_pass() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = std::string(100000, 'a');
+  TEST_ASSERT_FALSE(g.take(1000, peer.reader(), &inbox));
+  TEST_ASSERT_EQUAL(kBytes + 1, int(peer.bytesRead));
+  TEST_ASSERT_TRUE(peer.biggestAsk <= 128);
+  TEST_ASSERT_TRUE(peer.reads <= kBytes / 128 + 2);
+
+  hal::LinkGuard g2;
+  FakePeer chatty;
+  chatty.waiting = times(20000, "PING\n");
+  TEST_ASSERT_FALSE(g2.take(1000, chatty.reader(), &inbox));
+  TEST_ASSERT_TRUE(int(chatty.bytesRead) <= kBytes + 1);
+  TEST_ASSERT_EQUAL(0, int(inbox.size()));
+}
+
+void test_guard_takes_nothing_more_once_flooded() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = times(kLines + 1, "PING\n");
+  g.take(1000, peer.reader(), &inbox);
+  int readsSoFar = peer.reads;
+  peer.waiting = "PING\n";
+  TEST_ASSERT_FALSE(g.take(5000, peer.reader(), &inbox));  // long after: still not listening to him
+  TEST_ASSERT_EQUAL(readsSoFar, peer.reads);
+  TEST_ASSERT_EQUAL(0, int(inbox.size()));
+}
+
+void test_guard_last_line_is_one_that_was_handed_over() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = "STATUS\n";
+  g.take(1000, peer.reader(), &inbox);
+  peer.waiting = times(kLines, "PING\n");
+  TEST_ASSERT_FALSE(g.take(1500, peer.reader(), &inbox));
+  TEST_ASSERT_EQUAL_STRING("STATUS", g.lastLine().c_str());
+}
+
+// After a flood nobody is let in for a few seconds, or the same peer would be back at once.
+// Shorter than the 5 s HAL Zero waits for an answer, so a real one never notices.
+void test_guard_cools_off_after_a_flood() {
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  TEST_ASSERT_FALSE(g.coolingOff(1000));  // nobody has flooded
+  peer.waiting = times(kLines + 1, "PING\n");
+  g.take(1000, peer.reader(), &inbox);
+  TEST_ASSERT_TRUE(g.coolingOff(1000));
+  TEST_ASSERT_TRUE(g.coolingOff(1000 + hal::kLinkCoolOffMs - 1));
+  TEST_ASSERT_FALSE(g.coolingOff(1000 + hal::kLinkCoolOffMs));
+  TEST_ASSERT_TRUE(hal::kLinkCoolOffMs < 5000);
+  // Once over it stays over, even when millis() comes round to the same numbers 49 days on.
+  TEST_ASSERT_FALSE(g.coolingOff(1500));
+}
+
+void test_guard_a_new_peer_starts_clean() {
+  hal::LinkGuard g;
+  FakePeer old;
+  std::vector<Message> inbox;
+  old.waiting = times(kLines + 1, "PING\n") + "SAY in";
+  g.take(1000, old.reader(), &inbox);
+  g.newPeer();
+  TEST_ASSERT_FALSE(g.flooded());
+  FakePeer zero;
+  zero.waiting = "PING\n";  // must not be glued to the last peer's half line
+  TEST_ASSERT_TRUE(g.take(1000 + hal::kLinkCoolOffMs, zero.reader(), &inbox));
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[0].type == MsgType::Ping);
+
+  hal::LinkGuard g2;  // a half line from a peer who simply went away is forgotten as well
+  FakePeer gone, next;
+  gone.waiting = "SAY in";
+  g2.take(1000, gone.reader(), &inbox);
+  g2.newPeer();
+  next.waiting = "tro 3\nPING\n";
+  g2.take(2000, next.reader(), &inbox);
+  TEST_ASSERT_EQUAL(1, int(inbox.size()));
+  TEST_ASSERT_TRUE(inbox[0].type == MsgType::Ping);
+}
+
+void test_guard_survives_the_clock_wrapping() {  // millis() starts again from 0 after 49 days
+  hal::LinkGuard g;
+  FakePeer peer;
+  std::vector<Message> inbox;
+  peer.waiting = times(kLines - 2, "PING\n");
+  TEST_ASSERT_TRUE(g.take(0xFFFFFF00u, peer.reader(), &inbox));
+  peer.waiting = times(3, "PING\n");
+  TEST_ASSERT_FALSE(g.take(0x00000100u, peer.reader(), &inbox));  // 512 ms later: the same second
+  TEST_ASSERT_TRUE(g.coolingOff(0x00000100u + hal::kLinkCoolOffMs - 1));
+  TEST_ASSERT_FALSE(g.coolingOff(0x00000100u + hal::kLinkCoolOffMs));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_parse_examples);
@@ -388,5 +688,24 @@ int main() {
   RUN_TEST(test_liveness_pings_every_two_seconds);
   RUN_TEST(test_liveness_silent_after_five_seconds);
   RUN_TEST(test_liveness_idle_before_connecting);
+  RUN_TEST(test_guard_hands_over_what_hal_zero_sends);
+  RUN_TEST(test_guard_gives_each_pass_only_its_own_messages);
+  RUN_TEST(test_guard_keeps_half_a_line_for_the_next_pass);
+  RUN_TEST(test_guard_skips_lines_that_mean_nothing);
+  RUN_TEST(test_guard_stops_when_nothing_is_waiting);
+  RUN_TEST(test_guard_takes_all_hal_zero_can_send_before_he_gives_up);
+  RUN_TEST(test_guard_takes_all_the_desk_hal_can_answer_at_once);
+  RUN_TEST(test_guard_allows_a_full_second_of_lines);
+  RUN_TEST(test_guard_hangs_up_on_one_line_too_many);
+  RUN_TEST(test_guard_counts_lines_across_the_passes_of_one_second);
+  RUN_TEST(test_guard_counts_afresh_each_second);
+  RUN_TEST(test_guard_counts_lines_that_mean_nothing_too);
+  RUN_TEST(test_guard_hangs_up_on_one_byte_too_many);
+  RUN_TEST(test_guard_reads_no_more_than_the_budget_in_a_pass);
+  RUN_TEST(test_guard_takes_nothing_more_once_flooded);
+  RUN_TEST(test_guard_last_line_is_one_that_was_handed_over);
+  RUN_TEST(test_guard_cools_off_after_a_flood);
+  RUN_TEST(test_guard_a_new_peer_starts_clean);
+  RUN_TEST(test_guard_survives_the_clock_wrapping);
   return UNITY_END();
 }

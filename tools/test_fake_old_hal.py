@@ -63,6 +63,27 @@ class FakeDeskHalTest(unittest.TestCase):
         threading.Thread(target=serve, daemon=True).start()
         self.assertEqual(fake.download("127.0.0.1", listener.getsockname()[1], TOKEN), 0)
 
+    def test_flood_mode_pours_lines_out(self):
+        import asyncio
+        import contextlib
+        import io as _io
+
+        async def run():
+            server = await asyncio.start_server(lambda r, w: fake.serve(r, w, "flood", 1500), "127.0.0.1", 0)
+            reader, writer = await asyncio.open_connection("127.0.0.1", server.sockets[0].getsockname()[1])
+            first = await asyncio.wait_for(reader.readline(), 2)
+            lines = [await asyncio.wait_for(reader.readline(), 2) for _ in range(500)]  # far more than HAL Zero takes
+            writer.close()
+            server.close()
+            await server.wait_closed()
+            return first, lines
+
+        with contextlib.redirect_stdout(_io.StringIO()) as said:
+            first, lines = asyncio.run(run())
+        self.assertEqual(first, b"HELLO OLD 3\n")
+        self.assertEqual(set(lines), {b"PONG\n"})
+        self.assertLess(len(said.getvalue().splitlines()), 20)  # it doesn't print every line it pours out
+
 
 if __name__ == "__main__":
     unittest.main()

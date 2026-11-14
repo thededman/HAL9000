@@ -6,6 +6,17 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- The desk HAL can no longer be frozen over the link. With `link=on`, anything on your network
+  that connected to him and poured data in, or stopped listening to his answers, could hold his
+  eye and touch screen still for seconds at a time and use up his memory. He now takes only a
+  little from the link on each pass, never waits for the other end, and hangs up on anything
+  that sends far more than HAL Zero ever does (over 24 lines or 1024 bytes in a second),
+  letting nobody back in for 3 seconds. HAL Zero himself notices no difference.
+- HAL Zero is protected the same way: if whatever answers at the desk HAL's address pours data
+  at him, he hangs up and tries again a few seconds later, instead of freezing and running out
+  of memory.
+
 ## [0.6.0] - 2026-11-13
 
 ### Added
