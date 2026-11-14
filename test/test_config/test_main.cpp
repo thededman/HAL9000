@@ -181,6 +181,35 @@ void test_link_bad_values() {
 
 // ---- the AI brain ----
 
+void test_chat_defaults() {
+  auto c = hal::parseConfig("", &w);
+  TEST_ASSERT_TRUE(c.chat);
+  TEST_ASSERT_EQUAL(20, c.chatMinMinutes);
+  TEST_ASSERT_EQUAL(40, c.chatMaxMinutes);
+  TEST_ASSERT_EQUAL(0, w.size());
+}
+
+void test_chat_settings() {
+  auto c = hal::parseConfig("chat=off\nchat_min_minutes=5\nchat_max_minutes=90\n", &w);
+  TEST_ASSERT_FALSE(c.chat);
+  TEST_ASSERT_EQUAL(5, c.chatMinMinutes);
+  TEST_ASSERT_EQUAL(90, c.chatMaxMinutes);
+  TEST_ASSERT_EQUAL(0, w.size());
+}
+
+void test_chat_bad_values_warn() {
+  auto c = hal::parseConfig("chat=sometimes\nchat_min_minutes=0\nchat_max_minutes=99999\n", &w);
+  TEST_ASSERT_TRUE(c.chat);
+  TEST_ASSERT_EQUAL(20, c.chatMinMinutes);
+  TEST_ASSERT_EQUAL(40, c.chatMaxMinutes);
+  TEST_ASSERT_EQUAL(3, w.size());
+  w.clear();
+  c = hal::parseConfig("chat_min_minutes=60\nchat_max_minutes=30\n", &w);  // the wrong way round
+  TEST_ASSERT_EQUAL(20, c.chatMinMinutes);
+  TEST_ASSERT_EQUAL(40, c.chatMaxMinutes);
+  TEST_ASSERT_EQUAL(1, w.size());
+}
+
 void test_brain_defaults() {
   auto c = hal::parseConfig("", &w);
   TEST_ASSERT_FALSE(c.brain);
@@ -246,6 +275,9 @@ int main() {
   RUN_TEST(test_link_defaults);
   RUN_TEST(test_link_settings);
   RUN_TEST(test_link_bad_values);
+  RUN_TEST(test_chat_defaults);
+  RUN_TEST(test_chat_settings);
+  RUN_TEST(test_chat_bad_values_warn);
   RUN_TEST(test_brain_defaults);
   RUN_TEST(test_brain_settings);
   RUN_TEST(test_brain_bad_values_warn);

@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "hal_chattimer.h"
 #include "hal_liveclips.h"
 #include "hal_subtitle.h"
 #include "hal_talkkey.h"
@@ -90,6 +91,73 @@ void test_talk_survives_the_clock_wrapping() {
   k.update(true, false, 0xFFFFFFF0u);
   TEST_ASSERT_EQUAL(int(Event::None), int(k.update(true, false, 0xFFFFFFFFu)));
   TEST_ASSERT_EQUAL(int(Event::Start), int(k.update(true, false, 0x00000090u)));
+}
+
+// ----- chats nobody asked for -----
+
+void test_chat_comes_due_between_min_and_max() {
+  hal::ChatTimer t;
+  t.configure(true, 20, 40);
+  t.restart(1000, 0);  // the dice say: as soon as allowed
+  TEST_ASSERT_FALSE(t.due(1000 + 20 * 60000 - 1, true));
+  TEST_ASSERT_TRUE(t.due(1000 + 20 * 60000, true));
+  hal::ChatTimer late;
+  late.configure(true, 20, 40);
+  late.restart(1000, 20 * 60000);  // ... and: as late as allowed
+  TEST_ASSERT_FALSE(late.due(1000 + 40 * 60000 - 1, true));
+  TEST_ASSERT_TRUE(late.due(1000 + 40 * 60000, true));
+}
+
+void test_chat_is_due_once_until_restarted() {
+  hal::ChatTimer t;
+  t.configure(true, 1, 1);
+  t.restart(0, 0);
+  TEST_ASSERT_TRUE(t.due(60000, true));
+  for (uint32_t now = 60001; now < 600000; now += 30000) TEST_ASSERT_FALSE(t.due(now, true));  // that chat is still going
+  t.restart(600000, 0);  // it ended: the next one is a minute off
+  TEST_ASSERT_FALSE(t.due(659999, true));
+  TEST_ASSERT_TRUE(t.due(660000, true));
+}
+
+void test_chat_waits_for_a_good_moment() {
+  // Due, but one of them is busy (Dave is typing, someone is speaking, it is night): look again
+  // in a minute, and keep looking.
+  hal::ChatTimer t;
+  t.configure(true, 1, 1);
+  t.restart(0, 0);
+  TEST_ASSERT_FALSE(t.due(60000, false));
+  TEST_ASSERT_FALSE(t.due(60001, true));    // not straight away
+  TEST_ASSERT_FALSE(t.due(119999, true));
+  TEST_ASSERT_FALSE(t.due(120000, false));  // still busy: another minute
+  TEST_ASSERT_TRUE(t.due(180000, true));
+}
+
+void test_chat_any_conversation_puts_the_next_one_off() {
+  hal::ChatTimer t;
+  t.configure(true, 10, 10);
+  t.restart(0, 0);
+  t.restart(9 * 60000, 0);  // Dave asked something a minute before it was due
+  TEST_ASSERT_FALSE(t.due(10 * 60000, true));
+  TEST_ASSERT_TRUE(t.due(19 * 60000, true));
+}
+
+void test_chat_switched_off_never_comes_due() {
+  hal::ChatTimer t;
+  t.configure(false, 1, 1);
+  t.restart(0, 0);
+  TEST_ASSERT_FALSE(t.on());
+  TEST_ASSERT_FALSE(t.due(10 * 60000, true));
+  hal::ChatTimer fresh;  // and neither does one that was never set up
+  TEST_ASSERT_FALSE(fresh.due(10 * 60000, true));
+}
+
+void test_chat_timer_survives_the_clock_wrapping() {
+  hal::ChatTimer t;
+  t.configure(true, 1, 1);
+  t.restart(0xFFFFFF00u, 0);  // due 60 s later, past the wrap
+  TEST_ASSERT_FALSE(t.due(0xFFFFFFFFu, true));
+  TEST_ASSERT_FALSE(t.due(0x00000100u, true));
+  TEST_ASSERT_TRUE(t.due(0xFFFFFF00u + 60000u, true));
 }
 
 // ----- the desk HAL's downloaded lines -----
@@ -223,6 +291,12 @@ int main(int, char**) {
   RUN_TEST(test_talk_combination_while_recording_drops_it);
   RUN_TEST(test_talk_a_finished_hold_does_not_start_again);
   RUN_TEST(test_talk_survives_the_clock_wrapping);
+  RUN_TEST(test_chat_comes_due_between_min_and_max);
+  RUN_TEST(test_chat_is_due_once_until_restarted);
+  RUN_TEST(test_chat_waits_for_a_good_moment);
+  RUN_TEST(test_chat_any_conversation_puts_the_next_one_off);
+  RUN_TEST(test_chat_switched_off_never_comes_due);
+  RUN_TEST(test_chat_timer_survives_the_clock_wrapping);
   RUN_TEST(test_clips_keep_and_take);
   RUN_TEST(test_clips_room_for_two_and_the_older_goes);
   RUN_TEST(test_clips_same_number_replaces);

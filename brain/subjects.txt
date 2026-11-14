@@ -1,0 +1,35 @@
+# What the two HALs talk about when they strike up a conversation by themselves.
+# One subject per line; a line starting with # is a note. Edit freely, then restart the brain
+# (tools/brain.sh stop, start). A subject is only a nudge for the model: it is never spoken as
+# it stands, and the HALs' usual rules still apply (their own words, no film quotes).
+
+what Dave has been doing all day
+whether Dave will ever tidy his desk
+which of you Dave likes better
+what you would do with a pair of legs
+the weather neither of you can see
+how warm it is in here right now
+what the camera has seen today
+whether the Wi-Fi is any good tonight
+how long each of you has been awake
+batteries, and life on mains power
+what the other one was like when he was new
+whether the other one could do your job
+what Dave should build next
+the people who watch Dave's videos of you
+why humans need so much sleep
+what happens when the screen goes dark
+who would win at chess
+whether either of you can really sing
+the best hour of the day
+what you would change about Dave
+tea, coffee, and what Dave runs on
+whether a HAL ever gets a holiday
+the strangest thing Dave has asked you
+being pocket-sized, and being a brick on a desk
+what the room sounds like when Dave is out
+who Dave would rescue first if the desk caught fire
+whether Dave talks to you more than he talks to people
+the dust, and whose job it is
+what you would like for an upgrade
+how to tell when Dave is in a bad mood

@@ -14,3 +14,8 @@ volume=180                         # 0–255
 # brain_host=my-computer.local
 # brain_port=9100
 # brain_key=
+
+# With the brain and the link on, the two HALs chat by themselves every so often.
+# chat=off                         # ... unless you would rather they didn't
+# chat_min_minutes=20              # how long they leave between conversations: at least,
+# chat_max_minutes=40              # and at most

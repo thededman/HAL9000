@@ -22,6 +22,7 @@
 #include <ctime>
 #include <map>
 #include <memory>
+#include <random>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,7 @@
 #include "consoles.h"
 #include "eye.h"
 #include "hal_brain.h"
+#include "hal_chattimer.h"
 #include "hal_conductor.h"
 #include "hal_dialogue.h"
 #include "hal_facts.h"
@@ -234,8 +236,13 @@ struct App {
   std::map<int, std::vector<uint8_t>> liveClips;  // live line number -> its audio
   std::string showAfter;                          // a screen the answer asked for, opened once he has spoken
   std::string autoAsk, autoAskDesk, autoArgue;    // --ask, --ask-desk, --argue: put this once booted
+  bool autoChat = false;                          // --chat: have the two chat once booted
   hal::LiveFeed feed;                             // the brain's lines become FETCH and append, in order
-  enum class Talk { None, Zero, Desk, Argue, Hear } talk = Talk::None;  // what the brain is doing for us
+  enum class Talk { None, Zero, Desk, Argue, Chat, Hear } talk = Talk::None;  // what the brain is doing for us
+  // Chats of their own: every so often the two strike up a short conversation nobody asked for.
+  hal::ChatTimer chatTimer;
+  bool unprompted = false;                        // the talk under way is one of those (so: no fuss if it fails)
+  std::mt19937 dice{std::random_device{}()};
   // Speaking to him: the talk key held, the microphone recording, then the words in the ask box.
   Mic mic;
   hal::Recording recording;
@@ -380,6 +387,7 @@ struct App {
                {"talk", "Talk to the desk unit"},
                {"askdesk", brainClient.started() ? "Ask the desk unit..." : "Ask the desk unit (no brain)"},
                {"argue", brainClient.started() ? "Make them argue..." : "Make them argue (no brain)"},
+               {"chat", brainClient.started() ? "Let them chat" : "Let them chat (no brain)"},
                {"daisy", "Shut down (Daisy Bell)"},
                {"quit", "Quit HAL Zero"}});
     overlay = Overlay::Menu;
@@ -464,10 +472,45 @@ struct App {
     halLog("argue: %s", topic.c_str());
   }
 
+  // Could the two strike up a conversation of their own right now? Only when both are at rest
+  // and Dave isn't in the middle of anything with HAL Zero.
+  bool freeToChat() const {
+    return canAsk() && cfg.link && link.connected() && peerVersion >= 3 && overlay == Overlay::None && !listening &&
+           brain->mode() == hal::Mode::Idle && !lastQuiet;
+  }
+
+  // A chat between the two, on a subject the brain draws: `byThemselves` when nobody asked for
+  // it (then nothing is said or shown if it can't happen). False if it didn't start.
+  bool startChat(uint32_t now, bool byThemselves) {
+    if (!canAsk() || overlay != Overlay::None || listening) return false;
+    if (byThemselves ? !(cfg.link && link.connected() && peerVersion >= 3) : !deskCanThink(now)) return false;
+    talk = Talk::Chat;
+    unprompted = byThemselves;
+    debateId.clear();
+    debateNext = 0;
+    lineAsked = allLinesIn = false;
+    thinking = true;
+    senseDesk(now);
+    halLog("chat: %s", byThemselves ? "of their own accord" : "asked for");
+    return true;
+  }
+
   // ... and once they are in (or a second has passed without them), it goes to the brain.
   void sendAfterSense(uint32_t now) {
     senseAt = 0;
     const hal::PeerSensors* sensors = haveSensors ? &peerSensors : nullptr;
+    if (talk == Talk::Chat) {
+      const hal::PeerStatus* desk = freshStatus(now);
+      if (unprompted && desk && desk->mode != "idle") {  // he is in the middle of something: another time
+        halLog("chat: the desk unit is busy (%s)", desk->mode.c_str());
+        endTalk();
+        return;
+      }
+      // Four or six lines, and either of them may open. The brain draws the subject.
+      brainClient.chat(hal::askBody(hal::debateFacts(readings, desk, sensors), ""), 4 + 2 * int(dice() % 2),
+                       dice() % 2 ? "desk" : "zero");
+      return;
+    }
     if (talk == Talk::Argue) {
       brainClient.debate(hal::askBody(hal::debateFacts(readings, freshStatus(now), sensors), argueTopic), 8);
       argueTopic.clear();
@@ -563,6 +606,8 @@ struct App {
   // Forget whatever the brain was doing for us (answered, interrupted, failed).
   void endTalk() {
     showAfter.clear();  // a screen asked for along with an answer that never played isn't owed any more
+    unprompted = false;
+    chatTimer.restart(nowMs(), dice());  // their next chat counts from the end of this conversation
     if (talk == Talk::None && !thinking) return;
     if (feed.busy() && link.connected() && peerVersion >= 3) {
       // The desk HAL may be fetching a line nobody will ask him to say: he can stop and forget it.
@@ -584,8 +629,10 @@ struct App {
 
   void talkFailed(const char* banner, uint32_t now) {
     halLog("live conversation: %s", banner);
-    gloatText = banner;
-    gloatUntil = now + 5000;
+    if (!unprompted) {  // a chat nobody asked for just doesn't happen
+      gloatText = banner;
+      gloatUntil = now + 5000;
+    }
     if (conductor.live()) handleConductor(conductor.interrupt(now));  // tells the desk HAL too
     endTalk();
   }
@@ -616,7 +663,9 @@ struct App {
   // An argument's next line is asked for once the one before it is being spoken: one line is
   // kept ready beyond the one in the air, no more (the desk HAL has room for two clips).
   void askNextLine() {
-    if (talk != Talk::Argue || debateId.empty() || lineAsked || allLinesIn || feed.busy() || !conductor.live()) return;
+    if ((talk != Talk::Argue && talk != Talk::Chat) || debateId.empty() || lineAsked || allLinesIn || feed.busy() ||
+        !conductor.live())
+      return;
     const int waiting = int(conductor.dialogue().lines.size()) - conductor.line();
     if (waiting >= 1) return;
     brainClient.debateLine(debateId, debateNext);
@@ -630,6 +679,8 @@ struct App {
       if (conductor.live()) {  // an argument already under way: let what has been written be said
         halLog("brain: %s (the conversation ends early)", e.error.c_str());
         conductor.close();
+      } else if (unprompted) {  // nobody asked for this chat: no line about it, no banner
+        halLog("chat: the brain isn't answering (%s)", e.error.c_str());
       } else {
         brainOffline(e.error, now);
       }
@@ -772,6 +823,9 @@ struct App {
               halLog("ask box: not now");
             }
           }
+          else if (id == "chat") {
+            if (!startChat(now, false)) halLog("chat: not now");
+          }
           else if (id == "daisy") holdForDaisy = true;
           else if (id == "quit") {
             halLog("quit (menu)");
@@ -905,7 +959,11 @@ struct App {
     } else if (!autoArgue.empty() && canAsk() && (link.connected() || now - startMs > 8000)) {
       submitTopic(autoArgue, now);
       autoArgue.clear();
+    } else if (autoChat && canAsk() && (link.connected() || now - startMs > 8000)) {
+      startChat(now, false);
+      autoChat = false;
     }
+    if (chatTimer.due(now, freeToChat()) && !startChat(now, true)) chatTimer.restart(now, dice());
     if (!hearFile.empty() && canAsk()) {
       hearFromFile(hearFile, now);
       hearFile.clear();
@@ -1187,6 +1245,7 @@ struct App {
                                          : "TAB which HAL   ENTER ask   ESC cancel")
            : overlay != Overlay::None ? (cardKeys ? "F X move   ENTER pick   ESC back"
                                                   : "UP DOWN move   ENTER pick   ESC back")
+           : thinking && unprompted   ? "THINKING OF SOMETHING TO SAY   ESC cancel"
            : thinking                 ? ((now / 500) % 2 ? "BRAIN THINKING ...   ESC cancel" : "BRAIN THINKING       ESC cancel")
            : conductor.active()       ? "SPACE or ESC stop"
            : brainClient.started()    ? (cardKeys ? "ENTER ask   hold Fn: speak   TAB menu   ESC quit"
@@ -1476,7 +1535,7 @@ int keyCheck(M5Canvas& f, Poll poll, Present present) {
 int main(int argc, char** argv) {
   const char* shotsDir = nullptr;
   const char* root = std::getenv("HAL_ROOT");
-  bool keysMode = false;
+  bool keysMode = false, chatArg = false;
   int listenArg = 0;
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
@@ -1497,6 +1556,7 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--hear") && i + 1 < argc) hearArg = argv[++i];
     else if (!std::strcmp(argv[i], "--listen") && i + 1 < argc) listenArg = std::atoi(argv[++i]);
     else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
+    else if (!std::strcmp(argv[i], "--chat")) chatArg = true;
     else if (!std::strcmp(argv[i], "--keys")) keysMode = true;
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
@@ -1517,6 +1577,7 @@ int main(int argc, char** argv) {
   app.autoAsk = askArg;
   app.autoAskDesk = askDeskArg;
   app.autoArgue = argueArg;
+  app.autoChat = chatArg;
   app.hearFile = hearArg;
   app.listenSeconds = listenArg > 0 && listenArg <= 15 ? listenArg : 0;
   if (!brainArg.empty()) {  // --brain host[:port] overrides config.txt, for trying the chat in the simulator
@@ -1530,6 +1591,9 @@ int main(int argc, char** argv) {
   }
   if (hal::brainReady(app.cfg)) {  // the AI brain on the computer (never log the key)
     app.brainClient.start(app.cfg.brainHost, app.cfg.brainPort, app.cfg.brainKey);
+    app.chatTimer.configure(app.cfg.chat && app.cfg.link, app.cfg.chatMinMinutes, app.cfg.chatMaxMinutes);
+    app.chatTimer.restart(nowMs(), app.dice());
+    if (app.chatTimer.on()) halLog("chats of their own: every %d to %d minutes", app.cfg.chatMinMinutes, app.cfg.chatMaxMinutes);
     halLog("brain: %s:%d", app.cfg.brainHost.c_str(), app.cfg.brainPort);
   }
 

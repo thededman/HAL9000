@@ -59,6 +59,8 @@ const IntKey kIntKeys[] = {
     {"camera_motion_threshold", &Config::cameraMotionThreshold, 1, 255},
     {"link_port", &Config::linkPort, 1024, 65535},
     {"brain_port", &Config::brainPort, 1024, 65535},
+    {"chat_min_minutes", &Config::chatMinMinutes, 1, 1440},
+    {"chat_max_minutes", &Config::chatMaxMinutes, 1, 1440},
 };
 
 }  // namespace
@@ -104,8 +106,8 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
       continue;
     }
     if (key == "camera_preview") continue;  // retired in 0.3 (the main-screen preview is gone)
-    if (key == "camera" || key == "link" || key == "brain") {
-      bool& field = key == "camera" ? c.camera : key == "link" ? c.link : c.brain;
+    if (key == "camera" || key == "link" || key == "brain" || key == "chat") {
+      bool& field = key == "camera" ? c.camera : key == "link" ? c.link : key == "brain" ? c.brain : c.chat;
       if (!parseBool(value, &field)) warn(key + ": '" + value + "' should be on or off, using default");
       continue;
     }
@@ -150,6 +152,12 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
     Config d;
     c.idleMinMinutes = d.idleMinMinutes;
     c.idleMaxMinutes = d.idleMaxMinutes;
+  }
+  if (c.chatMinMinutes > c.chatMaxMinutes) {
+    warn("chat_min_minutes is larger than chat_max_minutes, using defaults for both");
+    Config d;
+    c.chatMinMinutes = d.chatMinMinutes;
+    c.chatMaxMinutes = d.chatMaxMinutes;
   }
   return c;
 }

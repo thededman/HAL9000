@@ -6,7 +6,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.6.0] - 2026-11-12
+## [0.6.0] - 2026-11-13
 
 ### Added
 - The AI brain: a small server on your computer (`tools/brain.sh start`) that answers as
@@ -22,9 +22,16 @@ and versions follow [Semantic Versioning](https://semver.org/).
   brain's answer himself and speaks it, using his own sensor readings.
 - Live arguments: "Make them argue..." in HAL Zero's menu takes a subject and the two HALs
   argue it out for eight lines. A tap on either stops them.
+- Chats of their own: every 20 to 40 minutes, when both HALs are at rest and it isn't quiet
+  hours, the two strike up a short conversation nobody asked for, on a subject drawn at random
+  from `brain/subjects.txt` (yours to edit). "Let them chat" in HAL Zero's menu starts one at
+  once; `chat=off` in his settings stops them, and `chat_min_minutes` / `chat_max_minutes` set
+  the gap.
+- `tools/brain.sh autostart on` starts the brain whenever you log in (macOS), so a restart of
+  the computer no longer leaves HAL Zero saying his higher functions are offline.
 - `tools/brain.sh ask zero "..."` (or `ask desk`) asks from the computer; the simulator takes
-  `--brain HOST`, `--ask`, `--ask-desk`, `--argue`, `--hear FILE` and `--listen SECONDS`; `--keys`
-  shows the code of every key pressed.
+  `--brain HOST`, `--ask`, `--ask-desk`, `--argue`, `--chat`, `--hear FILE` and
+  `--listen SECONDS`; `--keys` shows the code of every key pressed.
 - A guard that keeps the film's best-known lines out of anything the AI says.
 - Claude or ChatGPT can write the HALs' lines instead of the local model, with your own API
   key in `brain/.env`. The setup guide lists what is sent when you turn this on (questions

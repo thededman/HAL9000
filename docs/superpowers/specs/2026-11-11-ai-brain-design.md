@@ -131,6 +131,21 @@ and `GET /health` must carry the shared key in `X-HAL-Key`.
   ("reply to his last point"); the final line is told it is the last word. Lines are generated
   at most one ahead of the line the device has asked for, so an interrupted argument wastes
   one line. A debate nobody asks about for 2 minutes stops; it is forgotten after 10.
+- **Chats of their own** (added 2026-11-13): the same machinery with other instructions.
+  `POST /debate?kind=chat&turns=N&first=zero|desk` starts one; with no subject in the body the
+  brain draws one from `brain/subjects.txt` (every subject before any repeats, never the same
+  twice running; a built-in few if the file is missing). Each line is told the two are passing
+  the time, to answer the other and move the talk on, and whether it opens or closes the chat.
+  HAL Zero decides when: a `ChatTimer` in `lib/hal_core` comes due a random 20 to 40 minutes
+  (`chat_min_minutes`, `chat_max_minutes`; `chat=off` disables) after the last conversation of
+  any kind ended, then waits, a minute at a time, until he is idle with nothing open, the link
+  is up with a v3 desk HAL and it isn't quiet hours. He asks for the desk HAL's readings first
+  and drops the idea if the desk HAL isn't idle. Four or six lines, either HAL opening. A chat
+  nobody asked for fails silently: no "brain offline" line, no banner. "Let them chat" in the
+  menu (and `--chat`) starts one at once, with the usual banners.
+- **Starting at login:** `tools/brain.sh autostart on|off` installs or removes a macOS
+  LaunchAgent that runs `tools/brain.sh start` at login (the brain is otherwise not started
+  after a restart of the computer).
 
 ## 5. Models (`brain/providers/`)
 

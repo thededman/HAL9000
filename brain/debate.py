@@ -1,4 +1,5 @@
-"""The two HALs arguing live: lines are written one ahead of the one being collected."""
+"""The two HALs talking live, in an argument Dave set off or a chat of their own: lines are
+written one ahead of the one being collected."""
 import secrets
 import sys
 import threading
@@ -6,17 +7,25 @@ import time
 
 from . import persona
 from .providers import ProviderError
+from .subjects import Subjects
 from .voice import VoiceError
 
 
+KINDS = ("argue", "chat")
+
+
 class Debate:
-    """HAL Zero opens (line 0), then they alternate for `turns` lines. A worker thread writes
-    each line once it is at most one ahead of the highest line anyone has asked for, so an
-    argument that is interrupted wastes one line at most."""
+    """`first` opens (line 0), then they alternate for `turns` lines: an argument about `topic`
+    (kind "argue") or a chat about it (kind "chat"). A worker thread writes each line once it is
+    at most one ahead of the highest line anyone has asked for, so a conversation that is
+    interrupted wastes one line at most."""
 
     def __init__(self, brain, topic: str, facts: list[str], turns: int, idle_s: float = 120,
-                 clock=time.monotonic, poll_s: float = 1.0):
+                 clock=time.monotonic, poll_s: float = 1.0, kind: str = "argue", first: str = "zero"):
+        if kind not in KINDS:
+            raise ValueError(f"unknown kind of conversation: {kind!r}")
         self.turns = turns
+        self._kind, self._first, self._second = kind, first, persona.other(first)  # (other() refuses a stranger)
         self._brain, self._topic, self._facts = brain, topic, list(facts)
         self._idle, self._clock, self._poll = idle_s, clock, poll_s
         self._lines: list = []
@@ -49,9 +58,11 @@ class Debate:
                     self._cond.notify_all()
                     return
                 n, so_far = len(self._lines), list(self._lines)
-            who = "zero" if n % 2 == 0 else "desk"
+            who = self._first if n % 2 == 0 else self._second
             try:
-                system = persona.debate_prompt(who, self._topic, self._facts, last=n == self.turns - 1)
+                last = n == self.turns - 1
+                system = (persona.chat_prompt(who, self._topic, self._facts, opening=n == 0, last=last)
+                          if self._kind == "chat" else persona.debate_prompt(who, self._topic, self._facts, last=last))
                 line = self._brain.speak(who, system, self._messages(who, so_far), allow_show=False)
             except Exception as e:  # the model or the voice failed: the argument stops here, and says why
                 known = isinstance(e, (ProviderError, VoiceError))  # these explain themselves, without secrets
@@ -103,8 +114,9 @@ class Debates:
     """The arguments the server knows about. Starting one ends the one before (there is one HAL
     Zero); each is forgotten ten minutes after it began."""
 
-    def __init__(self, brain, keep_s: float = 600, clock=time.monotonic):
+    def __init__(self, brain, keep_s: float = 600, clock=time.monotonic, subjects=None):
         self._brain, self._keep, self._clock = brain, keep_s, clock
+        self._subjects = subjects or Subjects()  # what a chat is about when nobody said
         self._debates: dict[str, tuple[float, Debate]] = {}
         self._lock = threading.Lock()
 
@@ -113,13 +125,22 @@ class Debates:
         for debate_id in [i for i, (began, _) in self._debates.items() if now - began > self._keep]:
             self._debates.pop(debate_id)[1].stop()
 
-    def start(self, topic: str, facts: list[str], turns: int) -> str:
+    def start(self, topic: str, facts: list[str], turns: int, kind: str = "argue", first: str = "zero") -> str:
+        if kind not in KINDS:
+            raise ValueError(f"unknown kind of conversation: {kind!r}")
+        persona.other(first)  # refuses an opener who isn't one of the two, before anything is stopped
+        if kind == "chat" and not topic:
+            topic = self._subjects.pick()
+            print(f"The HALs are chatting about: {topic}", file=sys.stderr, flush=True)
+        if not topic:
+            raise ValueError("an argument needs a subject")
         debate_id = secrets.token_hex(8)
         with self._lock:
             self._forget_old()
             for _, running in self._debates.values():
                 running.stop()
-            self._debates[debate_id] = (self._clock(), Debate(self._brain, topic, facts, turns, clock=self._clock))
+            self._debates[debate_id] = (self._clock(), Debate(self._brain, topic, facts, turns, clock=self._clock,
+                                                              kind=kind, first=first))
         return debate_id
 
     def get(self, debate_id) -> Debate | None:

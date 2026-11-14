@@ -148,6 +148,9 @@ From the Cardputer:
   answer.
 - **Make them argue:** "Make them argue..." in the menu takes a subject, and the two go at it
   for eight lines, each written while the one before is being spoken.
+- **Or leave them to it:** every 20 to 40 minutes, when both are at rest, the two strike up a
+  short conversation of their own on a subject drawn at random (the list is yours to edit).
+  "Let them chat" in the menu starts one at once.
 
 From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` ask either HAL.
 

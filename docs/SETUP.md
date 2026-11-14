@@ -320,6 +320,16 @@ Each prints the reply and plays it in that HAL's voice. The first answer after s
 takes 10–15 seconds while the model loads; after that, about a second. `tools/brain.sh stop`
 stops it, `status` says whether it is running, and its log is `brain/.run/brain.log`.
 
+**After the computer restarts** the brain has to be started again; until it is, HAL Zero says
+his higher functions are offline. On macOS it can start by itself whenever you log in:
+
+```bash
+tools/brain.sh autostart on
+```
+
+`tools/brain.sh autostart off` undoes that, and `tools/brain.sh autostart` says which it is.
+On Linux, add `tools/brain.sh start` (with its full path) to your desktop's startup programs.
+
 **Chat with HAL Zero in the simulator** (step 8) while the brain is running:
 
 ```bash
@@ -368,8 +378,17 @@ tools/brain.sh pair
   (step 7) and both on v0.6 or later: flash the desk HAL again (step 5) after updating. HAL Zero
   tells the desk HAL where to download each of his lines, so the desk HAL needs no settings.
   Space or Esc on HAL Zero, or a tap on the desk HAL, stops an argument.
+- **They chat by themselves.** Every 20 to 40 minutes, when both HALs are at rest and it isn't
+  quiet hours, the two strike up a conversation of four or six lines that nobody asked for.
+  Either may open it, and the brain draws the subject from `brain/subjects.txt`: one subject
+  per line, yours to edit (restart the brain afterwards). "Let them chat" in the menu starts
+  one at once, and Space, Esc or a tap stops one. In HAL Zero's `~/hal/config.txt`, `chat=off`
+  stops them and `chat_min_minutes` / `chat_max_minutes` set how long they leave between
+  conversations (counted from the end of the last one, whoever started it). When the brain
+  or the desk HAL isn't there, no chat happens and nothing is said about it.
 - If he says his higher functions are offline, the brain isn't running or can't be reached:
-  check `tools/brain.sh status`, and that both are on the same network.
+  check `tools/brain.sh status` (after a restart of the computer it has to be started again,
+  see above), and that both are on the same network.
 - To undo pairing, delete the `HAL_BRAIN_KEY` line from `brain/.env` and set `brain=off` in
   HAL Zero's `~/hal/config.txt`. Until it is paired the brain only answers requests from the
   computer it runs on.
@@ -379,7 +398,10 @@ tools/brain.sh pair
 **Claude or ChatGPT instead of the local model (optional).** The brain can have Anthropic's
 Claude or OpenAI's ChatGPT write the HALs' lines. Either needs an account with that company
 and an API key, and is paid for by use: roughly a cent a line with the default Claude model at
-November 2026 prices, so an argument costs eight of those.
+November 2026 prices, so an argument costs eight of those. The HALs' own chats are paid for
+too, and with the usual settings there are two or three an hour, of four or six lines each,
+for as long as HAL Zero is running: set `chat=off` in his `~/hal/config.txt`, or a longer
+gap, if you would rather they only spoke when spoken to.
 
 With a cloud model, every line sends that company:
 
@@ -390,7 +412,8 @@ With a cloud model, every line sends that company:
   version, and the state of the link and of the other HAL),
 - for a question: the last few questions and answers of your chat with him, and the question.
   A spoken question is turned into text on your computer first, and only the text is sent,
-- for an argument: its subject, both HALs' readings, and the argument so far.
+- for an argument or one of their own chats: its subject, both HALs' readings, and what has
+  been said in it so far.
 
 Never sent: recordings of your voice, the HALs' voices (both stay on your computer), Wi-Fi
 names and passwords, network addresses, and the key shared with HAL Zero. As with any
@@ -472,4 +495,5 @@ Then repeat only what changed: render the voice again if `content/` changed (ste
 | HAL Zero shows `LINK SEEKING` forever | The desk HAL is off, has `link=off`, or is on another network (step 7) |
 | A copy to the Cardputer was interrupted | Run `tools/cardputer.sh deploy` again; the program is only swapped in once fully copied |
 | `tools/brain.sh ask` says `error=no-model` | Ollama isn't running, or the model in `brain/.env` (or the default) isn't pulled. With Claude or ChatGPT: no internet, or a wrong key or model name. The end of `brain/.run/brain.log` says which (step 9) |
+| HAL Zero says his higher functions are offline | The brain isn't running (`tools/brain.sh status`): it has to be started again after the computer restarts, unless `tools/brain.sh autostart on` is set (step 9) |
 | `tools/brain.sh start` says the brain didn't start | Read the end of `brain/.run/brain.log`; if port 9100 is taken, set `HAL_BRAIN_PORT` in `brain/.env` |

@@ -45,6 +45,9 @@ class BrainClient {
   void ask(const std::string& who, const std::string& body);
   // Start an argument about the topic in `body`; then ask for its lines one at a time, from 0.
   void debate(const std::string& body, int turns);
+  // The same for a chat nobody asked for: `body` is the facts (and a subject, or none: the brain
+  // then picks one), `first` who opens ("zero" or "desk"). Its lines are collected the same way.
+  void chat(const std::string& body, int turns, const std::string& first);
   void debateLine(const std::string& id, int n);  // waits while the brain is still writing it (60 s at most)
   void stopDebate(const std::string& id);         // tell the brain to stop writing; no event comes back
   void hear(std::vector<uint8_t> wav);            // a 16 kHz mono recording: what was said?
@@ -58,6 +61,7 @@ class BrainClient {
     enum class Kind { Ask, Debate, DebateLine, StopDebate, Hear } kind = Kind::Ask;
     int generation = 0;
     std::string who, body, id;  // body also carries a recording's bytes (Hear)
+    std::string extra;          // Debate: more of the request's query ("&kind=chat&first=desk")
     int n = 0;  // DebateLine: which line; Debate: how many turns
   };
   void push(Job job);

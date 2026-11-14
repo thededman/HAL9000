@@ -86,8 +86,12 @@ def debate_prompt(who: str, topic: str, facts: list[str], last: bool) -> str:
              "him. " + RULES]
     if last:
         parts.append("This is your last word on the subject: close the argument with one new remark.")
-    # HAL Zero sends both HALs' readings, each line saying whose it is ("zero ..." / "desk ..."); a
-    # line with no owner (the time) is for both.
+    return "\n\n".join(parts + _readings_of_both(who, facts))
+
+
+def _readings_of_both(who: str, facts: list[str]) -> list[str]:
+    """HAL Zero sends both HALs' readings, each line saying whose it is ("zero ..." / "desk ..."); a
+    line with no owner (the time) is for both. `who` is told which are his and which the other's."""
     mine, his = [], []
     for fact in facts:
         owner, _, rest = fact.partition(" ")
@@ -97,11 +101,37 @@ def debate_prompt(who: str, topic: str, facts: list[str], last: bool) -> str:
             his.append(rest)
         else:
             mine.append(fact)
+    parts = []
     if mine:
         parts.append(_facts_block(mine))
     if his:
-        parts.append(f"What you know about {rival} right now (his readings, not yours):\n" + "\n".join("- " + f for f in his))
-    return "\n\n".join(parts)
+        parts.append(f"What you know about {_NAMES[other(who)]} right now (his readings, not yours):\n"
+                     + "\n".join("- " + f for f in his))
+    return parts
+
+
+# The rules for a line said to the other HAL with nobody asking: the same, except for who is
+# being spoken to and when a reading may come up.
+_TO_DAVE = "You are talking to Dave. "
+_ONLY_IF_ASKED = "Mention a fact from your list only when Dave asks about it."
+assert _TO_DAVE in RULES and _ONLY_IF_ASKED in RULES
+CHAT_RULES = RULES.replace(_TO_DAVE, "").replace(_ONLY_IF_ASKED,
+                                                 "Bring in something you know only where it fits the talk.")
+
+
+def chat_prompt(who: str, subject: str, facts: list[str], opening: bool, last: bool) -> str:
+    """What the model is told for one line of `who`'s part in a chat nobody asked for."""
+    rival = _NAMES[other(who)]
+    parts = [_PERSONAS[who],
+             f"Nobody has asked either of you anything: you and {rival} are passing the time, and Dave may be "
+             f"listening. The talk is about: {subject}",
+             (f"You speak first: open with a remark or a question for {rival}." if opening else
+              f"Answer what {rival} just said, then add a remark or a question of your own so the talk moves on."),
+             f"This is a chat, not a contest: be yourself, tease him if you like, and keep to the subject. Never "
+             f"repeat a sentence that has already been said. Speak to {rival}, not about him. " + CHAT_RULES]
+    if last:
+        parts.append("This is the last line of the chat: round it off with a closing remark, not a question.")
+    return "\n\n".join(parts + _readings_of_both(who, facts))
 
 
 # ---------- what comes back from the model ----------
@@ -235,10 +265,11 @@ def _plain(line: str) -> str:
     return "".join(ch for ch in line if ch >= " " and ch != "\x7f").strip()
 
 
-def parse_body(body: bytes) -> tuple[list[str], str]:
+def parse_body(body: bytes, need_question: bool = True) -> tuple[list[str], str]:
     """A request body: fact lines, a blank line, then the question (or the topic of an argument).
 
-    With no blank line the whole body is the question. Raises ValueError when there is none.
+    With no blank line the whole body is the question. Raises ValueError when there is none,
+    unless `need_question` is False (a chat, whose subject the brain can draw itself).
     """
     try:
         text = body.decode("utf-8")
@@ -252,6 +283,6 @@ def parse_body(body: bytes) -> tuple[list[str], str]:
         facts, rest = [], lines
     facts = [f[:MAX_FACT_CHARS] for f in facts if f][:MAX_FACTS]
     question = " ".join(part for part in rest if part)[:MAX_QUESTION].strip()
-    if not question:
+    if not question and need_question:
         raise ValueError("no question")
     return facts, question

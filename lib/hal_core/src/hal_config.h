@@ -29,6 +29,11 @@ struct Config {
   std::string brainHost;  // its name or address on the network
   int brainPort = 9100;
   std::string brainKey;   // the shared key: 32 lower-case hex characters. Never logged.
+  // Chats of their own (HAL Zero only; needs the brain and the link): every so often the two
+  // HALs strike up a short conversation that nobody asked for.
+  bool chat = true;
+  int chatMinMinutes = 20;
+  int chatMaxMinutes = 40;
 };
 
 // The brain is switched on and has somewhere to call and a key to call with.

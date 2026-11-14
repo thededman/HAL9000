@@ -251,15 +251,17 @@ class Handler(BaseHTTPRequestHandler):
                     return self._reply({"heard": self.server.hal_brain.hear(body)})
                 except ValueError:
                     return self._refuse(400, "bad-audio")
-            facts, question = persona.parse_body(body)
+            kind = query.get("kind", ["argue"])[0] if url.path == "/debate" else ""
+            facts, question = persona.parse_body(body, need_question=kind != "chat")  # the brain can pick a chat's subject
             if url.path == "/ask":
                 said = self.server.hal_brain.ask(query.get("who", [""])[0], facts, question)
                 return self._reply({"text": said.text, "clip": said.clip, "ms": said.ms, "show": said.show})
             turns = int(query.get("turns", [str(DEFAULT_TURNS)])[0])
             if not MIN_TURNS <= turns <= MAX_TURNS:
                 raise ValueError("turns out of range")
-            self._reply({"debate": self.server.hal_debates.start(question, facts, turns)})
-        except ValueError:  # an unknown HAL, no question, not text, a bad number of turns
+            first = query.get("first", ["zero"])[0]
+            self._reply({"debate": self.server.hal_debates.start(question, facts, turns, kind=kind, first=first)})
+        except ValueError:  # an unknown HAL, no question, not text, a bad number of turns, kind or opener
             self._refuse(400, "bad-request")
         except ProviderError as e:
             self._refuse(503, "no-model", str(e))

@@ -76,6 +76,15 @@ void BrainClient::debate(const std::string& body, int turns) {
   push(std::move(job));
 }
 
+void BrainClient::chat(const std::string& body, int turns, const std::string& first) {
+  Job job;
+  job.kind = Job::Kind::Debate;
+  job.body = body;
+  job.n = turns;
+  job.extra = "&kind=chat&first=" + std::string(first == "desk" ? "desk" : "zero");
+  push(std::move(job));
+}
+
 void BrainClient::debateLine(const std::string& id, int n) {
   Job job;
   job.kind = Job::Kind::DebateLine;
@@ -192,8 +201,8 @@ BrainEvent BrainClient::doHear(const Job& job) {
 BrainEvent BrainClient::doDebate(const Job& job) {
   BrainEvent event;
   hal::HttpResponse response;
-  std::string error = http(job.generation, "POST", "/debate?turns=" + std::to_string(job.n), "text/plain", job.body,
-                           kAskMs, 4096, &response);
+  std::string error = http(job.generation, "POST", "/debate?turns=" + std::to_string(job.n) + job.extra, "text/plain",
+                           job.body, kAskMs, 4096, &response);
   if (!error.empty()) return failed(error);
   event.reply = hal::parseBrainReply(response);
   if (!event.reply.ok) return failed(event.reply.error);
