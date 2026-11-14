@@ -11,6 +11,7 @@
 #include "friend_screens.h"
 #include "hal_cast.h"
 #include "hal_chirp.h"
+#include "hal_log.h"
 
 namespace board {
 
@@ -20,11 +21,13 @@ extern const bool kWifiSleep = true;
 
 namespace {
 
-constexpr uint8_t kBright = 110, kDim = 12;
-constexpr uint32_t kAwakeMs = 20000;  // the screen dims this long after anything last happened
+// Brightness: "dimmed" stays easy to read. (At 12 his screen looked dark on the real device.)
+constexpr uint8_t kBright = 140, kDim = 70;
+constexpr uint32_t kAwakeMs = 60000;  // the screen dims this long after anything last happened
 constexpr uint32_t kFrameMs = 66;
 
 M5Canvas frame(&M5.Display);
+bool buffered = false;  // `frame` has its memory (otherwise he draws straight on the display)
 friendui::View view;
 std::vector<hal::Chirp> chirps;
 size_t chirpAt = 0;
@@ -50,9 +53,16 @@ void chirp(const std::string& text) {
 void begin() {
   M5.Display.setRotation(0);
   M5.Display.setBrightness(kBright);
-  frame.setPsram(true);
-  frame.setColorDepth(16);
-  frame.createSprite(M5.Display.width(), M5.Display.height());
+  // A buffer the size of the screen, so a frame appears all at once: in full colour if there is
+  // room, else in 256 colours; with no room at all he draws straight on the display.
+  for (int depth : {16, 8}) {
+    frame.setColorDepth(depth);
+    buffered = frame.createSprite(M5.Display.width(), M5.Display.height()) != nullptr;
+    if (buffered) break;
+  }
+  halLog("screen: %dx%d, %s, %u bytes of memory free", int(M5.Display.width()), int(M5.Display.height()),
+         buffered ? (frame.getColorDepth() == 16 ? "buffered in full colour" : "buffered in 256 colours") : "NOT buffered",
+         unsigned(ESP.getFreeHeap()));
   M5.Speaker.setVolume(140);
   view.me = kWho;
   wake(millis());
@@ -63,7 +73,9 @@ void update(uint32_t now) {
     if (chirpAt < chirps.size()) {
       const hal::Chirp& c = chirps[chirpAt++];
       M5.Speaker.tone(c.hz, c.ms);
-      nextChirpMs = now + c.ms + c.gapMs;
+      // From when this one was due, not from now: a pass that ran late (a frame was being drawn)
+      // must not make the line longer than HAL Zero was told it would be.
+      nextChirpMs += c.ms + c.gapMs;
       view.level = 255;
     } else {
       chirping = false;
@@ -80,8 +92,12 @@ void update(uint32_t now) {
   }
   if (now - lastFrameMs < (dimmed ? 500u : kFrameMs)) return;
   lastFrameMs = now;
-  friendui::draw(frame, view, now);
-  frame.pushSprite(0, 0);
+  if (buffered) {
+    friendui::draw(frame, view, now);
+    frame.pushSprite(0, 0);
+  } else {
+    friendui::draw(M5.Display, view, now);
+  }
   view.level = view.level > 40 ? view.level - 40 : 0;  // the eye settles between chirps
 }
 

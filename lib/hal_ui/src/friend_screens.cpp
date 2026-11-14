@@ -14,7 +14,7 @@ uint16_t rgb(int r, int g, int b) { return lgfx::color565(uint8_t(r), uint8_t(g)
 
 // The eye: a dark bezel with a pale rim, a red lens, and a bright core that breathes slowly
 // when nothing is happening and swells with the sound when it is his own line.
-void eye(M5Canvas& f, int cx, int cy, int r, const View& v, uint32_t nowMs) {
+void eye(lgfx::LovyanGFX& f, int cx, int cy, int r, const View& v, uint32_t nowMs) {
   const bool mine = v.speaker == v.me;
   const float breath = 0.5f + 0.5f * sinf(float(nowMs % 4000) * 6.2832f / 4000.0f);
   const float drive = mine ? float(v.level) / 255.0f : breath * 0.35f;
@@ -31,7 +31,7 @@ void eye(M5Canvas& f, int cx, int cy, int r, const View& v, uint32_t nowMs) {
   f.fillCircle(cx - r * 30 / 100, cy - r * 34 / 100, r * 7 / 100 + 1, rgb(210, 120, 110));  // a glint on the glass
 }
 
-void battery(M5Canvas& f, int x, int y, const View& v) {
+void battery(lgfx::LovyanGFX& f, int x, int y, const View& v) {
   if (v.battery < 0) return;
   char buf[16];
   std::snprintf(buf, sizeof buf, "%s%d%%", v.charging ? "+" : "", v.battery);
@@ -42,7 +42,7 @@ void battery(M5Canvas& f, int x, int y, const View& v) {
 
 // Who is speaking and the words, in a box `w` wide starting at (x, y): `cols` characters to a
 // row, `rows` rows at most (a full-length line always fits both screens).
-void words(M5Canvas& f, int x, int y, int w, size_t cols, size_t rows, const View& v) {
+void words(lgfx::LovyanGFX& f, int x, int y, int w, size_t cols, size_t rows, const View& v) {
   const uint16_t colour = castColour(v.speaker);
   f.setTextDatum(top_left);
   f.setTextColor(colour);
@@ -69,7 +69,7 @@ uint16_t castColour(int who) {
                               : rgb(58, 141, 255);
 }
 
-void draw(M5Canvas& f, const View& v, uint32_t nowMs) {
+void draw(lgfx::LovyanGFX& f, const View& v, uint32_t nowMs) {
   const int w = f.width(), h = f.height();
   const bool tall = h > w;
   const bool talking = hal::castValid(v.speaker);

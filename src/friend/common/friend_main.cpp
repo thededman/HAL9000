@@ -151,16 +151,25 @@ void sendSensors() {
 // What the friend logic decided: answers for HAL Zero, and what his device should do.
 void act(const hal::FriendOut& o, uint32_t now) {
   if (o.stop) {
+    halLog("talk: over");
     saying = false;
     board::stop();
     shownStatus.clear();
     status(idleStatus());
   }
-  if (o.show) board::showLine(o.showWho, o.showN, o.showText);
-  for (const hal::Message& m : o.send) zeroLink.send(m);  // (PLAYING goes out before he starts: the conductor waits 2 s for it)
+  if (o.show) {
+    halLog("line %d, %s: %s", o.showN, hal::castName(o.showWho), o.showText.c_str());
+    board::showLine(o.showWho, o.showN, o.showText);
+  }
+  for (const hal::Message& m : o.send) {  // (PLAYING goes out before he starts: the conductor waits 2 s for it)
+    if (m.type == hal::MsgType::Busy || m.type == hal::MsgType::Missing || m.type == hal::MsgType::End)
+      halLog("link: -> %s", hal::formatMessage(m).c_str());
+    zeroLink.send(m);
+  }
   if (o.wantState) sendState();
   if (o.wantSensors) sendSensors();
   if (o.say) {
+    halLog("line %d: his own, %u ms", o.sayN, unsigned(o.sayMs));
     saying = true;
     sayUntil = now + o.sayMs;
     board::say(o.sayText, o.sayMs);
@@ -213,6 +222,7 @@ void loop() {
   if (saying && int32_t(now - sayUntil) >= 0) {  // his line is finished
     saying = false;
     ++linesSaid;
+    board::stop();  // (not a chirp into the next HAL's line)
     act(self.onSaid(), now);
   }
   if (!self.talking()) status(idleStatus());

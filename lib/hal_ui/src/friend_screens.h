@@ -25,7 +25,8 @@ struct View {
 };
 
 // Any size. Taller than wide (HAL Nano, 135x240): the eye above, the words below. Wider than
-// tall (HAL Card, 240x135): the eye at the left, the words at the right.
-void draw(M5Canvas& f, const View& v, uint32_t nowMs);
+// tall (HAL Card, 240x135): the eye at the left, the words at the right. `f` is usually a
+// buffer the size of the screen (no flicker), but it can be the display itself.
+void draw(lgfx::LovyanGFX& f, const View& v, uint32_t nowMs);
 
 }  // namespace friendui
