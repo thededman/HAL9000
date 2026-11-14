@@ -85,5 +85,68 @@ class FakeDeskHalTest(unittest.TestCase):
         self.assertLess(len(said.getvalue().splitlines()), 20)  # it doesn't print every line it pours out
 
 
+def make_wav8(seconds=1.0, rate=11025) -> bytes:
+    """Unsigned 8-bit mono, as the brain renders HAL Card's lines."""
+    out = io.BytesIO()
+    with wave.open(out, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(1)
+        w.setframerate(rate)
+        w.writeframes(b"\x80" * int(seconds * rate))
+    return out.getvalue()
+
+
+class FriendsTest(unittest.TestCase):
+    """The same stand-in playing HAL Nano, HAL Paper or HAL Card (--as)."""
+
+    def test_who_says_what_on_connecting(self):
+        self.assertEqual(fake.hello_lines("desk", "ok"), ["HELLO OLD 3"])
+        self.assertEqual(fake.hello_lines("desk", "v2"), ["HELLO OLD 2"])
+        self.assertEqual(fake.hello_lines("nano", "ok"), ["HELLO OLD 4", "IAM nano"])
+        self.assertEqual(fake.hello_lines("paper", "ok"), ["HELLO OLD 4", "IAM paper"])
+        self.assertEqual(fake.hello_lines("card", "busy"), ["HELLO OLD 4", "IAM card"])
+
+    def test_who_has_a_voice(self):
+        self.assertEqual([fake.voiced(w) for w in ("desk", "nano", "paper", "card")], [True, False, False, True])
+
+    def test_now(self):
+        self.assertEqual(fake.parse_now("NOW 3 paper Noted. For the record."), (3, "paper", "Noted. For the record."))
+        self.assertEqual(fake.parse_now("NOW 12 zero Two  spaces inside."), (12, "zero", "Two  spaces inside."))
+        self.assertEqual(fake.parse_now("NOW 99 card " + "x" * 150), (99, "card", "x" * 150))
+        for bad in ("NOW", "NOW 1 nano", "NOW 0 nano Hi.", "NOW 100 nano Hi.", "NOW 1 dave Hi.", "NOW  1 nano Hi.",
+                    "NOW 1 nano  Leading.", "NOW 1 nano Trailing. ", "NOW 1 nano Caf\u00e9.", "NOW 1 nano " + "x" * 151,
+                    "SAY live 1"):
+            self.assertIsNone(fake.parse_now(bad), bad)
+
+    def test_how_long_a_line_of_words_takes(self):
+        # The same sums as the firmware (lib/hal_core: hal_chirp, hal_minutes), so the timing is true to life.
+        self.assertEqual(fake.chirp_ms("Hi."), 2500)            # the floor
+        self.assertEqual(fake.chirp_ms("a" * 80), 80 * 52)      # a tone and a gap a letter
+        self.assertEqual(fake.chirp_ms("ab cd"), 2500)
+        self.assertEqual(fake.chirp_ms("a" * 60 + "? " + "b" * 20), 60 * 52 + 270 + 60 + 20 * 52)
+        self.assertEqual(fake.reading_ms("Noted."), 4000)       # the floor
+        self.assertEqual(fake.reading_ms("x" * 100), 7000)
+        self.assertEqual(fake.reading_ms("x" * 150), 9750)
+        self.assertEqual(fake.words_ms("nano", "a" * 80), 4160)
+        self.assertEqual(fake.words_ms("paper", "x" * 100), 7000)
+
+    def test_card_takes_small_8_bit_clips_only(self):
+        self.assertEqual(fake.clip_ms("card", make_wav8(2.0)), 2000)
+        self.assertEqual(fake.clip_ms("card", make_wav(1.0)), 0)                 # 16-bit: not what he is sent
+        self.assertEqual(fake.clip_ms("card", make_wav8(9.5)), 0)                # 104,769 bytes: over his 96 KB
+        self.assertEqual(fake.clip_ms("card", make_wav8(8.8)), 8800)
+        self.assertEqual(fake.clip_ms("desk", make_wav(1.0)), 1000)              # the desk HAL is as he was
+        self.assertEqual(fake.clip_ms("desk", make_wav8(1.0)), 0)
+
+    def test_each_has_his_own_readings(self):
+        for who in ("desk", "nano", "paper", "card"):
+            self.assertTrue(fake.state_for(who).startswith("STATE up="), who)
+            self.assertTrue(fake.sensors_for(who).startswith("SENSORS light="), who)
+            self.assertLessEqual(len(fake.state_for(who)), 128)
+        self.assertIn("light=-1", fake.sensors_for("nano"))    # no light sensor on the wrist
+        self.assertIn("light=67", fake.sensors_for("desk"))
+        self.assertEqual(len({fake.sensors_for(w) for w in ("desk", "nano", "paper", "card")}), 4)
+
+
 if __name__ == "__main__":
     unittest.main()
