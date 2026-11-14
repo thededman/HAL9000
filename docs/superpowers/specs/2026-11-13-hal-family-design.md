@@ -92,7 +92,7 @@ NOW <n> <who> <text>   HAL Zero, to every v4 peer as line n begins.
 ## 5. The brain
 
 - A **cast registry**: id → name, persona, kind (`voice`/`text`), longest line (150 for zero
-  and desk, 120 card, 100 paper, 80 nano), voice (model, treatment, clip format), own-words
+  and desk, 110 card, 100 paper, 80 nano), voice (model, treatment, clip format), own-words
   line. The two existing HALs' prompts stay byte-for-byte the same.
 - **Conversations**: `POST /debate?cast=zero,desk,nano,…` (absent = the pair). A seedable
   `plan_turns`: random opener, never the same speaker twice running, whoever has spoken least
@@ -100,8 +100,8 @@ NOW <n> <who> <text>   HAL Zero, to every v4 peer as line n begins.
   to the model as one labelled transcript. Arguments give each extra HAL a side. Kind `roll`:
   one line each in cast order.
 - **Voices**: `Treatment` gains a model, a sample rate and a codec. HAL Card is the Alan model
-  with a treatment close to v0.1's, rendered unsigned 8-bit mono at the rate David picks by
-  ear. If a clip is larger than HAL Card can hold (96 KB: 98,304 bytes) the brain says a
+  with a treatment close to v0.1's, rendered unsigned 8-bit mono at 11,025 Hz (David's choice by
+  ear). If a clip is larger than HAL Card can hold (96 KB: 98,304 bytes) the brain says a
   short stock line of his instead. Text members get no audio and no `clip` in the reply.
 - `/ask?who=` accepts any cast id.
 
@@ -170,8 +170,9 @@ Done on 2026-11-13 with throwaway test programs (kept outside the repository):
   in `epd_fast`: 0.26 s, ten in a row all between 0.25 and 0.27 s. His own line, large, in
   `epd_quality`: 0.48 s. Touch works. All far inside the conductor's 2 s wait for `PLAYING`.
   Ghosting after ten fast entries: for David to judge.
-- **HAL Card's voice** at 8 kHz and 11 kHz: playing alternately on the Cardputer for David to
-  choose.
+- **HAL Card's voice**: David listened to both on the Cardputer and chose **11,025 Hz**
+  (2026-11-13). At that rate his 96 KB holds 8.9 s, about 115 characters of the Alan voice, so
+  his lines are capped at 110 characters and the brain's oversize fallback covers the rest.
 
 ## 9. Testing
 
