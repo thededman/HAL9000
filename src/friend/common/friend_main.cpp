@@ -35,9 +35,11 @@ std::vector<hal::Message> inbox;
 std::string serialLine;
 bool wifiAsked = false, wasJoined = false, wasLinked = false, serialOverflow = false;
 uint32_t wifiAskedAt = 0;
-bool saying = false;  // his own line is being chirped or written
+bool saying = false;  // his own line is being chirped, written or spoken
+int fetchingN = 0;    // the line whose clip is being downloaded (a HAL with a voice)
 uint32_t sayUntil = 0;
 int linesSaid = 0;
+bool talkLogged = false;  // something of a conversation has been logged since the last "talk: over"
 std::string shownStatus;
 
 int clampInt(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
@@ -151,13 +153,16 @@ void sendSensors() {
 // What the friend logic decided: answers for HAL Zero, and what his device should do.
 void act(const hal::FriendOut& o, uint32_t now) {
   if (o.stop) {
-    halLog("talk: over");
+    if (talkLogged) halLog("talk: over");
+    talkLogged = false;
     saying = false;
+    fetchingN = 0;
     board::stop();
     shownStatus.clear();
     status(idleStatus());
   }
   if (o.show) {
+    talkLogged = true;
     halLog("line %d, %s: %s", o.showN, hal::castName(o.showWho), o.showText.c_str());
     board::showLine(o.showWho, o.showN, o.showText);
   }
@@ -168,7 +173,22 @@ void act(const hal::FriendOut& o, uint32_t now) {
   }
   if (o.wantState) sendState();
   if (o.wantSensors) sendSensors();
-  if (o.say) {
+  if (o.fetch) {  // (a new FETCH replaces any download still going)
+    talkLogged = true;
+    fetchingN = o.fetchN;
+    if (!board::fetch(o.host, o.port, o.token)) {
+      halLog("line %d: its clip can't be fetched", o.fetchN);
+      fetchingN = 0;
+      act(self.onFetched(o.fetchN, false), now);  // MISSING
+    }
+  }
+  if (o.say && hal::castVoiced(board::kWho)) {
+    const uint32_t ms = board::play();
+    halLog("line %d: his own, %s", o.sayN, ms ? "spoken" : "but the speaker wouldn't take it");
+    act(self.onPlaying(o.sayN, ms, ms > 0), now);  // PLAYING once it has really started, else MISSING
+    saying = ms > 0;
+    sayUntil = now + ms;
+  } else if (o.say) {
     halLog("line %d: his own, %u ms", o.sayN, unsigned(o.sayMs));
     saying = true;
     sayUntil = now + o.sayMs;
@@ -218,6 +238,13 @@ void loop() {
   if (dropped) act(self.onDisconnected(), now);
   act(self.tick(now), now);
 
+  bool ok = false;
+  if (fetchingN && board::fetched(&ok)) {  // his clip has arrived, or won't
+    const int n = fetchingN;
+    fetchingN = 0;
+    halLog("line %d: clip %s", n, ok ? "fetched" : "not fetched");
+    act(self.onFetched(n, ok), now);  // READY, or MISSING
+  }
   if (board::tapped()) act(self.onTap(), now);
   if (saying && int32_t(now - sayUntil) >= 0) {  // his line is finished
     saying = false;

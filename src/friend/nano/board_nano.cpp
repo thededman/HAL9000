@@ -132,6 +132,11 @@ void stop() {
   M5.Speaker.stop();
 }
 
+// He has no voice to fetch a clip for.
+bool fetch(const std::string&, int, const std::string&) { return false; }
+bool fetched(bool*) { return false; }
+uint32_t play() { return 0; }
+
 void idleTap() { chirp("HAL Nano."); }
 
 void readings(hal::PeerStatus* status, hal::PeerSensors* sensors) {
