@@ -490,12 +490,14 @@ writes a line for whoever is there.
 | HAL Paper | M5Paper (v1.0 or v1.1) | writes his lines on his e-ink page |
 | HAL Card | Cardputer (the original) | aloud, with the project's first voice |
 
-So far only **HAL Nano** has firmware; the other two are on their way.
+So far **HAL Nano** and **HAL Card** have firmware; HAL Paper is on his way.
 
-**10.1 Flash him.** Plug the StickC Plus2 in with a data cable:
+**10.1 Flash him.** Plug the friend in with a data cable, on his own if you can (with several
+M5Stack devices plugged in, add `--upload-port` and his port, so the right one is written to):
 
 ```bash
-~/.platformio/penv/bin/pio run -e nano -t upload
+~/.platformio/penv/bin/pio run -e nano -t upload     # HAL Nano, on an M5StickC Plus2
+~/.platformio/penv/bin/pio run -e card -t upload     # HAL Card, on an original Cardputer
 ```
 
 **10.2 Give him your Wi-Fi.** A friend has no SD card: his network name and password are
@@ -507,18 +509,21 @@ shown as you type, is not saved on your computer, and he never repeats it. He on
 tools/friend_wifi.py
 ```
 
-His screen says `WAITING FOR HAL ZERO` once he has joined.
+With more than one device plugged in, name his port: `tools/friend_wifi.py --port /dev/cu.usbmodem1101`
+(the tool lists the ports it can see). His screen says `WAITING FOR HAL ZERO` once he has joined.
 
 **10.3 Tell HAL Zero.** Add the friends you have to HAL Zero's `config.txt` (on the
 Cardputer: `~/hal/config.txt`), with commas between them, and restart him:
 
 ```
-friends=hal-nano.local
+friends=hal-nano.local,hal-card.local
 ```
 
 A chat ("Let them chat"), an argument and the new **Roll call** in HAL Zero's menu then
-include every HAL who is there, and TAB in the ask box goes round them. Button A on HAL Nano
-stops a conversation for everyone; with nobody talking it makes him chirp.
+include every HAL who is there, and TAB in the ask box goes round them. A friend's button
+(A on HAL Nano, G0 on HAL Card) stops a conversation for everyone; with nobody talking it
+makes him chirp. HAL Card fetches each of his lines from the brain as HAL Zero and the desk
+HAL do, so he must be on the same network as the computer the brain runs on.
 
 **Without the devices**, the simulator can talk to stand-in friends. Start one stand-in for
 each (and one for the desk HAL), each on its own port, then the simulator:

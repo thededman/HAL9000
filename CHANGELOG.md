@@ -11,8 +11,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   the conversations as HALs of their own: HAL Nano (an M5StickC Plus2, who chirps while his
   words show on his screen), HAL Paper (an M5Paper, who writes) and HAL Card (the original
   Cardputer, who speaks with the project's first voice). HAL Zero conducts whoever is there,
-  and the AI brain writes each one's lines in his own character. So far HAL Nano has firmware
-  (`pio run -e nano -t upload`); the other two are to come.
+  and the AI brain writes each one's lines in his own character. So far HAL Nano and HAL Card
+  have firmware (`pio run -e nano -t upload`, `pio run -e card -t upload`); HAL Paper is to come.
 - A **roll call** in HAL Zero's menu (when friends are set up): every HAL present says a line.
 - Chats, arguments and questions include the friends: "Let them chat" and "Make them argue"
   bring in everyone present, TAB in the ask box goes round them, and each HAL's subtitle has
