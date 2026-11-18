@@ -490,7 +490,6 @@ writes a line for whoever is there.
 | HAL Paper | M5Paper (v1.0 or v1.1) | writes his lines on his e-ink page |
 | HAL Card | Cardputer (the original) | aloud, with the project's first voice |
 
-So far **HAL Nano** and **HAL Card** have firmware; HAL Paper is on his way.
 
 **10.1 Flash him.** Plug the friend in with a data cable, on his own if you can (with several
 M5Stack devices plugged in, add `--upload-port` and his port, so the right one is written to):
@@ -498,6 +497,7 @@ M5Stack devices plugged in, add `--upload-port` and his port, so the right one i
 ```bash
 ~/.platformio/penv/bin/pio run -e nano -t upload     # HAL Nano, on an M5StickC Plus2
 ~/.platformio/penv/bin/pio run -e card -t upload     # HAL Card, on an original Cardputer
+~/.platformio/penv/bin/pio run -e paper -t upload    # HAL Paper, on an M5Paper
 ```
 
 **10.2 Give him your Wi-Fi.** A friend has no SD card: his network name and password are
@@ -516,13 +516,15 @@ With more than one device plugged in, name his port: `tools/friend_wifi.py --por
 Cardputer: `~/hal/config.txt`), with commas between them, and restart him:
 
 ```
-friends=hal-nano.local,hal-card.local
+friends=hal-nano.local,hal-card.local,hal-paper.local
 ```
 
 A chat ("Let them chat"), an argument and the new **Roll call** in HAL Zero's menu then
 include every HAL who is there, and TAB in the ask box goes round them. A friend's button
-(A on HAL Nano, G0 on HAL Card) stops a conversation for everyone; with nobody talking it
-makes him chirp. HAL Card fetches each of his lines from the brain as HAL Zero and the desk
+(A on HAL Nano, G0 on HAL Card, a touch or the wheel on HAL Paper) stops a conversation for
+everyone; with nobody talking it makes HAL Nano and HAL Card chirp, and HAL Paper draw his
+page afresh. HAL Paper keeps the minutes: every line goes on his page as it is said, and his
+own lines appear large at its foot while the others wait for them to be read. HAL Card fetches each of his lines from the brain as HAL Zero and the desk
 HAL do, so he must be on the same network as the computer the brain runs on.
 
 **Without the devices**, the simulator can talk to stand-in friends. Start one stand-in for
@@ -539,7 +541,7 @@ tools/.venv/bin/python tools/fake_old_hal.py --as card --port 9014 &
 
 `--roll` starts a roll call; `--chat`, `--argue "tea or coffee"` and
 `--ask-who nano "Where are we?"` start the other kinds of talk. A friend's own screen can be
-previewed too: `.pio/build/sim/program --shots /tmp/shots --layout nano`.
+previewed too: `.pio/build/sim/program --shots /tmp/shots --layout nano` (or `card`, or `paper`).
 
 ## Updating
 

@@ -11,8 +11,8 @@ and versions follow [Semantic Versioning](https://semver.org/).
   the conversations as HALs of their own: HAL Nano (an M5StickC Plus2, who chirps while his
   words show on his screen), HAL Paper (an M5Paper, who writes) and HAL Card (the original
   Cardputer, who speaks with the project's first voice). HAL Zero conducts whoever is there,
-  and the AI brain writes each one's lines in his own character. So far HAL Nano and HAL Card
-  have firmware (`pio run -e nano -t upload`, `pio run -e card -t upload`); HAL Paper is to come.
+  and the AI brain writes each one's lines in his own character. Each has his own
+  firmware: `pio run -e nano -t upload`, `-e card` and `-e paper`.
 - A **roll call** in HAL Zero's menu (when friends are set up): every HAL present says a line.
 - Chats, arguments and questions include the friends: "Let them chat" and "Make them argue"
   bring in everyone present, TAB in the ask box goes round them, and each HAL's subtitle has
@@ -22,7 +22,7 @@ and versions follow [Semantic Versioning](https://semver.org/).
   password; the password is not shown, not saved on your computer, and the friend never
   repeats it.
 - For trying a group without the devices: `tools/fake_old_hal.py --as nano|paper|card`, and
-  the simulator's `--friends`, `--roll`, `--ask-who` and `--shots DIR --layout nano`.
+  the simulator's `--friends`, `--roll`, `--ask-who` and `--shots DIR --layout nano|card|paper`.
 
 ## [0.6.1] - 2026-11-14
 

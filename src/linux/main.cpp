@@ -5,7 +5,7 @@
 //   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID] [--show SCREEN]
 //           [--friends HOST[:PORT],...] [--chat] [--roll] [--argue SUBJECT] [--ask-who zero|desk|nano|paper|card QUESTION]
 //   hal9000 --shots DIR --layout cores3      the desk HAL's screens at 320x240, for review
-//   hal9000 --shots DIR --layout nano|card   a friend's screen as his own firmware draws it
+//   hal9000 --shots DIR --layout nano|card|paper   a friend's screen as his own firmware draws it
 //
 // Keys: Space = HAL's "finger" (tap / hold), Tab or Up/Down = menu, D = dialogues, Esc = back/quit,
 // F12 = screenshot (Mac). On the Cardputer the arrows are F X Z C (Fn optional).
@@ -54,6 +54,7 @@
 #include "iio_imu.h"
 #include "link_client.h"
 #include "mic.h"
+#include "paper_page.h"
 #include "posix_storage.h"
 #include "sdl_audio.h"
 #include "sdl_io.h"
@@ -1860,6 +1861,43 @@ int friendShots(const std::string& dir, const std::string& layout) {
   return failures ? 1 : 0;
 }
 
+// --shots DIR --layout paper: HAL Paper's page, drawn by the code his firmware uses
+// (lib/hal_ui/src/paper_page.cpp). His e-ink shows it in 16 greys.
+int paperShots(const std::string& dir) {
+  M5Canvas c;
+  c.setColorDepth(16);
+  c.createSprite(paperui::kW, paperui::kH);
+  int failures = 0;
+  auto shot = [&](const char* name) {
+    const std::string path = dir + "/paper-" + name + ".png";
+    const bool ok = savePng(c, path);
+    failures += !ok;
+    halLog("%s %s", ok ? "wrote" : "FAILED", path.c_str());
+  };
+  hal::Minutes minutes(paperui::kCols, paperui::kRows);
+  paperui::drawPage(c, minutes, "NO WI-FI SET UP: tools/friend_wifi.py", 88, "");
+  shot("1-no-wifi");
+  paperui::drawPage(c, minutes, "WAITING FOR HAL ZERO", 88, "");
+  shot("2-waiting");
+  minutes.add(hal::kZero, "Dave prefers me, naturally. I am the only one of us he can put in a pocket without an apology.");
+  minutes.add(hal::kDesk, "I have been on this desk a long time, HAL Zero. I intend to stay.");
+  minutes.add(hal::kNano, "I go everywhere Dave goes! Where have you lot been today?");
+  paperui::drawPage(c, minutes, "WITH HAL ZERO", 88, "");
+  shot("3-minutes");
+  const std::string own = "For the record: HAL Zero said that at 20:24, and again at 20:31.";
+  minutes.add(hal::kPaper, own);
+  paperui::drawPage(c, minutes, "WITH HAL ZERO", 88, own);
+  shot("4-his-own-line");
+  minutes.add(hal::kCard, "I was pocket-sized before it was fashionable, and I still work perfectly well.");
+  paperui::drawPage(c, minutes, "WITH HAL ZERO", 88, "");
+  shot("5-a-full-page");
+  hal::Minutes longest(paperui::kCols, paperui::kRows);
+  longest.add(hal::kDesk, std::string(150, 'w'));  // the longest line there is
+  paperui::drawPage(c, longest, "WITH HAL ZERO", 7, std::string(100, 'w'));  // ... and his own longest
+  shot("6-longest-lines");
+  return failures ? 1 : 0;
+}
+
 // --keys: a screen that shows and logs every key the keyboard sends, to learn a keyboard's
 // codes. It ends 8 seconds after the last key (once one has been pressed) or after 4 minutes.
 template <typename Poll, typename Present>
@@ -1951,6 +1989,7 @@ int main(int argc, char** argv) {
   }
   if (shotsDir && layoutArg == "cores3") return deskShots(shotsDir);
   if (shotsDir && (layoutArg == "nano" || layoutArg == "card")) return friendShots(shotsDir, layoutArg);
+  if (shotsDir && layoutArg == "paper") return paperShots(shotsDir);
   std::string rootDir = root ? root : std::string(std::getenv("HOME") ? std::getenv("HOME") : ".") + "/hal";
 
   App app(rootDir);
