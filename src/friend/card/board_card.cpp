@@ -41,7 +41,9 @@ uint32_t spokeAtMs = 0, lastFrameMs = 0, lastBatteryMs = 0;
 
 void begin() {
   clip = static_cast<uint8_t*>(malloc(kClipBytes));  // first of all: before the screen buffer, long before Wi-Fi
-  M5.Display.setRotation(1);
+  // His screen is wider than tall. (Which rotation number that is differs from board to board:
+  // on the real Cardputer "1" turned out to be on its side, so ask for the shape, not the number.)
+  if (M5.Display.width() < M5.Display.height()) M5.Display.setRotation(M5.Display.getRotation() ^ 1);
   M5.Display.setBrightness(140);
   frame.setColorDepth(8);  // 32 KB: full colour would take twice that, and he hasn't got it
   buffered = frame.createSprite(M5.Display.width(), M5.Display.height()) != nullptr;

@@ -59,8 +59,8 @@ std::string idleStatus() {
 
 void loadSettings() {
   Preferences prefs;
-  prefs.begin("hal", true);
-  const String text = prefs.getString("config", "");
+  prefs.begin("hal", false);  // (not read-only: the first time, there is nothing to open until this makes it)
+  const String text = prefs.isKey("config") ? prefs.getString("config", "") : String();
   prefs.end();
   cfg = hal::parseConfig(text.c_str(), nullptr);
 }
