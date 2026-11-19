@@ -76,12 +76,13 @@ void test_level() {
   std::vector<int16_t> quiet(320, 0), loud(320), speech(320);
   for (size_t i = 0; i < 320; ++i) {
     loud[i] = i % 2 ? 32767 : -32767;
-    speech[i] = i % 2 ? 3000 : -3000;
+    speech[i] = i % 2 ? 60 : -60;  // a voice, as a quiet microphone hears it
   }
   TEST_ASSERT_EQUAL(0, hal::wakeLevel(quiet.data(), quiet.size()));
   TEST_ASSERT_EQUAL(255, hal::wakeLevel(loud.data(), loud.size()));
-  const int mid = hal::wakeLevel(speech.data(), speech.size());
-  TEST_ASSERT_TRUE(mid > 20 && mid < 200);
+  TEST_ASSERT_EQUAL(60, hal::wakeLevel(speech.data(), speech.size()));
+  speech[0] = 30000;  // one click doesn't make a quiet stretch loud
+  TEST_ASSERT_TRUE(hal::wakeLevel(speech.data(), speech.size()) < 160);
   TEST_ASSERT_EQUAL(0, hal::wakeLevel(nullptr, 0));
 }
 

@@ -71,13 +71,17 @@ uint8_t wakeLevel(const int16_t* samples, size_t n) {
   if (!samples || n == 0) return 0;
   uint64_t sum = 0;
   for (size_t i = 0; i < n; ++i) sum += static_cast<uint64_t>(std::abs(static_cast<int>(samples[i])));
-  const uint64_t level = sum / n / 16;
+  // The mean size of a sample, as it is: the Cardputer Zero's microphone is a quiet one (a room
+  // reads under 16 and a voice across the desk not much more), so nothing is divided away.
+  const uint64_t level = sum / n;
   return static_cast<uint8_t>(level > 255 ? 255 : level);
 }
 
 uint8_t WakeListener::threshold() const {
-  const float t = floor_ * 3.0f + 6.0f;  // well clear of the room's own noise
-  return static_cast<uint8_t>(t < 12.0f ? 12.0f : t > 200.0f ? 200.0f : t);
+  // Clear of the room's own noise, but not by much: on the Cardputer Zero a room reads 2 to 7
+  // and a voice across the desk only 20 to 40 (measured 2026-11-18).
+  const float t = floor_ * 2.0f + 4.0f;
+  return static_cast<uint8_t>(t < 8.0f ? 8.0f : t > 200.0f ? 200.0f : t);
 }
 
 void WakeListener::reset() {

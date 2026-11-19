@@ -18,8 +18,8 @@ struct WakeHeard {
 };
 WakeHeard wakeMatch(const std::string& heard);
 
-// How loud a stretch of 16-bit samples is, 0..255. A quiet room is 1 to 4, speech at arm's
-// length 30 and up.
+// How loud a stretch of 16-bit samples is, 0..255: the mean size of a sample, so a quiet
+// microphone still tells a voice from a room. (Anything louder than 255 is just "loud".)
 uint8_t wakeLevel(const int16_t* samples, size_t n);
 
 // Fed the loudness of each 20 ms of sound, says when someone began to speak and when they
@@ -44,6 +44,7 @@ class WakeListener {
   bool speaking() const { return state_ == State::Speaking; }
   uint32_t heardMs() const { return heardFrames_ * kFrameMs; }  // after Ended: from the first loud moment to now
   int roomLevel() const { return static_cast<int>(floor_ + 0.5f); }  // how loud the room is with nobody speaking
+  int speechLevel() const { return threshold(); }                    // ... and how loud a moment must be to count as speech
 
  private:
   enum class State { Idle, Speaking, Deaf };

@@ -296,6 +296,8 @@ struct App {
   std::vector<int16_t> wakeSound;                 // the last seconds of sound (16 kHz)
   size_t wakeFed = 0;                             // how much of it wakeEars has been given
   int wakePeak = 0;                               // the loudest moment of what is being said (for the log)
+  int wakeLoudest = 0, wakeLoudMoments = 0;       // the loudest moment lately (and how many counted as speech), and when
+  uint32_t wakeNotedAt = 0;                       // every so often the log says how the room sounds to him
   bool wakeChecking = false;                      // a recording is with the brain, being checked for his name
   bool wakeAsQuestion = false;                    // ... and it follows a call by name: it is the question itself
   uint32_t wakeSentAt = 0, wakeDeafUntil = 0;     // when the last check went; not listening before this (a HAL just spoke)
@@ -972,6 +974,8 @@ struct App {
       wakeFed += frame;
       if (event == hal::WakeListener::Event::Started) wakePeak = 0;
       if (wakeEars.speaking() && level > wakePeak) wakePeak = level;
+      if (level > wakeLoudest) wakeLoudest = level;
+      if (level > wakeEars.speechLevel()) ++wakeLoudMoments;
       if (event == hal::WakeListener::Event::Ended) wakeSend(now);
     }
     // With nobody speaking, only the last second is kept (what was said just before he noticed).
@@ -981,6 +985,14 @@ struct App {
       wakeFed = keep;
     }
     if (wakeFollowUntil && int32_t(now - wakeFollowUntil) > 0) wakeFollowUntil = 0;  // he was called, and nothing followed
+    // How the room sounds to him, every ten seconds: numbers only, for setting how keen his ears are.
+    if (now - wakeNotedAt >= 10000) {
+      if (wakeNotedAt)
+        halLog("wake: the room is at %d; in the last 10 s the loudest moment was %d, and %d moments were over %d (speech)",
+               wakeEars.roomLevel(), wakeLoudest, wakeLoudMoments, wakeEars.speechLevel());
+      wakeNotedAt = now ? now : 1;
+      wakeLoudest = wakeLoudMoments = 0;
+    }
   }
 
   // Someone has just finished saying something: off it goes to be checked.
