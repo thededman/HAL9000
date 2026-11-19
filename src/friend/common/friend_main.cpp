@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "../../hal_log_arduino.h"
 #include "../../link_server.h"
 #include "board.h"
 #include "hal_cast.h"
@@ -203,6 +204,7 @@ void setup() {
   auto m5cfg = M5.config();
   M5.begin(m5cfg);
   Serial.begin(115200);
+  halLogNeverWaits();
   board::begin();
   loadSettings();
   halLog("%s %s, wifi %s", hal::castName(board::kWho), kVersion, cfg.wifiSsid.empty() ? "not set up" : "set up");

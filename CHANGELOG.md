@@ -24,6 +24,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - For trying a group without the devices: `tools/fake_old_hal.py --as nano|paper|card`, and
   the simulator's `--friends`, `--roll`, `--ask-who` and `--shots DIR --layout nano|card|paper`.
 
+### Fixed
+- The desk HAL sometimes lost a line the brain had written for him ("THE DESK UNIT LOST THE
+  THREAD"), most often the first one after a pause or with the computer on battery. He gave
+  the brain half a second to answer, twice; on Wi-Fi the first contact can take several
+  seconds. He now waits up to four, and his eye keeps moving while he does.
+
 ## [0.6.1] - 2026-11-14
 
 ### Fixed
