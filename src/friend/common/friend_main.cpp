@@ -245,7 +245,10 @@ void loop() {
     halLog("line %d: clip %s", n, ok ? "fetched" : "not fetched");
     act(self.onFetched(n, ok), now);  // READY, or MISSING
   }
-  if (board::tapped()) act(self.onTap(), now);
+  if (board::tapped()) {
+    halLog("tap (%s)", self.talking() ? "it stops the conversation" : "nobody is talking");
+    act(self.onTap(), now);
+  }
   if (saying && int32_t(now - sayUntil) >= 0) {  // his line is finished
     saying = false;
     ++linesSaid;

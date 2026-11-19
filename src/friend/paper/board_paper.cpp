@@ -54,10 +54,22 @@ void begin() {
 
 void update(uint32_t) {}  // nothing on his page moves by itself
 
-bool tapped() {  // a touch on his page, or the wheel pressed or turned
-  bool touched = false;
-  if (M5.Touch.getCount() > 0) touched = M5.Touch.getDetail().wasPressed();
-  return touched || M5.BtnA.wasPressed() || M5.BtnB.wasPressed() || M5.BtnC.wasPressed();
+// His tap has to be meant: he is all screen, and is picked up by it, so a brush of the page (or
+// a nudge of the wheel) must not stop a conversation for everyone. A touch held for half a
+// second counts, and so does pressing the wheel in.
+bool tapped() {
+  if (M5.Touch.getCount() > 0) {
+    const auto touch = M5.Touch.getDetail();
+    if (touch.wasHold()) {
+      halLog("tap: a touch held at %d,%d", int(touch.x), int(touch.y));
+      return true;
+    }
+  }
+  if (M5.BtnB.wasPressed()) {
+    halLog("tap: the wheel pressed");
+    return true;
+  }
+  return false;
 }
 
 void idle(const std::string& status) {
