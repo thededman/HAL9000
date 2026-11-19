@@ -7,6 +7,7 @@
 #   tools/brain.sh pair [user@host]   share a key with HAL Zero and tell him where the brain is
 #                                     (default pi@cardputerzero.local)
 #   tools/brain.sh autostart on|off   start it by itself whenever you log in (macOS); no word: is it on?
+#   tools/brain.sh lookup on|off|status   may a question that asks for a fact be looked up on Wikipedia?
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PY=tools/.venv/bin/python
@@ -54,6 +55,11 @@ case "${1:-}" in
     ;;
   ask)  shift; exec "$PY" -m brain.ask "$@" ;;
   pair) shift; exec "$PY" -m brain.pair "$@" ;;
+  lookup)  # on | off | status: may a question that asks for a fact be looked up on the internet?
+    shift
+    "$PY" -m brain.lookup "$@" || exit $?
+    if [ "${1:-}" != status ] && running; then "$0" stop >/dev/null; "$0" start; fi  # the brain reads it when it starts
+    ;;
   autostart)
     # After a restart nothing starts the brain, and HAL Zero says his higher functions are offline.
     # On macOS a login item (a LaunchAgent) can run "tools/brain.sh start" at every login.
@@ -112,5 +118,5 @@ ITEM
       *) echo "tools/brain.sh autostart on|off"; exit 1 ;;
     esac
     ;;
-  *) sed -n 2,9p "$0"; exit 1 ;;
+  *) sed -n 2,10p "$0"; exit 1 ;;
 esac

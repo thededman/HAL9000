@@ -1,6 +1,8 @@
 """The brain's settings file: brain/.env, KEY=VALUE lines. It is git-ignored: keys live there."""
+import os
 import pathlib
 import re
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ENV_PATH = ROOT / "brain" / ".env"
@@ -24,6 +26,27 @@ def read_env(path=ENV_PATH) -> dict[str, str]:
             value = value[1:-1]
         env[name.strip()] = value
     return env
+
+
+def save_setting(path, name: str, value: str) -> None:
+    """Put NAME=value in the settings file, keeping its other lines. The file ends up private
+    (mode 600) and is swapped in whole, never left half-written. Nothing in it is read out."""
+    path = pathlib.Path(path)
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    lines = [line for line in lines if not re.match(rf"\s*{re.escape(name)}\s*=", line)] + [f"{name}={value}"]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".env.")  # created with mode 600
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
 
 
 def port_from(env: dict[str, str]) -> int:

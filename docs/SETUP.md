@@ -407,6 +407,25 @@ tools/brain.sh pair
 - A keyboard that types the wrong characters: `tools/cardputer.sh run --keys` shows and logs
   the code of every key you press.
 
+**Looking things up (optional).** A local model knows nothing newer than its training, so
+"Who is the president?" can get an old answer or none. With lookups on, a question that asks
+for a fact about the world is looked up on Wikipedia first, and the HAL answers from what was
+found, in his own manner:
+
+```bash
+tools/brain.sh lookup on        # or: off, status
+```
+
+- It applies to questions like "Who is ...", "What is the capital of ...", "How tall is ...",
+  and to anything you tell him to look up ("Hey HAL, look up ..."). Talk with the HALs,
+  anything about you or about them, and their chats and arguments are never looked up.
+- It is off unless you switch it on, because it is the one thing that sends your words off
+  your network: the subject of such a question goes to Wikipedia, with nothing that says who
+  is asking. Recordings of your voice and the HALs' readings never do.
+- It adds about a second to those answers. If Wikipedia can't be reached, or has nothing, the
+  HAL answers from what the model knows, as before.
+- The model is also told today's date, from your computer's clock.
+
 **Claude or ChatGPT instead of the local model (optional, experimental).** The brain can have
 Anthropic's Claude or OpenAI's ChatGPT write the HALs' lines. This part is new in v0.6.0 and
 was written and tested against the two companies' published interfaces, with stand-ins for

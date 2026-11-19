@@ -6,6 +6,15 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **Looking things up.** A local model knows nothing newer than its training, so "Who is the
+  president?" could get an old answer or none. With `tools/brain.sh lookup on`, a question
+  that asks for a fact about the world is looked up on Wikipedia first and the HAL answers
+  from what was found, still in his own manner. It works however you ask: typed, spoken, or
+  "Hey HAL". It is off unless you switch it on, because the subject of such a question then
+  leaves your network; talk with the HALs never does.
+- The HALs now know today's date.
+
 ## [0.7.0] - 2026-11-18
 
 ### Added

@@ -1,10 +1,11 @@
 """The brain itself, with no network in it: a question in, a spoken line out."""
 import dataclasses
+import datetime
 import random
 import sys
 import threading
 
-from . import cast, persona, stt
+from . import cast, lookup as lookups, persona, stt
 from .voice import VoiceError, wav_ms
 
 
@@ -18,8 +19,12 @@ class Line:
 
 
 class Brain:
-    def __init__(self, provider, voice, ears, clips, memory):
+    def __init__(self, provider, voice, ears, clips, memory, lookup=None, today=None):
+        """`lookup`: where facts are looked up (brain/lookup.py), or None: never. `today`: a function
+        giving the date in words (the computer's own, unless a test says otherwise)."""
         self.provider, self.voice, self.ears, self.clips, self.memory = provider, voice, ears, clips, memory
+        self.lookup = lookup
+        self._today = today or (lambda: datetime.date.today().strftime("%A %-d %B %Y"))
         self._one_at_a_time = threading.Lock()
 
     def _write(self, member, system: str, messages: list[dict]) -> tuple[str, str | None]:
@@ -62,11 +67,26 @@ class Brain:
 
     def ask(self, who: str, facts: list[str], question: str) -> Line:
         """Dave's question to one HAL, with what that HAL knows right now and the chat so far."""
-        system = persona.system_prompt(who, facts)
+        system = persona.system_prompt(who, facts, looked_up=self._look_up(question), today=self._today())
         line = self.speak(who, system, self.memory.history(who) + [{"role": "user", "content": question}])
         if line.text != persona.FALLBACK:  # no answer came (a cloud model may have declined): don't send it again
             self.memory.add(who, question, line.text)
         return line
+
+    def _look_up(self, question: str) -> list[str]:
+        """Reference text for a question that asks for a fact, when lookups are on; else []. Any
+        trouble is just "nothing found": the HAL answers from what the model knows."""
+        if self.lookup is None or not lookups.wants(question):
+            return []
+        try:
+            found = list(self.lookup.find(question))
+        except Exception as e:
+            print(f"A lookup failed ({type(e).__name__}): answering without it", file=sys.stderr, flush=True)
+            return []
+        # (What was asked is not written down: only that something was looked up.)
+        print(f"Looked something up on {getattr(self.lookup, 'name', 'the internet')}: "
+              f"{len(found)} reference{'s' if len(found) != 1 else ''}", file=sys.stderr, flush=True)
+        return found
 
     def hear(self, wav: bytes, wake: bool = False) -> str:
         """What was said in a recording (16-bit mono 16 kHz); may be empty. `wake`: it is being

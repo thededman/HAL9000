@@ -20,7 +20,7 @@ import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import cast, persona
+from . import cast, lookup, persona
 from .config import valid_key
 from .debate import default_turns
 from .providers import ProviderError
@@ -316,7 +316,11 @@ def main() -> None:
     except (ValueError, VoiceError) as e:
         sys.exit(f"HAL's brain can't start: {e}")
     ears = Whisper()
-    brain = Brain(provider, voice, ears, ClipStore(), ChatMemory())
+    try:
+        look = lookup.from_env(env)
+    except ValueError as e:
+        sys.exit(f"HAL's brain can't start: {e}")
+    brain = Brain(provider, voice, ears, ClipStore(), ChatMemory(), lookup=look)
     try:
         server = make_server(brain, Debates(brain), key, port_from(env))
     except OSError as e:
@@ -331,7 +335,7 @@ def main() -> None:
     threading.Thread(target=warm_up, daemon=True).start()
     where = "the network (paired)" if key else "this computer only (not paired yet)"
     print(f"HAL's brain is listening on port {server.server_address[1]}, {where}; "
-          f"model: {provider.name} {provider.model}", file=sys.stderr, flush=True)
+          f"model: {provider.name} {provider.model}; lookups: {look.name if look else 'off'}", file=sys.stderr, flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

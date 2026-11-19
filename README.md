@@ -241,7 +241,10 @@ From the Cardputer:
 
 From the computer, `tools/brain.sh ask zero "..."` and `ask desk "..."` ask either HAL.
 
-Nothing you type or say leaves your computer with the local model. Claude or ChatGPT can
+Nothing you type or say leaves your computer with the local model, unless you switch on
+**lookups** (`tools/brain.sh lookup on`): then a question that asks for a fact ("Who is the
+president?") is looked up on Wikipedia first, so the HALs aren't stuck with what the model
+learned in training. Claude or ChatGPT can
 write the lines instead if you add your own API key: the questions and the HALs' readings then
 go to that company, and recordings of your voice still never do.
 

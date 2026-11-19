@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 
-from .config import ENV_PATH, port_from, read_env, valid_key
+from .config import ENV_PATH, port_from, read_env, save_setting, valid_key
 
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
 # Runs on the Cardputer: replace any earlier brain settings in HAL Zero's file with the four
@@ -58,24 +58,8 @@ def read_key(env_path=ENV_PATH) -> str | None:
 
 
 def save_key(env_path, key: str) -> None:
-    """Put the key in the settings file, keeping its other lines. The file ends up private
-    (mode 600) and is swapped in whole, never left half-written."""
-    path = pathlib.Path(env_path)
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        lines = []
-    lines = [line for line in lines if not re.match(r"\s*HAL_BRAIN_KEY\s*=", line)] + [f"HAL_BRAIN_KEY={key}"]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".env.")  # created with mode 600
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
-        raise
+    """Put the key in the settings file, keeping its other lines (private, and swapped in whole)."""
+    save_setting(env_path, "HAL_BRAIN_KEY", key)
 
 
 def this_host() -> str:
