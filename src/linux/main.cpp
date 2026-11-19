@@ -1893,6 +1893,59 @@ struct App {
     all.drawString("Every line is written as it is said, by an AI model", 720, 362 + L.h + 10, &fonts::Font2);
     all.drawString("on your own computer. Nothing leaves your network.", 720, 362 + L.h + 28, &fonts::Font2);
     save(all, "hal-family");
+
+    // Who talks to whom.
+    M5Canvas links;
+    canvas(links, 1000, 430);
+    links.fillScreen(lgfx::color565(8, 8, 12));
+    const uint16_t ink = lgfx::color565(232, 232, 232), soft = lgfx::color565(140, 140, 160), line = lgfx::color565(90, 90, 112);
+    auto box = [&](int x, int y, int w, int h, uint16_t colour, const char* name, const char* about) {
+      links.fillRoundRect(x, y, w, h, 8, lgfx::color565(18, 18, 26));
+      links.drawRoundRect(x, y, w, h, 8, colour);
+      links.setTextDatum(top_center);
+      links.setTextColor(colour);
+      links.drawString(name, x + w / 2, y + (about[0] ? h / 2 - 22 : h / 2 - 9), &fonts::FreeSansBold9pt7b);
+      links.setTextColor(soft);
+      links.drawString(about, x + w / 2, y + h / 2 + 4, &fonts::Font2);
+    };
+    auto dashed = [&](int x0, int y0, int x1, int y1) {  // (straight across or straight up and down)
+      const int steps = (abs(x1 - x0) + abs(y1 - y0)) / 10;
+      for (int i = 0; i < steps; i += 2) {
+        const int ax = x0 + (x1 - x0) * i / steps, ay = y0 + (y1 - y0) * i / steps;
+        const int bx = x0 + (x1 - x0) * (i + 1) / steps, by = y0 + (y1 - y0) * (i + 1) / steps;
+        links.drawLine(ax, ay, bx, by, soft);
+      }
+    };
+    const int rightX = 640, rightW = 210, rightH = 58;
+    const int rightY[] = {24, 108, 192, 276};
+    const int who[] = {hal::kDesk, hal::kNano, hal::kPaper, hal::kCard};
+    const char* const does[] = {"speaks", "chirps", "writes", "speaks"};
+    for (int i = 0; i < 4; ++i) {  // HAL Zero's link to each of the others
+      links.drawLine(480, 190, rightX, rightY[i] + rightH / 2, line);
+      links.drawLine(480, 191, rightX, rightY[i] + rightH / 2 + 1, line);
+    }
+    links.drawFastHLine(236, 190, 44, line);  // you to HAL Zero
+    links.drawFastHLine(236, 191, 44, line);
+    links.fillTriangle(280, 190, 268, 183, 268, 198, line);
+    links.drawFastVLine(380, 245, 85, line);  // HAL Zero and the brain
+    links.drawFastVLine(381, 245, 85, line);
+    dashed(520, 372, 905, 372);  // the brain's spoken lines, to the HALs who fetch them
+    dashed(905, 372, 905, rightY[0] + rightH / 2);
+    dashed(905, rightY[0] + rightH / 2, rightX + rightW, rightY[0] + rightH / 2);
+    dashed(905, rightY[3] + rightH / 2, rightX + rightW, rightY[3] + rightH / 2);
+    box(20, 150, 216, 82, ink, "YOU", "type, speak, or say Hey HAL");
+    box(280, 135, 200, 110, friendui::castColour(hal::kZero), "HAL ZERO", "conducts every conversation");
+    for (int i = 0; i < 4; ++i)
+      box(rightX, rightY[i], rightW, rightH, friendui::castColour(who[i]), who[i] == hal::kDesk ? "HAL 9000" : hal::castName(who[i]), does[i]);
+    box(240, 330, 280, 84, ink, "THE BRAIN", "on your computer: AI model, voices, ears");
+    links.setTextDatum(top_left);
+    links.setTextColor(soft);
+    links.drawString("questions, and the lines", 392, 268, &fonts::Font2);
+    links.drawString("written for each HAL", 392, 286, &fonts::Font2);
+    links.drawString("spoken lines, fetched by the HALs with a voice", 560, 384, &fonts::Font2);
+    links.drawString("Wi-Fi links", 500, 66, &fonts::Font2);
+    links.drawString("All of it on your own network.", 20, 400, &fonts::Font2);
+    save(links, "hal-links");
     return failures ? 1 : 0;
   }
 

@@ -75,25 +75,9 @@ are switched on.
 
 ## How it fits together
 
-```mermaid
-flowchart LR
-  you(["You: type, speak, or say 'Hey HAL'"]) --> zero
-  subgraph home ["Your Wi-Fi, and nothing beyond it"]
-    zero["HAL Zero<br/>conducts"]
-    desk["HAL 9000"]
-    nano["HAL Nano"]
-    paper["HAL Paper"]
-    card["HAL Card"]
-    brain[("The brain, on your computer:<br/>a local AI model, the voices,<br/>speech recognition")]
-  end
-  zero <--> desk
-  zero <--> nano
-  zero <--> paper
-  zero <--> card
-  zero <-- "questions and lines" --> brain
-  brain -. "spoken lines" .-> desk
-  brain -. "spoken lines" .-> card
-```
+<p align="center">
+  <img src="docs/images/hal-links.png" alt="You talk to HAL Zero. HAL Zero has a Wi-Fi link to each of the other four HALs and asks the brain on your computer for every line. The brain's spoken lines are fetched by the HALs that have a voice." width="760">
+</p>
 
 - **The desk HAL works alone.** He needs no computer, no network and no AI: his lines are
   recorded once on your computer and live on his SD card.
