@@ -37,11 +37,19 @@ def tidy(transcript: str) -> str:
     return " ".join(re.sub(r"\[[^\]]*\]|\([^)]*\)", " ", transcript).split())
 
 
+# For a recording that is being checked for "Hey HAL": how his name is spelt, so that it comes
+# back as "HAL" more often than "Hal", "Hall" or "Howl". It names him and no more: whisper now
+# and then writes its hint out when it hears nothing clear, and a hint that read as a call
+# would make silence call him.
+WAKE_HINT = "HAL. HAL Zero."
+
+
 class Whisper:
     def __init__(self, model: pathlib.Path = MODEL, binary: str = "whisper-cli", timeout_s: float = 20):
         self._model, self._binary, self._timeout = pathlib.Path(model), binary, timeout_s
 
-    def transcribe(self, wav: bytes) -> str:
+    def transcribe(self, wav: bytes, hint: str = "") -> str:
+        """What was said. `hint`: words to expect, as whisper's initial prompt."""
         program = shutil.which(self._binary)
         if not program:
             raise SttError(f"{self._binary} isn't installed")
@@ -51,6 +59,8 @@ class Whisper:
             clip = pathlib.Path(folder) / "said.wav"
             clip.write_bytes(wav)
             command = [program, "-m", str(self._model), "-f", str(clip), "-nt", "-np", "-l", "en"]
+            if hint:
+                command += ["--prompt", hint]
             try:
                 done = subprocess.run(command, capture_output=True, text=True, errors="replace",
                                       timeout=self._timeout)

@@ -37,6 +37,9 @@ struct Config {
   bool chat = true;
   int chatMinMinutes = 20;
   int chatMaxMinutes = 40;
+  // "Hey HAL" (HAL Zero only; needs the brain): his microphone stays open, and what begins with
+  // his name is a question for him. Off unless asked for: it listens all the time.
+  bool wake = false;
 };
 
 // The brain is switched on and has somewhere to call and a key to call with.

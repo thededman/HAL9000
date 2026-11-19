@@ -24,6 +24,7 @@ struct BrainEvent {
   hal::BrainReply reply;
   std::vector<uint8_t> wav;  // a 16-bit PCM WAV
   std::string error;
+  bool wake = false;         // this answers a recording sent to be checked for "Hey HAL" (heard, or failed)
 };
 
 class BrainClient {
@@ -55,7 +56,9 @@ class BrainClient {
   void talk(const std::string& kind, const std::string& cast, const std::string& body);
   void debateLine(const std::string& id, int n);  // waits while the brain is still writing it (60 s at most)
   void stopDebate(const std::string& id);         // tell the brain to stop writing; no event comes back
-  void hear(std::vector<uint8_t> wav);            // a 16 kHz mono recording: what was said?
+  // A 16 kHz mono recording: what was said? `wake`: it came from the open microphone and is
+  // only being checked for "Hey HAL" (its answer, or failure, comes back marked the same).
+  void hear(std::vector<uint8_t> wav, bool wake = false);
   void cancel();                             // drop whatever is in flight or waiting
   bool busy() const { return pending_.load() > 0; }
   void poll(std::vector<BrainEvent>* out);   // never blocks
@@ -68,6 +71,7 @@ class BrainClient {
     std::string who, body, id;  // body also carries a recording's bytes (Hear)
     std::string extra;          // Debate: more of the request's query ("&kind=chat&first=desk")
     int n = 0;  // DebateLine: which line; Debate: how many turns (0: the brain decides)
+    bool wake = false;  // Hear: a check for "Hey HAL"
   };
   void push(Job job);
   void run();

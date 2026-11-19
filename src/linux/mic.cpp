@@ -34,6 +34,16 @@ void Mic::pump(hal::Recording* into) {
   }
 }
 
+void Mic::pump(std::vector<int16_t>* onto) {
+  if (!dev_) return;
+  int16_t buf[2048];
+  while (true) {
+    Uint32 got = SDL_DequeueAudio(dev_, buf, sizeof buf);
+    if (got == 0) break;
+    onto->insert(onto->end(), buf, buf + got / 2);
+  }
+}
+
 void Mic::stop() {
   if (dev_) SDL_PauseAudioDevice(dev_, 1);
 }

@@ -15,6 +15,10 @@ volume=180                         # 0–255
 # brain_port=9100
 # brain_key=
 
+# "Hey HAL": with the brain on, HAL Zero can keep his microphone open and take what begins with
+# his name as a question, no key needed. Off unless you say so (it listens all the time).
+# wake=on
+
 # With the brain and the link on, the two HALs chat by themselves every so often.
 # chat=off                         # ... unless you would rather they didn't
 # chat_min_minutes=20              # how long they leave between conversations: at least,

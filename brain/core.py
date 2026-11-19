@@ -68,7 +68,9 @@ class Brain:
             self.memory.add(who, question, line.text)
         return line
 
-    def hear(self, wav: bytes) -> str:
-        """What was said in a recording (16-bit mono 16 kHz); may be empty."""
+    def hear(self, wav: bytes, wake: bool = False) -> str:
+        """What was said in a recording (16-bit mono 16 kHz); may be empty. `wake`: it is being
+        checked for "Hey HAL" (HAL Zero's open microphone), so the ears are told how he is spelt."""
         stt.check_wav(wav)
-        return persona.plain(stt.tidy(self.ears.transcribe(wav)), persona.MAX_QUESTION)
+        said = self.ears.transcribe(wav, hint=stt.WAKE_HINT) if wake else self.ears.transcribe(wav)
+        return persona.plain(stt.tidy(said), persona.MAX_QUESTION)

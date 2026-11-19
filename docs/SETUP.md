@@ -374,6 +374,15 @@ tools/brain.sh pair
   This needs the brain's ears (`whisper-cli` and its model, above). The recording goes to the
   brain on your computer and nowhere else. `tools/cardputer.sh run --listen 5` makes him
   listen for five seconds without a key, to test the microphone.
+- **Or just say "Hey HAL".** Pick **Listen for "Hey HAL"** in his menu (or put `wake=on` in
+  his `config.txt` to have it on from the start). Then "Hey HAL, what time is it?" needs no
+  key at all; say "Hey HAL" by itself and he answers `YES, DAVE?` and takes your next sentence
+  as the question. What he heard appears in the box for a moment before it is sent, as above.
+  It is off unless you switch it on, because it means his microphone is always open: whatever
+  is said near him is sent to the brain on your computer to be checked for his name, and
+  anything that isn't for him is dropped there and written nowhere. Nothing leaves your
+  network. He stops listening while any HAL is speaking, so they can't call him themselves,
+  and he reacts a second or two after you finish. The same menu item switches it off.
 - **Ask the desk HAL, or make them argue.** In the box, Tab switches between HAL Zero and the
   desk unit; the menu (Tab from the eye) has "Ask the desk unit..." and "Make them argue...",
   which takes a subject and runs eight lines between the two. This needs the two HALs linked

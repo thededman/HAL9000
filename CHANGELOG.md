@@ -24,6 +24,12 @@ and versions follow [Semantic Versioning](https://semver.org/).
 - For trying a group without the devices: `tools/fake_old_hal.py --as nano|paper|card`, and
   the simulator's `--friends`, `--roll`, `--ask-who` and `--shots DIR --layout nano|card|paper`.
 
+- **"Hey HAL".** Say "Hey HAL, what time is it?" and HAL Zero answers, with no key held. Say
+  "Hey HAL" by itself and he replies `YES, DAVE?` and takes your next sentence as the question.
+  Switch it on in his menu (**Listen for "Hey HAL"**) or with `wake=on`; it is off otherwise,
+  because his microphone then stays open. Everything is recognised on your own computer and
+  nothing that isn't for him is kept.
+
 ### Fixed
 - The desk HAL sometimes lost a line the brain had written for him ("THE DESK UNIT LOST THE
   THREAD"), most often the first one after a pause or with the computer on battery. He gave

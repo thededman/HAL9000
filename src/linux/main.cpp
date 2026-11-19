@@ -4,6 +4,7 @@
 //
 //   hal9000 [--root DIR] [--fullscreen] [--scale N] [--shots DIR] [--link HOST[:PORT]] [--dialogue ID] [--show SCREEN]
 //           [--friends HOST[:PORT],...] [--chat] [--roll] [--argue SUBJECT] [--ask-who zero|desk|nano|paper|card QUESTION]
+//           [--wake] [--wake-file WAV]   listen for "Hey HAL" (from a 16 kHz mono recording instead of the microphone)
 //   hal9000 --shots DIR --layout cores3      the desk HAL's screens at 320x240, for review
 //   hal9000 --shots DIR --layout nano|card|paper   a friend's screen as his own firmware draws it
 //
@@ -49,6 +50,7 @@
 #include "hal_motion.h"
 #include "hal_talkkey.h"
 #include "hal_textbox.h"
+#include "hal_wake.h"
 #include "hal_wire.h"
 #include "hud.h"
 #include "iio_imu.h"
@@ -286,6 +288,21 @@ struct App {
   bool listening = false;
   uint32_t sendHeardAt = 0;                       // what was heard is in the ask box: send it then (0: not waiting)
   uint32_t talkEndedMs = 0;                       // when a talk last ended or was dropped (0: not yet)
+  // "Hey HAL" (hal_wake.h): the microphone stays open, and what begins with his name is a question.
+  bool wakeOn = false;                            // switched on: wake=on, --wake, or his menu
+  bool wakeMic = false;                           // the microphone is running for it
+  hal::WakeListener wakeEars;                     // when someone started and stopped speaking
+  std::vector<int16_t> wakeSound;                 // the last seconds of sound (16 kHz)
+  size_t wakeFed = 0;                             // how much of it wakeEars has been given
+  int wakePeak = 0;                               // the loudest moment of what is being said (for the log)
+  bool wakeChecking = false;                      // a recording is with the brain, being checked for his name
+  bool wakeAsQuestion = false;                    // ... and it follows a call by name: it is the question itself
+  uint32_t wakeSentAt = 0, wakeDeafUntil = 0;     // when the last check went; not listening before this (a HAL just spoke)
+  uint32_t wakeFollowUntil = 0;                   // he was called by name: what is said before this is the question
+  std::string wakeFile;                           // --wake-file: sound from a recording instead of the microphone
+  std::vector<int16_t> wakeFileSound;
+  size_t wakeFilePos = 0;
+  uint32_t wakeFileAt = 0;
   std::string hearFile;                           // --hear: a recording from a file instead of the microphone
   int listenSeconds = 0;                          // --listen N: listen for N seconds once booted (no key needed)
   uint32_t listenUntil = 0;
@@ -421,6 +438,9 @@ struct App {
         {"chat", brainClient.started() ? "Let them chat" : "Let them chat (no brain)"}};
     // With friends set up there is a roll call: every HAL present says a line.
     if (!cfg.friends.empty()) items.push_back({"roll", brainClient.started() ? "Roll call" : "Roll call (no brain)"});
+    items.push_back({"wake", !brainClient.started() ? "Listen for \"Hey HAL\" (no brain)"
+                             : wakeOn               ? "Stop listening for \"Hey HAL\""
+                                                    : "Listen for \"Hey HAL\""});
     items.push_back({"daisy", "Shut down (Daisy Bell)"});
     items.push_back({"quit", "Quit HAL Zero"});
     menu.open(items);
@@ -735,6 +755,7 @@ struct App {
     talkKey.finish();  // this hold is used up, however it ended
     mic.pump(&recording);
     mic.stop();
+    wakeMic = false;  // ("Hey HAL" starts it again by itself)
     listening = false;
     if (!keep) {
       halLog("listening: dropped");
@@ -803,6 +824,7 @@ struct App {
       }
     }
     brainClient.cancel();
+    wakeChecking = wakeAsQuestion = false;  // (a recording being checked for his name went with it)
     if (!debateId.empty()) brainClient.stopDebate(debateId);  // the brain can stop writing
     debateId.clear();
     talk = Talk::None;
@@ -895,8 +917,133 @@ struct App {
   }
 
   // The brain's answers and lines, as they arrive.
+  // ---- "Hey HAL" ----
+
+  void setWake(bool on) {
+    wakeOn = on;
+    wakeFollowUntil = 0;
+    halLog("wake: %s", on ? "listening for \"Hey HAL\"" : "not listening");
+  }
+
+  // More sound for the wake listener: from the microphone, or from --wake-file at the pace it
+  // was recorded (followed by silence, so its last sentence is seen to end).
+  void wakePump(uint32_t now) {
+    if (wakeFile.empty()) return mic.pump(&wakeSound);
+    if (!wakeFileAt) wakeFileAt = now ? now : 1;
+    const size_t due = size_t(now - wakeFileAt) * 16;  // samples that would have arrived by now
+    for (; wakeFilePos < due; ++wakeFilePos)
+      wakeSound.push_back(wakeFilePos < wakeFileSound.size() ? wakeFileSound[wakeFilePos] : 0);
+  }
+
+  // Each pass: keep the microphone open while he can be spoken to, and send what is said to the
+  // brain to be checked for his name.
+  void wakeTick(uint32_t now) {
+    const bool wanted = wakeOn && booted && brainClient.started();
+    if (listening) return;  // the talk key has the microphone
+    if (!wanted) {
+      if (wakeMic) mic.stop();
+      wakeMic = false;
+      return;
+    }
+    if (!wakeMic && wakeFile.empty()) {
+      if (!mic.start()) {
+        halLog("wake: no microphone");
+        wakeOn = false;
+        return;
+      }
+      wakeMic = true;
+    }
+    wakePump(now);
+    // He doesn't listen to himself or to the other HALs (they say "HAL" all day), nor while
+    // Dave is already dealing with him; and not for a moment after, while the room settles.
+    const bool busy = conductor.active() || thinking || overlay != Overlay::None || audio.isPlaying() || !brain->canConverse();
+    if (busy) wakeDeafUntil = now + 800;
+    if (busy || int32_t(now - wakeDeafUntil) < 0) {
+      wakeSound.clear();
+      wakeFed = 0;
+      wakeEars.reset();
+      return;
+    }
+    const size_t frame = hal::Recording::kRate * hal::WakeListener::kFrameMs / 1000;
+    while (wakeSound.size() - wakeFed >= frame) {
+      const int level = hal::wakeLevel(&wakeSound[wakeFed], frame);
+      const auto event = wakeEars.feed(uint8_t(level));
+      wakeFed += frame;
+      if (event == hal::WakeListener::Event::Started) wakePeak = 0;
+      if (wakeEars.speaking() && level > wakePeak) wakePeak = level;
+      if (event == hal::WakeListener::Event::Ended) wakeSend(now);
+    }
+    // With nobody speaking, only the last second is kept (what was said just before he noticed).
+    const size_t keep = hal::Recording::kRate;
+    if (!wakeEars.speaking() && wakeFed > 3 * keep) {
+      wakeSound.erase(wakeSound.begin(), wakeSound.begin() + long(wakeFed - keep));
+      wakeFed = keep;
+    }
+    if (wakeFollowUntil && int32_t(now - wakeFollowUntil) > 0) wakeFollowUntil = 0;  // he was called, and nothing followed
+  }
+
+  // Someone has just finished saying something: off it goes to be checked.
+  void wakeSend(uint32_t now) {
+    if (wakeChecking || (wakeSentAt && now - wakeSentAt < 1000)) return;  // one at a time, and not in a flurry
+    const size_t want = size_t(wakeEars.heardMs() + 300) * hal::Recording::kRate / 1000;  // with a little from before
+    const size_t from = wakeFed > want ? wakeFed - want : 0;
+    hal::Recording said;
+    said.start();
+    said.append(&wakeSound[from], wakeFed - from);
+    std::vector<uint8_t> wav = said.wav();
+    if (wav.empty()) return;  // loud enough to notice, but nothing in it
+    wakeAsQuestion = wakeFollowUntil && int32_t(wakeFollowUntil - now) > 0;
+    wakeChecking = true;
+    wakeSentAt = now ? now : 1;
+    // (How loud it was, and the room: what to look at when he doesn't hear, or hears too much.)
+    halLog("wake: heard something (%u ms, as loud as %d in a room at %d)", unsigned(said.ms()), wakePeak, wakeEars.roomLevel());
+    brainClient.hear(std::move(wav), true);
+  }
+
+  // The brain says what that was. Only what begins with his name (or follows a call by name)
+  // is for him; anything else is dropped, and its words are written nowhere.
+  void handleWake(BrainEvent& e, uint32_t now) {
+    wakeChecking = false;
+    const bool follows = wakeAsQuestion;
+    wakeAsQuestion = false;
+    if (e.kind != BrainEvent::Kind::Heard) {  // nothing is said or shown: nobody asked him anything
+      halLog("wake: couldn't be checked (%s)", e.error.c_str());
+      return;
+    }
+    const hal::WakeHeard heard = hal::wakeMatch(e.reply.heard);
+    if (!heard.forHim && !follows) {
+      halLog("wake: not for him");
+      return;
+    }
+    const std::string question = heard.forHim ? heard.question : e.reply.heard;
+    if (question.empty()) {
+      if (!heard.forHim) return;  // (he was waiting for a question and heard nothing in it)
+      halLog("wake: called by name");
+      wakeFollowUntil = now + 8000;
+      gloatText = "YES, DAVE?";
+      gloatUntil = now + 8000;
+      return;
+    }
+    wakeFollowUntil = 0;
+    gloatUntil = now;
+    if (!canAsk() || overlay != Overlay::None) {
+      halLog("wake: he can't take a question right now");
+      return;
+    }
+    halLog("wake: %s", question.c_str());
+    // Into the ask box, as when the talk key is used: Dave sees what was heard, and it goes
+    // after a moment unless he stops it.
+    askTopic = false;
+    askWho = hal::kZero;
+    askBox.clear();
+    for (char c : question) askBox.insert(c);
+    overlay = Overlay::Ask;
+    sendHeardAt = askBox.full() ? 0 : now + 900;
+  }
+
   void handleBrain(BrainEvent& e, uint32_t now) {
     using Kind = BrainEvent::Kind;
+    if (e.wake) return handleWake(e, now);
     if (e.kind == Kind::Failed) {
       if (conductor.live()) {  // an argument already under way: let what has been written be said
         halLog("brain: %s (the conversation ends early)", e.error.c_str());
@@ -1091,6 +1238,9 @@ struct App {
           }
           else if (id == "roll") {
             if (!startRoll(now)) halLog("roll call: not now");
+          }
+          else if (id == "wake") {
+            if (brainClient.started()) setWake(!wakeOn);
           }
           else if (id == "daisy") holdForDaisy = true;
           else if (id == "quit") {
@@ -1297,6 +1447,7 @@ struct App {
       mic.pump(&recording);
       if (recording.full()) stopListening(true, now);  // 15 s: that is the question
     }
+    wakeTick(now);
     if (sendHeardAt && int32_t(now - sendHeardAt) >= 0) {
       if (overlay == Overlay::Ask) submitAskBox(now);
       sendHeardAt = 0;
@@ -1560,6 +1711,8 @@ struct App {
            : thinking && unprompted   ? "THINKING OF SOMETHING TO SAY   ESC cancel"
            : thinking                 ? ((now / 500) % 2 ? "BRAIN THINKING ...   ESC cancel" : "BRAIN THINKING       ESC cancel")
            : conductor.active()       ? "SPACE or ESC stop"
+           : wakeOn && brainClient.started() ? (cardKeys ? "say HEY HAL   ENTER ask   hold Fn   TAB menu"
+                                                         : "say HEY HAL   ENTER ask   TAB menu")
            : brainClient.started()    ? (cardKeys ? "ENTER ask   hold Fn: speak   TAB menu   ESC quit"
                                                   : "ENTER ask   hold right Alt: speak   TAB menu")
                                       : "SPACE talk   TAB menu   D dialogues   ESC quit";
@@ -1957,11 +2110,11 @@ int keyCheck(M5Canvas& f, Poll poll, Present present) {
 int main(int argc, char** argv) {
   const char* shotsDir = nullptr;
   const char* root = std::getenv("HAL_ROOT");
-  bool keysMode = false, chatArg = false, rollArg = false;
+  bool keysMode = false, chatArg = false, rollArg = false, wakeArg = false;
   int listenArg = 0;
   bool fullscreen = false, forceWindow = false;
   int scale = 3;
-  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, hearArg, brainArg, friendsArg, askWhoArg;
+  std::string linkArg, dialogueArg, layoutArg, showArg, askArg, askDeskArg, argueArg, hearArg, brainArg, friendsArg, askWhoArg, wakeFileArg;
   for (int i = 1; i < argc; ++i) {
     if (!std::strcmp(argv[i], "--shots") && i + 1 < argc) shotsDir = argv[++i];
     else if (!std::strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
@@ -1980,6 +2133,8 @@ int main(int argc, char** argv) {
     else if (!std::strcmp(argv[i], "--brain") && i + 1 < argc) brainArg = argv[++i];
     else if (!std::strcmp(argv[i], "--chat")) chatArg = true;
     else if (!std::strcmp(argv[i], "--roll")) rollArg = true;
+    else if (!std::strcmp(argv[i], "--wake")) wakeArg = true;
+    else if (!std::strcmp(argv[i], "--wake-file") && i + 1 < argc) wakeFileArg = argv[++i];
     else if (!std::strcmp(argv[i], "--friends") && i + 1 < argc) friendsArg = argv[++i];
     else if (!std::strcmp(argv[i], "--ask-who") && i + 2 < argc) {  // --ask-who nano "..."
       askWhoArg = argv[++i];
@@ -2018,6 +2173,23 @@ int main(int argc, char** argv) {
   app.autoArgue = argueArg;
   app.autoChat = chatArg;
   app.autoRoll = rollArg;
+  app.wakeOn = app.cfg.wake || wakeArg || !wakeFileArg.empty();
+  if (!wakeFileArg.empty()) {  // sound for "Hey HAL" from a recording: 16 kHz mono 16-bit
+    std::vector<uint8_t> file;
+    if (FILE* f = std::fopen(wakeFileArg.c_str(), "rb")) {
+      int c;
+      while ((c = std::fgetc(f)) != EOF) file.push_back(uint8_t(c));
+      std::fclose(f);
+    }
+    hal::WavInfo info;
+    if (hal::parseWav(file.data(), file.size(), &info) && info.sampleRate == 16000 && info.channels == 1) {
+      const int16_t* samples = reinterpret_cast<const int16_t*>(file.data() + info.dataOffset);
+      app.wakeFileSound.assign(samples, samples + info.dataBytes / 2);
+      app.wakeFile = wakeFileArg;
+    } else {
+      halLog("--wake-file: %s isn't a 16 kHz mono 16-bit WAV", wakeFileArg.c_str());
+    }
+  }
   if (!askWhoArg.empty()) {  // a question for any of them
     const int who = hal::castFromId(askWhoArg);
     if (who > hal::kZero) {

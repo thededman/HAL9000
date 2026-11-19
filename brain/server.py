@@ -250,7 +250,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply({"ok": 1})
             if url.path == "/hear":
                 try:
-                    return self._reply({"heard": self.server.hal_brain.hear(body)})
+                    # ?wake=1: HAL Zero's open microphone, checking for "Hey HAL". Like every
+                    # recording, what was said goes back to him and is written nowhere.
+                    return self._reply({"heard": self.server.hal_brain.hear(body, wake=query.get("wake", [""])[0] == "1")})
                 except ValueError:
                     return self._refuse(400, "bad-audio")
             kind = query.get("kind", ["argue"])[0] if url.path == "/debate" else ""

@@ -71,9 +71,11 @@ class FakeEars:
     def __init__(self, text: str = "hello there"):
         self.text = text
         self.heard = 0
+        self.hints: list[str] = []
 
-    def transcribe(self, wav):
+    def transcribe(self, wav, hint=""):
         self.heard += 1
+        self.hints.append(hint)
         return self.text
 
     def warm(self):

@@ -106,8 +106,8 @@ Config parseConfig(const std::string& input, std::vector<std::string>* warnings)
       continue;
     }
     if (key == "camera_preview") continue;  // retired in 0.3 (the main-screen preview is gone)
-    if (key == "camera" || key == "link" || key == "brain" || key == "chat") {
-      bool& field = key == "camera" ? c.camera : key == "link" ? c.link : key == "brain" ? c.brain : c.chat;
+    if (key == "camera" || key == "link" || key == "brain" || key == "chat" || key == "wake") {
+      bool& field = key == "camera" ? c.camera : key == "link" ? c.link : key == "brain" ? c.brain : key == "chat" ? c.chat : c.wake;
       if (!parseBool(value, &field)) warn(key + ": '" + value + "' should be on or off, using default");
       continue;
     }

@@ -3,12 +3,15 @@
 // samples, only while HAL Zero is told to listen. Opened the first time it is needed.
 #include <SDL.h>
 
+#include <vector>
+
 #include "hal_recording.h"
 
 class Mic {
  public:
   bool start();                     // begin capturing; false if there is no microphone
   void pump(hal::Recording* into);  // move what has been captured into the recording
+  void pump(std::vector<int16_t>* onto);  // ... or onto the end of a run of samples ("Hey HAL" listens this way)
   void stop();
   void close();
 
