@@ -208,7 +208,7 @@ trained on the film's audio, so whether to post it publicly is your call.
 **With friends** *(v0.7)*: a chat, an argument and the **Roll call** in HAL Zero's menu
 include every HAL who is there, and Tab in the ask box goes round them. A HAL who is busy
 or drops out leaves the conversation and the rest carry on; a tap on any of them stops it
-for all. Setting them up is [step 10 of the guide](docs/SETUP.md#10-friends-for-the-hals-optional-in-progress).
+for all. Setting them up is [step 10 of the guide](https://github.com/thededman/HAL9000/blob/build/v0.3/docs/SETUP.md#10-friends-for-the-hals-optional-in-progress).
 
 </details>
 
@@ -266,7 +266,7 @@ Set-up is step 9 of [docs/SETUP.md](docs/SETUP.md#9-the-ai-brain-optional).
 | `tools/export_dialogue.py` | A conversation as one stereo file plus subtitles, for posting |
 | `tools/cardputer.sh` | Builds HAL Zero (Docker) and runs it on the Cardputer over SSH |
 | `tools/fake_old_hal.py` | A stand-in desk HAL (or friend) for testing HAL Zero without the devices |
-| `src/friend/`, `tools/friend_wifi.py` | Optional friends on other M5Stack devices (HAL Nano, HAL Card, HAL Paper), and the tool that gives one your Wi-Fi |
+| `src/friend/`, `tools/friend_wifi.py` | *(v0.7)* Optional friends on other M5Stack devices (HAL Nano, HAL Card, HAL Paper), and the tool that gives one your Wi-Fi |
 | `brain/`, `tools/brain.sh` | The AI brain: a small server on your computer that answers as either HAL |
 | `sd-template/hal/config.txt` | Settings file template for the SD card |
 | `docs/SETUP.md` | Setting everything up from scratch |
