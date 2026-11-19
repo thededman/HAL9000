@@ -6,8 +6,10 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-18
+
 ### Added
-- **Friends for the HALs (optional, in progress).** Up to three more M5Stack devices can join
+- **Friends for the HALs (optional).** Up to three more M5Stack devices can join
   the conversations as HALs of their own: HAL Nano (an M5StickC Plus2, who chirps while his
   words show on his screen), HAL Paper (an M5Paper, who writes) and HAL Card (the original
   Cardputer, who speaks with the project's first voice). HAL Zero conducts whoever is there,
@@ -23,18 +25,27 @@ and versions follow [Semantic Versioning](https://semver.org/).
   repeats it.
 - For trying a group without the devices: `tools/fake_old_hal.py --as nano|paper|card`, and
   the simulator's `--friends`, `--roll`, `--ask-who` and `--shots DIR --layout nano|card|paper`.
-
 - **"Hey HAL".** Say "Hey HAL, what time is it?" and HAL Zero answers, with no key held. Say
   "Hey HAL" by itself and he replies `YES, DAVE?` and takes your next sentence as the question.
   Switch it on in his menu (**Listen for "Hey HAL"**) or with `wake=on`; it is off otherwise,
   because his microphone then stays open. Everything is recognised on your own computer and
   nothing that isn't for him is kept.
+- A front page with pictures: the README now shows each HAL's own screen and how the pieces
+  fit together (`--shots DIR --layout family` draws them).
 
 ### Fixed
 - The desk HAL sometimes lost a line the brain had written for him ("THE DESK UNIT LOST THE
   THREAD"), most often the first one after a pause or with the computer on battery. He gave
   the brain half a second to answer, twice; on Wi-Fi the first contact can take several
   seconds. He now waits up to four, and his eye keeps moving while he does.
+
+### Known limits
+- HAL Nano's battery life with Wi-Fi on has not been measured: for a long session keep him
+  on USB power.
+- "Hey HAL" was tuned on one Cardputer Zero's microphone. If yours hears too little or too
+  much, HAL Zero's log says every ten seconds how loud the room and the voices are to him.
+- A speaking HAL waits four seconds for the brain to answer a connection. On a slow Wi-Fi a
+  line can still be lost; among several HALs the conversation carries on without it.
 
 ## [0.6.1] - 2026-11-14
 

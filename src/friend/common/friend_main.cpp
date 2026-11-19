@@ -22,10 +22,11 @@
 #include "hal_friendsetup.h"
 #include "hal_link.h"
 #include "hal_log.h"
+#include "hal_version.h"
 
 namespace {
 
-constexpr char kVersion[] = "0.7.0";
+const char* const kVersion = hal::kHalVersion;  // the friends are versioned with the rest
 constexpr uint32_t kRejoinMs = 20000;  // how often Wi-Fi is tried again while it won't join
 
 hal::Config cfg;

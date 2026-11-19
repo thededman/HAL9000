@@ -487,7 +487,7 @@ The brain's own tests need no model, voice, microphone, key or internet:
 tools/.venv/bin/python -m unittest discover -s brain -t . -p 'test_*.py'
 ```
 
-## 10. Friends for the HALs (optional, in progress)
+## 10. Friends for the HALs (optional)
 
 Three more M5Stack devices can join the conversations as HALs of their own. Each is optional,
 and they need HAL Zero and the AI brain (steps 6 and 9): HAL Zero conducts, and the brain
@@ -498,6 +498,9 @@ writes a line for whoever is there.
 | HAL Nano | M5StickC Plus2 | chirps, with his words on his screen |
 | HAL Paper | M5Paper (v1.0 or v1.1) | writes his lines on his e-ink page |
 | HAL Card | Cardputer (the original) | aloud, with the project's first voice |
+
+HAL Nano runs from his own small battery, but how long it lasts with Wi-Fi on has not been
+measured yet: for a long session, leave him on USB power.
 
 
 **10.1 Flash him.** Plug the friend in with a data cable, on his own if you can (with several
