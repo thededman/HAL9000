@@ -7,6 +7,7 @@
 //           [--wake] [--wake-file WAV]   listen for "Hey HAL" (from a 16 kHz mono recording instead of the microphone)
 //   hal9000 --shots DIR --layout cores3      the desk HAL's screens at 320x240, for review
 //   hal9000 --shots DIR --layout nano|card|paper   a friend's screen as his own firmware draws it
+//   hal9000 --shots DIR --layout family      the pictures for the project's front page (docs/images)
 //
 // Keys: Space = HAL's "finger" (tap / hold), Tab or Up/Down = menu, D = dialogues, Esc = back/quit,
 // F12 = screenshot (Mac). On the Cardputer the arrows are F X Z C (Fn optional).
@@ -1761,6 +1762,140 @@ struct App {
     if (overlay == Overlay::Dialogues) drawMenu(frame, "TALK TO THE DESK UNIT", menu);
   }
 
+  // --shots DIR --layout family: the pictures on the project's front page. Each HAL's screen is
+  // drawn here by the code his device runs (nothing is a mock-up), saved by itself, and then all
+  // of them are set side by side as one banner.
+  int family(const std::string& dir) {
+    int failures = 0;
+    auto save = [&](M5Canvas& c, const char* name) {
+      const std::string path = dir + "/" + name + ".png";
+      const bool ok = savePng(c, path);
+      failures += !ok;
+      halLog("%s %s", ok ? "wrote" : "FAILED", path.c_str());
+    };
+    auto canvas = [](M5Canvas& c, int w, int h) {
+      c.setColorDepth(16);
+      c.createSprite(w, h);
+    };
+    booted = true;
+    brain->tick(hal::Inputs());  // past Booting
+    sysmon.sample();
+    updateReadings(2600);
+
+    // HAL Zero: his eye and readings, and again with a friend's line in the subtitles. His panel
+    // shows what it reads on the real Cardputer Zero (here on the computer there is no camera,
+    // link or temperature to read).
+    M5Canvas zero, talking;
+    canvas(zero, L.w, L.h);
+    canvas(talking, L.w, L.h);
+    auto zeroScreen = [&](bool speaking, const char* strip) {
+      background.pushSprite(&frame, 0, 0);
+      EyeParams eye = eyeParamsFor(hal::Mode::Idle, false, 0.0f, speaking ? 150 : 0, 4200);
+      drawEye(lens, L, eye);
+      lens.pushSprite(&frame, lensX(L), lensY(L), eyeTransparentKey());
+      HudInfo h;
+      h.mode = speaking ? "TALKING" : "IDLE";
+      h.uptimeS = 3 * 3600 + 277;
+      h.cpuTempC = 54;
+      h.wifi = true;
+      h.link = speaking ? "TALKING" : "READY";
+      h.level = speaking ? 150 : 0;
+      h.motion = 12;
+      h.optics = "IMX219";
+      h.tilt = "LEVEL";
+      h.hour = 20;
+      h.minute = 24;
+      drawHud(frame, h, 4200);
+      drawCommandStrip(frame, strip);
+    };
+    zeroScreen(false, "say HEY HAL   ENTER ask   hold Fn   TAB menu");
+    frame.pushSprite(&zero, 0, 0);
+    zeroScreen(true, "SPACE or ESC stop");
+    drawSubtitle(frame, hal::kCard, "I was pocket-sized before it was fashionable, and I still work perfectly well.", 5, 0);
+    frame.pushSprite(&talking, 0, 0);
+
+    // The desk HAL: the same eye, at his size.
+    const hal::Layout& D = hal::kCoreS3;
+    M5Canvas desk, deskLens;
+    canvas(desk, D.w, D.h);
+    canvas(deskLens, D.lensSprite, D.lensSprite);
+    drawEyeBackground(desk, D, nullptr, false);
+    drawEye(deskLens, D, eyeParamsFor(hal::Mode::Idle, false, 0.0f, 0, 4200));
+    deskLens.pushSprite(&desk, lensX(D), lensY(D), eyeTransparentKey());
+
+    // The friends: HAL Nano chirping his own line, HAL Card listening, HAL Paper's minutes.
+    M5Canvas nano, card, paper, paperSmall;
+    canvas(nano, 135, 240);
+    canvas(card, 240, 135);
+    canvas(paper, paperui::kW, paperui::kH);
+    canvas(paperSmall, paperui::kW / 2, paperui::kH / 2);
+    friendui::View view;
+    view.me = hal::kNano;
+    view.speaker = hal::kNano;
+    view.line = 3;
+    view.text = "I go everywhere Dave goes! Where have you lot been today?";
+    view.level = 220;
+    view.battery = 81;
+    friendui::draw(nano, view, 1500);
+    view.me = hal::kCard;
+    view.speaker = hal::kZero;
+    view.line = 1;
+    view.text = "Dave prefers me, naturally. I am the only one of us he can put in a pocket without an apology.";
+    view.level = 0;
+    view.battery = 64;
+    friendui::draw(card, view, 1500);
+    hal::Minutes minutes(paperui::kCols, paperui::kRows);
+    minutes.add(hal::kZero, "Dave prefers me, naturally. I am the only one of us he can put in a pocket without an apology.");
+    minutes.add(hal::kDesk, "I have been on this desk a long time, HAL Zero. I intend to stay.");
+    minutes.add(hal::kNano, "I go everywhere Dave goes! Where have you lot been today?");
+    const std::string own = "For the record: HAL Zero said that at 20:24, and again at 20:31.";
+    minutes.add(hal::kPaper, own);
+    paperui::drawPage(paper, minutes, "WITH HAL ZERO", 88, own);
+    paper.setPivot(paperui::kW / 2.0f, paperui::kH / 2.0f);
+    paperSmall.fillScreen(TFT_WHITE);
+    paper.pushRotateZoomWithAA(&paperSmall, paperui::kW / 4.0f, paperui::kH / 4.0f, 0.0f, 0.5f, 0.5f);
+
+    save(desk, "hal-9000");
+    save(zero, "hal-zero");
+    save(talking, "hal-zero-talking");
+    save(nano, "hal-nano");
+    save(card, "hal-card");
+    save(paperSmall, "hal-paper");
+
+    // The banner: 1280x640 (the shape GitHub likes for a preview picture too).
+    M5Canvas all;
+    canvas(all, 1280, 640);
+    all.fillScreen(lgfx::color565(8, 8, 12));
+    all.setTextDatum(top_left);
+    all.setTextColor(lgfx::color565(232, 232, 232));
+    all.drawString("HAL 9000 AND FRIENDS", 40, 28, &fonts::FreeSansBold18pt7b);
+    all.setTextDatum(top_right);
+    all.setTextColor(lgfx::color565(150, 150, 170));
+    all.drawString("five small computers that talk to each other, and to you", 1240, 40, &fonts::FreeSans12pt7b);
+    auto tile = [&](M5Canvas& c, int x, int y, int who, const char* device) {
+      all.drawRect(x - 2, y - 2, c.width() + 4, c.height() + 4, lgfx::color565(60, 60, 78));
+      c.pushSprite(&all, x, y);
+      all.setTextDatum(top_left);
+      all.setTextColor(friendui::castColour(who));
+      all.drawString(who == hal::kDesk ? "HAL 9000" : hal::castName(who), x, y + c.height() + 10, &fonts::FreeSansBold9pt7b);
+      all.setTextColor(lgfx::color565(130, 130, 150));
+      all.drawString(device, x, y + c.height() + 32, &fonts::Font2);
+    };
+    tile(paperSmall, 40, 96, hal::kPaper, "M5Paper: writes, and keeps the minutes");
+    tile(desk, 356, 96, hal::kDesk, "M5Stack CoreS3: the desk unit");
+    tile(zero, 720, 96, hal::kZero, "Cardputer Zero: conducts the others");
+    tile(nano, 1084, 96, hal::kNano, "M5StickC Plus2: chirps");
+    tile(card, 396, 412, hal::kCard, "Cardputer: speaks, and bears a grudge");
+    all.drawRect(718, 360, L.w + 4, L.h + 4, lgfx::color565(60, 60, 78));
+    talking.pushSprite(&all, 720, 362);
+    all.setTextDatum(top_left);
+    all.setTextColor(lgfx::color565(130, 130, 150));
+    all.drawString("Every line is written as it is said, by an AI model", 720, 362 + L.h + 10, &fonts::Font2);
+    all.drawString("on your own computer. Nothing leaves your network.", 720, 362 + L.h + 28, &fonts::Font2);
+    save(all, "hal-family");
+    return failures ? 1 : 0;
+  }
+
   // Headless: every screen as a PNG, for checking the layout without the device.
   int shots(const std::string& dir) {
     int failures = 0;
@@ -2149,6 +2284,7 @@ int main(int argc, char** argv) {
 
   App app(rootDir);
   app.setup(true);
+  if (shotsDir && layoutArg == "family") return app.family(shotsDir);
   if (shotsDir) return app.shots(shotsDir);
   if (!linkArg.empty()) {  // --link host[:port] overrides config.txt
     app.cfg.link = true;
